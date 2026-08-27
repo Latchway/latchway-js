@@ -1,0 +1,29 @@
+name: JavaScript SDK CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify:contracts
+      - run: pnpm check
+      - run: pnpm verify:reproducible
+      - run: pnpm pack:check

@@ -8,11 +8,11 @@ Build the TypeScript client that lets browser and bounded Node.js applications
 authenticate to Latchway, establish DPoP-bound sessions, and authorize ordinary
 fetch requests without holding an upstream provider credential.
 
-This repository currently contains governance and architecture foundations
-only. Do not add package.json, production SDK source, generated wire models, or
-contract.lock until the core repository has published the corresponding
-contract bundle and the active implementation phase authorizes that work. Never
-invent a temporary wire contract or fake production behavior.
+The active implementation phase is Phase 12. The SDK consumes contract 0.1.0,
+wire protocol 1, from the reviewed core contract bundle recorded in
+`contract.lock`. Production source, package metadata, tests, examples, and CI
+are authorized. Never invent a temporary wire contract or fake production
+behavior.
 
 ## Authority and dependency boundaries
 

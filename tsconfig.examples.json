@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@latchway/client": ["./src/index.ts"],
+      "@latchway/client/browser": ["./src/browser.ts"],
+      "@latchway/client/node": ["./src/node.ts"],
+      "@latchway/client/firebase": ["./src/firebase.ts"],
+      "@latchway/client/turnstile": ["./src/turnstile.ts"]
+    },
+    "types": ["node", "react"]
+  },
+  "include": ["examples/**/*.ts", "src/**/*.ts"]
+}

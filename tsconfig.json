@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "useUnknownInCatchVariables": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "paths": {
+      "@latchway/client": ["./src/index.ts"],
+      "@latchway/client/browser": ["./src/browser.ts"],
+      "@latchway/client/node": ["./src/node.ts"],
+      "@latchway/client/firebase": ["./src/firebase.ts"],
+      "@latchway/client/turnstile": ["./src/turnstile.ts"]
+    },
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "examples/**/*.ts", "scripts/**/*.mjs", "eslint.config.js", "vitest.config.ts"]
+}

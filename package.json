@@ -1,0 +1,89 @@
+{
+  "name": "@latchway/client",
+  "version": "0.1.0-dev.0",
+  "description": "DPoP-bound browser and Node.js client for the Latchway AI gateway",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "packageManager": "pnpm@10.15.0",
+  "engines": {
+    "node": ">=24.19.0",
+    "pnpm": "10.15.0"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "SECURITY.md",
+    "contract.lock"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Latchway/latchway-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Latchway/latchway-js/issues"
+  },
+  "homepage": "https://github.com/Latchway/latchway-js#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
+    },
+    "./firebase": {
+      "types": "./dist/firebase.d.ts",
+      "import": "./dist/firebase.js"
+    },
+    "./turnstile": {
+      "types": "./dist/turnstile.d.ts",
+      "import": "./dist/turnstile.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm examples:check && pnpm exports:check",
+    "examples:check": "tsc -p tsconfig.examples.json --noEmit",
+    "exports:check": "node scripts/verify-exports.mjs",
+    "lint": "eslint . --max-warnings=0",
+    "pack:check": "pnpm build && node scripts/verify-pack.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify:contracts": "node scripts/verify-contract.mjs",
+    "verify:reproducible": "node scripts/verify-reproducible.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "eslint": "10.9.1",
+    "fake-indexeddb": "6.2.5",
+    "react": "19.2.8",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.68.0",
+    "vitest": "4.1.11"
+  },
+  "keywords": [
+    "dpop",
+    "fetch",
+    "gateway",
+    "security"
+  ]
+}
