@@ -1,9 +1,8 @@
 # Contributing to Latchway JavaScript SDK
 
-Thank you for helping build Latchway. This repository is currently establishing
-its governance and protocol boundary. It intentionally has no npm package or
-contract lock until the core repository publishes the first authoritative
-contract bundle.
+Thank you for helping build Latchway. This repository consumes the reviewed
+core contract bundle recorded in `contract.lock`; wire changes begin in the
+core repository and must update the lock and canonical fixtures together.
 
 ## Before making a change
 
@@ -24,8 +23,7 @@ contract bundle.
   application attestation.
 - Do not monkey-patch global fetch by default.
 - Never forward an OpenAI-compatible placeholder API key to an upstream.
-- Do not create a local wire format or contract.lock without a published core
-  contract bundle.
+- Do not edit wire behavior independently of the checksummed core contract.
 - Do not leave production-path placeholders or hard-coded success behavior.
 
 ## Tests
@@ -35,8 +33,9 @@ protocol work also requires shared-vector, browser, Node.js, and conformance
 coverage. Storage failure, clock skew, cancellation, streaming, redaction, and
 strict Content Security Policy behavior must be tested where relevant.
 
-Canonical package-manager commands will be documented when package.json and CI
-are introduced. A contribution is not ready while its documented checks fail.
+Run `pnpm verify:contracts`, `pnpm check`, `pnpm verify:reproducible`, and
+`pnpm pack:check` with the versions pinned in `mise.toml`. A contribution is not
+ready while a documented check fails.
 
 ## Pull requests
 

@@ -1,101 +1,88 @@
 # JavaScript SDK Architecture
 
-## Status
+## Contract boundary
 
-This document fixes the ownership and runtime boundaries for the planned
-TypeScript client. It does not describe an existing implementation. Package
-manifests, production modules, generated models, and contract.lock will be
-introduced only after the core repository publishes an authoritative contract
-bundle.
+The SDK consumes Latchway contract 0.1.0 and wire protocol 1. The core commit
+and contract-bundle SHA-256 are immutable inputs in `contract.lock`; vendored
+test vectors are hash-checked in CI. Public TypeScript APIs are handwritten.
+Wire parsing stays internal and rejects malformed security-critical responses.
 
-## System boundary
+The server owns identity verification, attestation verdicts, principals,
+policy, routes, quotas, prices, usage, and upstream credentials. The SDK owns
+only installation-key possession, session transport, provider-token callbacks,
+and request authorization.
 
-The application supplies an identity token from its existing identity provider
-and a Request intended for its configured Latchway gateway. The SDK proves
-possession of an installation key, obtains a short-lived Latchway session, and
-adds transport authorization. The gateway authenticates, authorizes, meters,
-and injects the upstream provider credential.
-
-The SDK never receives the upstream credential and never decides server-owned
-facts such as user ID, plan, attestation level, organization, route, upstream,
-price, or usage.
-
-## Contract ownership
-
-The Latchway core repository exclusively owns:
-
-- Client session OpenAPI
-- Error-code registry and retry guidance
-- Protocol-version and compatibility manifest
-- Canonical attestation-binding encoding
-- DPoP and attestation test vectors
-- Canonical request examples
-- The checksummed contract release bundle
-
-This repository consumes those artifacts. A contract update must verify the
-bundle checksum, update contract.lock, regenerate internal wire DTOs
-reproducibly, run shared vectors, and pass conformance against the exact core
-image. Generated wire DTOs must not become the public TypeScript API.
-
-## Planned export boundaries
+## Dependency direction
 
 ~~~text
-@latchway/client
-    Shared public API, error mapping, session orchestration, feature selection
-    |
-    +-- @latchway/client/browser
-    |     WebCrypto, IndexedDB, browser fetch, server-time hints
-    |
-    +-- @latchway/client/node
-    |     Software P-256 key and bounded server/development behavior
-    |
-    +-- @latchway/client/firebase
-    |     Optional Firebase identity and App Check adapters
-    |
-    +-- @latchway/client/turnstile
-          Optional Turnstile token-provider adapter
+index / browser / node / firebase / turnstile
+                    |
+              handwritten client
+                    |
+       session  -> DPoP -> WebCrypto
+          |
+   StateStore -> IndexedDB or explicit memory
 ~~~
 
-Shared modules must not evaluate browser-only or Node.js-only imports. Optional
-adapters depend inward on narrow provider interfaces. React Native may consume
-shared TypeScript transport concepts, but platform keys and attestation stay in
-the native SDKs.
+Shared modules do not import Node-only or provider packages. The Node subpath is
+the only module that imports `node:crypto`. Firebase and Turnstile subpaths
+depend on narrow callback interfaces, so applications retain ownership of the
+official provider SDK lifecycle. No module performs ambient global mutation.
 
-## Key and state boundary
+## Key and state lifecycle
 
-Browser mode creates a non-exportable WebCrypto P-256 key and persists its
-CryptoKey in IndexedDB where supported. If persistence is unavailable, an
-explicit in-memory installation may be used with appropriately weaker
-diagnostics. Only a public JWK and its RFC thumbprint leave the runtime.
+Browser mode generates ECDSA P-256 with a non-exportable private CryptoKey. It
+persists the CryptoKey object, public JWK, RFC 7638 thumbprint, short-lived
+access token, and rotating refresh token in origin-scoped IndexedDB. The SDK
+does not export private key material or use localStorage.
 
-Rotating refresh state stays in IndexedDB. Coordination prevents simultaneous
-refreshes from racing. Web possession is not hardware-backed attestation.
-Firebase App Check and Turnstile are separate optional evidence providers.
+Persistent mode fails closed if IndexedDB or CryptoKey structured cloning is
+unavailable. `allow-memory` is an explicit application decision and is visible
+in diagnostics. Node conformance mode always uses a memory-only software key.
 
-Node.js mode may use a software key for custom identity and conformance, but
-must never claim application or hardware attestation.
+Refresh is single-flight in one client. IndexedDB read/write transactions hold
+a short refresh lease across tabs. A losing tab polls the newly rotated session
+record and never submits the stale refresh token. Leases expire after a bounded
+period so crashed tabs cannot permanently block refresh.
 
-## Transport boundary
+## Session and request flow
 
-The public client authorizes Request values and exposes an explicit fetch
-wrapper. It does not monkey-patch global fetch. It preserves streaming,
-cancellation, and immutable request semantics, and supports libraries that
-accept a custom fetch implementation.
+1. Resolve or create the installation key.
+2. Obtain an application identity token through the configured callback.
+3. Create a challenge with a DPoP proof that omits `ath`.
+4. Select the adapter requested by the challenge and pass it the exact
+   `client_data_hash` and challenge context.
+5. Exchange provider evidence for tokens bound to the installation JWK
+   thumbprint.
+6. For each protected request, strip credential placeholders, compute `ath`,
+   create a unique proof for the exact method and URI, and add protocol headers.
 
-Compatibility placeholder API keys are stripped and never forwarded. Errors
-expose stable safe fields and request identifiers, never tokens, proofs, or raw
-attestation evidence.
+Server Date headers adjust DPoP issued-at time within a bounded 24-hour local
+clock discrepancy. A DPoP nonce is accepted only from the configured gateway
+and used once per retry with a newly signed proof.
 
-## Verification boundary
+## Fetch semantics
 
-Unit tests own deterministic cryptographic, storage, runtime-separation,
-cancellation, and refresh cases. Shared vectors prove wire-level agreement.
-Browser tests cover IndexedDB, CSP, clock skew, and fetch semantics. Node.js
-tests prove its deliberately weaker claims. Cross-repository conformance runs
-the package against PostgreSQL and the exact core container.
+The wrapper constructs new Request values and leaves caller objects unchanged.
+Only the configured gateway origin may be signed. Request signals and response
+bodies pass through, so cancellation and incremental SSE remain native Fetch
+API behavior. Final protected HTTP errors remain Response objects; internal
+session and control operations map RFC 9457 documents to stable
+`LatchwayError` instances.
 
-## Non-goals
+No request is retried for upstream timeouts or ambiguous dispatch failures.
+The only automatic protected-request retries are a single DPoP nonce response
+and a single `session_expired` response, both rejected before upstream dispatch
+by the protocol.
 
-This repository does not own server policy, provider routing, quota
-enforcement, user-authentication UI, upstream secrets, native hardware trust,
-AI request modeling, global fetch mutation, or React Native bridge behavior.
+## Trust limits
+
+WebCrypto possession is vulnerable to malicious same-origin script. IndexedDB
+protects against accidental serialization and makes the private key
+non-exportable; it cannot make an XSS-compromised origin trustworthy. App Check
+and Turnstile are server-verified web risk signals, not native hardware trust.
+
+Node mode supports custom JWT identity, a software key, custom fetch, and
+server-configured debug conformance. It never claims application attestation.
+React Native delegates installation keys and attestation to the native iOS and
+Android SDKs and is outside this package.
