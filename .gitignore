@@ -1,0 +1,25 @@
+# Operating system and editor state
+.DS_Store
+.vscode/
+.idea/
+
+# JavaScript dependencies and generated output
+node_modules/
+dist/
+coverage/
+.nyc_output/
+.cache/
+.turbo/
+.pnpm-store/
+*.tsbuildinfo
+*.log
+
+# Local credentials
+.env
+.env.*
+!.env.example
+
+# Optional repository-local agent tooling is not an SDK input.
+/.agents/
+/.claude/skills/
+/skills-lock.json
