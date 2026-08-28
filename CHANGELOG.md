@@ -10,8 +10,9 @@ Versioning once package publication begins.
 ### Changed
 
 - Synchronized the SDK contract lock, compatibility constants, and canonical
-  fixtures to the unreleased Latchway contract 0.3.0 checkpoint while keeping
-  wire protocol 1.
+  fixtures to the unreleased Latchway contract 0.4.0 checkpoint. The contract
+  adds server-owned trusted input accounting while preserving the client API
+  shape and wire protocol 1.
 
 ### Added
 
