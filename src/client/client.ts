@@ -36,6 +36,7 @@ const forbiddenCredentialHeaders = new Set([
   "x-amz-credential",
   "x-amz-security-token",
   "x-amz-signature",
+  "x-goog-credential",
   "x-goog-signature",
 ]);
 

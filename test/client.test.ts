@@ -53,7 +53,7 @@ describe("Latchway fetch client", () => {
       "x-api-key", "openai-api-key", "openai_api_key", "x-openai-api-key", "anthropic-api-key",
       "anthropic_api_key", "x-goog-api-key", "x-goog_api_key", "auth_token", "x-auth-token",
       "cookie", "key", "token", "x-amz-credential", "x-amz-security-token", "x-amz-signature",
-      "x-goog-signature",
+      "x-goog-credential", "x-goog-signature",
     ];
     for (const name of forbiddenNames) {
       await expect(client.fetch(`/v1/responses?${name.toUpperCase()}=provider-secret`, {
