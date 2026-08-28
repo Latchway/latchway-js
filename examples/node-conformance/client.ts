@@ -13,7 +13,7 @@ export function createConformanceClient(dependencies: ConformanceDependencies) {
   return createNodeLatchwayClient({
     baseURL: dependencies.baseURL,
     allowInsecureHTTP: dependencies.baseURL.startsWith("http://"),
-    applicationID: "conformance_client",
+    applicationID: "app_01J00000000000000000000000",
     environment: "test",
     identityProvider: "custom_jwt",
     identityTokenProvider: { getIdentityToken: dependencies.getIdentityToken },

@@ -38,17 +38,8 @@ describe("provider adapters", () => {
     const getToken = vi.fn(async (_forceRefresh: boolean) => ({ token: "firebase-app-check-token" }));
     const provider = createFirebaseAppCheckProvider(getToken);
     await expect(provider.getEvidence(context)).resolves.toEqual({ token: "firebase-app-check-token" });
-    const getRefreshEvidence = provider.getRefreshEvidence;
-    if (getRefreshEvidence === undefined) throw new Error("Firebase adapter must support refresh evidence.");
-    await expect(getRefreshEvidence({
-      applicationID: context.applicationID,
-      environment: context.environment,
-      dpopJkt: context.dpopJkt,
-      platform: context.platform,
-    })).resolves.toEqual({ token: "firebase-app-check-token" });
-    expect(getToken).toHaveBeenCalledTimes(2);
-    expect(getToken).toHaveBeenNthCalledWith(1, true);
-    expect(getToken).toHaveBeenNthCalledWith(2, true);
+    expect(getToken).toHaveBeenCalledOnce();
+    expect(getToken).toHaveBeenCalledWith(true);
   });
 
   it("passes the exact challenge context to a caller-managed Turnstile flow", async () => {
@@ -56,7 +47,6 @@ describe("provider adapters", () => {
     const provider = createTurnstileProvider({ getToken, action: "latchway_session" });
     await expect(provider.getEvidence(context)).resolves.toEqual({ token: "turnstile-token" });
     expect(getToken).toHaveBeenCalledWith(context);
-    expect(provider.getRefreshEvidence).toBeUndefined();
   });
 
   it("fails closed on invalid actions, challenge mismatch, and malformed tokens", async () => {

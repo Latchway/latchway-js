@@ -22,7 +22,8 @@ import { createTurnstileProvider } from "@latchway/client/turnstile";
 
 const latchway = createLatchwayClient({
   baseURL: "https://ai.example.com",
-  applicationID: "habitify_web",
+  // The generated application resource ID returned by the Admin API.
+  applicationID: "app_01J00000000000000000000000",
   environment: "production",
   identityProvider: "firebase",
   identityTokenProvider: {
@@ -112,13 +113,14 @@ const appCheckProvider = createFirebaseAppCheckProvider(
 ```
 
 Provider tokens are sent only to the configured Latchway origin. Real verdict
-verification remains server-side. Firebase App Check supplies a fresh token on
-refresh. Turnstile must be executed once per session challenge with widget
+verification remains server-side. Firebase App Check and Turnstile evidence is
+created only for a server challenge. Turnstile must be executed once per session challenge with widget
 `action` equal to the server-configured action and widget `cData` equal to
 `challenge.attestation.client_data_hash`. Evidence contains only the opaque
 token; Latchway verifies the returned action and binding through Siteverify.
-Because Turnstile tokens are single-use and refresh has no challenge binding,
-an attestation-stale response starts a new challenge flow.
+Refresh sends only the rotating refresh token and a fresh DPoP proof. Identity
+reauthentication or any attestation step-up starts a new challenge flow; no
+unbound identity or attestation token is attached to refresh.
 
 ## Node.js conformance mode
 
@@ -131,7 +133,7 @@ import {
 const latchway = createNodeLatchwayClient({
   baseURL: "http://127.0.0.1:8080",
   allowInsecureHTTP: true,
-  applicationID: "conformance_client",
+  applicationID: "app_01J00000000000000000000000",
   environment: "test",
   identityProvider: "custom_jwt",
   identityTokenProvider: { getIdentityToken: issueFixtureJWT },
@@ -167,8 +169,10 @@ operation-ID rules before it can influence retry behavior.
 The client retries once with a fresh proof for a canonical, unambiguous
 `DPoP-Nonce` challenge. It also refreshes once after a canonical
 `session_expired` response with no nonce, which the protocol guarantees occurs
-before upstream dispatch. It never blindly replays upstream timeout or protocol
-failures.
+before upstream dispatch. A refresh body contains only the rotating token; a
+server request for renewed identity or attestation clears the old session and
+performs a fresh challenge and exchange. It never blindly replays upstream
+timeout or protocol failures.
 
 ## Exports
 

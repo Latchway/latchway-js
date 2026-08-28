@@ -20,7 +20,6 @@ export type {
   PersistenceOptions,
   QuotaLimit,
   QuotaSnapshot,
-  RefreshAttestationContext,
   ServerDiagnostics,
 } from "./types.js";
 export type { LatchwayErrorCode, LatchwayServerErrorCode } from "./errors.js";

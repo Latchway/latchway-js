@@ -9,7 +9,7 @@ export interface SupabaseDependencies {
 export function createSupabaseClient(dependencies: SupabaseDependencies) {
   return createLatchwayClient({
     baseURL: "https://ai.example.com",
-    applicationID: "example_supabase_web",
+    applicationID: "app_01J00000000000000000000000",
     environment: "production",
     identityProvider: "supabase",
     identityTokenProvider: { getIdentityToken: dependencies.getAccessToken },

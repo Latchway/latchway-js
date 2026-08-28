@@ -3,13 +3,11 @@ import type {
   AttestationContext,
   AttestationProvider,
   AttestationProviderID,
-  RefreshAttestationContext,
 } from "../types.js";
 
 export interface CustomAttestationProviderOptions {
   provider: AttestationProviderID;
   getEvidence(context: AttestationContext): Promise<Readonly<Record<string, unknown>>>;
-  getRefreshEvidence?(context: RefreshAttestationContext): Promise<Readonly<Record<string, unknown>>>;
 }
 
 export function createCustomAttestationProvider(options: CustomAttestationProviderOptions): AttestationProvider {
@@ -23,13 +21,8 @@ export function createCustomAttestationProvider(options: CustomAttestationProvid
       typeof options.getEvidence !== "function") {
     throw new LatchwayError("client_configuration_invalid", "The custom attestation provider configuration is invalid.");
   }
-  const provider: AttestationProvider = {
+  return {
     provider: options.provider,
     getEvidence: (context) => options.getEvidence(context),
   };
-  const getRefreshEvidence = options.getRefreshEvidence;
-  if (getRefreshEvidence !== undefined) {
-    provider.getRefreshEvidence = (context) => getRefreshEvidence(context);
-  }
-  return provider;
 }

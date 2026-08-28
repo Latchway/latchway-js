@@ -44,7 +44,11 @@ in diagnostics. Node conformance mode always uses a memory-only software key.
 Refresh is single-flight in one client. IndexedDB read/write transactions hold
 a short refresh lease across tabs. A losing tab polls the newly rotated session
 record and never submits the stale refresh token. Leases expire after a bounded
-period so crashed tabs cannot permanently block refresh.
+period so crashed tabs cannot permanently block refresh. The refresh body
+contains only the rotating refresh token and is DPoP-bound to its endpoint.
+Identity reauthentication and attestation expiry or step-up clear the old
+session and start a fresh challenge; unbound identity and attestation material
+is never sent to the refresh endpoint.
 
 ## Session and request flow
 

@@ -44,17 +44,9 @@ export interface AttestationContext {
   platform: Platform;
 }
 
-export interface RefreshAttestationContext {
-  applicationID: string;
-  environment: string;
-  dpopJkt: string;
-  platform: Platform;
-}
-
 export interface AttestationProvider {
   readonly provider: AttestationProviderID;
   getEvidence(context: AttestationContext): Promise<Readonly<Record<string, unknown>>>;
-  getRefreshEvidence?(context: RefreshAttestationContext): Promise<Readonly<Record<string, unknown>>>;
 }
 
 export type FetchImplementation = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;

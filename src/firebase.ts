@@ -25,9 +25,6 @@ export function createFirebaseAppCheckProvider(
     async getEvidence() {
       return appCheckEvidence(await getToken(true));
     },
-    async getRefreshEvidence() {
-      return appCheckEvidence(await getToken(true));
-    },
   };
 }
 

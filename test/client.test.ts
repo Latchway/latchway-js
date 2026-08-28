@@ -124,6 +124,8 @@ describe("Latchway fetch client", () => {
     await Promise.all(Array.from({ length: 12 }, () =>
       client.fetch("/v1/responses", { method: "POST", body: "{}", latchwayFeature: "assistant" })));
     expect(gateway.refreshCalls).toBe(1);
+    expect(gateway.refreshBodies).toHaveLength(1);
+    expect(Object.keys(gateway.refreshBodies[0] ?? {})).toEqual(["refresh_token"]);
   });
 
   it("starts a fresh challenge when refresh requires renewed attestation", async () => {
@@ -138,6 +140,31 @@ describe("Latchway fetch client", () => {
     expect(gateway.refreshCalls).toBe(1);
     expect(gateway.challengeCalls).toBe(2);
     expect(gateway.exchangeCalls).toBe(2);
+  });
+
+  it("starts a fresh challenge when refresh requires renewed identity", async () => {
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const gateway = new MockGateway(() => now);
+    gateway.identityRefreshOnce = true;
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+    await client.fetch("/v1/responses", { method: "POST", body: "{}", latchwayFeature: "assistant" });
+    now += 31_000;
+    await client.fetch("/v1/responses", { method: "POST", body: "{}", latchwayFeature: "assistant" });
+    expect(gateway.refreshCalls).toBe(1);
+    expect(gateway.challengeCalls).toBe(2);
+    expect(gateway.exchangeCalls).toBe(2);
+  });
+
+  it("rejects application slugs before identity or network work", () => {
+    const gateway = new MockGateway();
+    expect(() => createLatchwayClient({
+      ...baseOptions(gateway),
+      applicationID: "mobile-app",
+      persistence: { mode: "memory" },
+      attestationProviders: [debugProvider()],
+    })).toThrowError(/generated Latchway application resource ID/u);
+    expect(gateway.challengeCalls).toBe(0);
   });
 
   it("coordinates refresh-token rotation between IndexedDB-backed tabs", async () => {
@@ -270,7 +297,7 @@ function makeBrowserClient(gateway: MockGateway, persistence: NonNullable<Latchw
 function baseOptions(gateway: MockGateway): Omit<LatchwayOptions, "attestationProviders"> {
   return {
     baseURL: "http://gateway.example.test",
-    applicationID: "app_example",
+    applicationID: "app_01J00000000000000000000000",
     environment: "test",
     identityProvider: "custom_jwt",
     identityTokenProvider: { getIdentityToken: async () => identityToken },
@@ -303,6 +330,8 @@ class MockGateway {
   omitClientDataHash = false;
   mismatchJkt = false;
   staleRefreshOnce = false;
+  identityRefreshOnce = false;
+  refreshBodies: Array<Record<string, unknown>> = [];
   lastProtectedHeaders: Headers | undefined;
   protectedProofs: string[] = [];
   platform: Platform = "web";
@@ -344,9 +373,15 @@ class MockGateway {
     }
     if (url.pathname === "/client/v1/sessions/refresh") {
       this.refreshCalls += 1;
+      const body = await request.json() as Record<string, unknown>;
+      this.refreshBodies.push(body);
       if (this.staleRefreshOnce) {
         this.staleRefreshOnce = false;
         return this.problem("attestation_stale", 401);
+      }
+      if (this.identityRefreshOnce) {
+        this.identityRefreshOnce = false;
+        return this.problem("identity_reauthentication_required", 401);
       }
       await new Promise((resolve) => {
         setTimeout(resolve, 15);
@@ -455,6 +490,7 @@ class MockGateway {
   private problem(code: string, status: number, extraHeaders: HeadersInit = {}): Response {
     const policy = {
       attestation_stale: { title: "Attestation stale", retryable: false },
+      identity_reauthentication_required: { title: "Identity reauthentication required", retryable: false },
       dpop_invalid: { title: "DPoP proof invalid", retryable: false },
       dpop_nonce_required: { title: "DPoP nonce required", retryable: true },
       session_expired: { title: "Session expired", retryable: true },

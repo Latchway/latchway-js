@@ -13,7 +13,7 @@ export interface FirebaseDependencies {
 export function createFirebaseClient(dependencies: FirebaseDependencies) {
   return createLatchwayClient({
     baseURL: "https://ai.example.com",
-    applicationID: "example_firebase_web",
+    applicationID: "app_01J00000000000000000000000",
     environment: "production",
     identityProvider: "firebase",
     identityTokenProvider: createFirebaseIdentityTokenProvider(dependencies.getIDToken),

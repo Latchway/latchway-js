@@ -9,7 +9,7 @@ export interface VanillaClientDependencies {
 export function createVanillaClient(dependencies: VanillaClientDependencies) {
   return createLatchwayClient({
     baseURL: "https://ai.example.com",
-    applicationID: "example_web",
+    applicationID: "app_01J00000000000000000000000",
     environment: "production",
     identityProvider: "custom_jwt",
     identityTokenProvider: { getIdentityToken: dependencies.getIdentityToken },

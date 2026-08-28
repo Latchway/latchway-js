@@ -35,7 +35,7 @@ export function configure(
     throw new LatchwayError("crypto_unavailable", "This runtime does not provide WebCrypto SubtleCrypto.");
   }
   const baseURL = parseBaseURL(options.baseURL, options.allowInsecureHTTP === true);
-  const applicationID = boundedString(options.applicationID, "applicationID", 128);
+  const applicationID = applicationResourceID(options.applicationID);
   const environment = identifier(options.environment, "environment");
   const identityProvider = identifier(options.identityProvider ?? "custom_jwt", "identityProvider");
   const identityTokenProvider = options.identityTokenProvider as unknown;
@@ -128,6 +128,16 @@ function parseBaseURL(value: string, allowInsecureHTTP: boolean): URL {
 function identifier(value: string, field: string): string {
   if (!/^[a-z][a-z0-9_-]{0,62}$/u.test(value)) {
     throw new LatchwayError("client_configuration_invalid", `${field} must be a lowercase Latchway identifier.`);
+  }
+  return value;
+}
+
+function applicationResourceID(value: string): string {
+  if (!/^app_[0-7][0-9A-HJKMNP-TV-Z]{25}$/u.test(value)) {
+    throw new LatchwayError(
+      "client_configuration_invalid",
+      "applicationID must be the generated Latchway application resource ID.",
+    );
   }
   return value;
 }

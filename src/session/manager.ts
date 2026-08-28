@@ -163,7 +163,9 @@ export class SessionManager {
 
     try {
       const current = await this.options.store.loadSession();
-      if (current === undefined || current.refreshExpiresAt <= this.now()) return this.establish();
+      if (current === undefined || current.refreshExpiresAt <= this.now()) {
+        return this.establish(initial.generation + 1);
+      }
       if (current.generation > initial.generation && current.accessExpiresAt > this.now()) {
         this.clockOffsetMilliseconds = current.clockOffsetMilliseconds;
         return current;
@@ -172,9 +174,10 @@ export class SessionManager {
         return await this.performRefresh(current);
       } catch (error) {
         if (error instanceof LatchwayError && new Set([
-          "attestation_required", "attestation_stale", "attestation_step_up_required",
+          "identity_reauthentication_required", "attestation_required", "attestation_stale",
+          "attestation_step_up_required",
         ]).has(error.code)) {
-          return this.establish();
+          return this.establish(current.generation + 1);
         }
         throw error;
       }
@@ -183,7 +186,7 @@ export class SessionManager {
     }
   }
 
-  private async establish(): Promise<StoredSession> {
+  private async establish(generation = 1): Promise<StoredSession> {
     const key = await this.key();
     const identityToken = await this.identityToken();
     const challengeURL = this.endpoint("/client/v1/session-challenges");
@@ -233,17 +236,14 @@ export class SessionManager {
         ...(this.options.installation.deviceModel === undefined ? {} : { device_model: this.options.installation.deviceModel }),
       },
     });
-    return this.persistGrant(parseSessionGrant(await parseJSON(exchangeResponse)), 1);
+    return this.persistGrant(parseSessionGrant(await parseJSON(exchangeResponse)), generation);
   }
 
   private async performRefresh(existing: StoredSession): Promise<StoredSession> {
     const refreshURL = this.endpoint("/client/v1/sessions/refresh");
     try {
-      const attestation = await this.refreshAttestation(existing);
       const response = await this.sendDPoPJSON(refreshURL, "POST", {
         refresh_token: existing.refreshToken,
-        identity_token: await this.identityToken(),
-        ...(attestation === undefined ? {} : { attestation }),
       });
       return this.persistGrant(parseSessionGrant(await parseJSON(response)), existing.generation + 1);
     } catch (error) {
@@ -255,28 +255,6 @@ export class SessionManager {
       }
       throw error;
     }
-  }
-
-  private async refreshAttestation(existing: StoredSession): Promise<Readonly<Record<string, unknown>> | undefined> {
-    const provider = this.options.attestationProviders.find((candidate) =>
-      candidate.provider === existing.trust.provider && candidate.getRefreshEvidence !== undefined);
-    if (provider?.getRefreshEvidence === undefined) return undefined;
-    let evidence: Readonly<Record<string, unknown>>;
-    try {
-      evidence = await provider.getRefreshEvidence({
-        applicationID: this.options.applicationID,
-        environment: this.options.environment,
-        dpopJkt: (await this.key()).thumbprint,
-        platform: this.options.platform,
-      });
-    } catch (cause) {
-      if (cause instanceof LatchwayError) throw cause;
-      throw new LatchwayError("attestation_provider_missing", "The attestation adapter could not refresh evidence.", { cause });
-    }
-    if (!isPlainObject(evidence)) {
-      throw new LatchwayError("protocol_response_invalid", "The attestation adapter returned invalid refresh evidence.");
-    }
-    return { provider: provider.provider, evidence };
   }
 
   private async persistGrant(grant: SessionGrant, generation: number): Promise<StoredSession> {
