@@ -4,7 +4,7 @@
 self-hosted Latchway gateway. It establishes a short-lived, P-256 DPoP-bound
 session without placing an AI-provider credential in the application.
 
-The package is pre-release and has not been published to npm. Contract 0.1.0,
+The package is pre-release and has not been published to npm. Contract 0.2.0,
 wire protocol 1, and the exact reviewed core bundle are pinned in
 `contract.lock`. `pnpm pack:check` produces a locally installable prerelease
 archive without publishing it.

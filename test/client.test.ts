@@ -149,7 +149,7 @@ describe("Latchway fetch client", () => {
       limits: [{ metric: "requests", remaining: 9 }],
     });
     await expect(browser.diagnostics()).resolves.toMatchObject({
-      server: { contract_version: "0.1.0", protocol_version: 1 },
+      server: { contract_version: "0.2.0", protocol_version: 1 },
       client: { platform: "web", clockOffsetMilliseconds: expect.any(Number) },
     });
 
@@ -303,7 +303,7 @@ class MockGateway {
       return this.json({
         request_id: "req_12345678",
         server_version: "0.1.0",
-        contract_version: "0.1.0",
+        contract_version: "0.2.0",
         protocol_version: 1,
         installation: this.installation(),
         session: { expires_at: new Date(this.now() + 60_000).toISOString(), refresh_available: true },
