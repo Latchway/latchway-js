@@ -25,8 +25,10 @@ const latchway = createLatchwayClient({
   },
   attestationProviders: [
     createTurnstileProvider({
-      getToken: ({ challenge }) =>
-        runTurnstileForChallenge(challenge.attestation.client_data_hash),
+      getToken: ({ challenge }) => runTurnstileForChallenge({
+        action: "latchway_session",
+        cData: challenge.attestation.client_data_hash,
+      }),
       action: "latchway_session",
     }),
   ],
@@ -106,9 +108,12 @@ const appCheckProvider = createFirebaseAppCheckProvider(
 
 Provider tokens are sent only to the configured Latchway origin. Real verdict
 verification remains server-side. Firebase App Check supplies a fresh token on
-refresh. A Turnstile integration may provide `getRefreshToken` when its server
-policy accepts refresh evidence; otherwise an attestation-stale response starts
-a new challenge flow.
+refresh. Turnstile must be executed once per session challenge with widget
+`action` equal to the server-configured action and widget `cData` equal to
+`challenge.attestation.client_data_hash`. Evidence contains only the opaque
+token; Latchway verifies the returned action and binding through Siteverify.
+Because Turnstile tokens are single-use and refresh has no challenge binding,
+an attestation-stale response starts a new challenge flow.
 
 ## Node.js conformance mode
 

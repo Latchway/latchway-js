@@ -3,7 +3,7 @@ import { createTurnstileProvider } from "@latchway/client/turnstile";
 
 export interface SupabaseDependencies {
   getAccessToken(): Promise<string>;
-  getTurnstileToken(clientDataHash: string): Promise<string>;
+  getTurnstileToken(options: Readonly<{ action: string; cData: string }>): Promise<string>;
 }
 
 export function createSupabaseClient(dependencies: SupabaseDependencies) {
@@ -14,9 +14,11 @@ export function createSupabaseClient(dependencies: SupabaseDependencies) {
     identityProvider: "supabase",
     identityTokenProvider: { getIdentityToken: dependencies.getAccessToken },
     attestationProviders: [createTurnstileProvider({
-      getToken: ({ challenge }) => dependencies.getTurnstileToken(
-        challenge.attestation.client_data_hash,
-      ),
+      getToken: ({ challenge }) => dependencies.getTurnstileToken({
+        action: "latchway_session",
+        cData: challenge.attestation.client_data_hash,
+      }),
+      action: "latchway_session",
     })],
     installation: { appVersion: "1.0.0" },
   });

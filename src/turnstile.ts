@@ -1,34 +1,49 @@
 import { LatchwayError } from "./errors.js";
-import type { AttestationContext, AttestationProvider, RefreshAttestationContext } from "./types.js";
+import type { AttestationContext, AttestationProvider } from "./types.js";
+
+const TURNSTILE_ACTION = /^[A-Za-z0-9_-]{1,32}$/u;
+const MAX_TURNSTILE_TOKEN_BYTES = 2_048;
 
 export interface TurnstileProviderOptions {
   getToken(context: AttestationContext): Promise<string>;
-  getRefreshToken?(context: RefreshAttestationContext): Promise<string>;
-  action?: string;
+  /** Must exactly match the server-side Turnstile verifier configuration. */
+  action: string;
 }
 
 export function createTurnstileProvider(options: TurnstileProviderOptions): AttestationProvider {
-  if (typeof options.getToken !== "function" ||
-      (options.getRefreshToken !== undefined && typeof options.getRefreshToken !== "function")) {
-    throw new LatchwayError("client_configuration_invalid", "A Turnstile token callback is required.");
+  if (typeof options.getToken !== "function" || !TURNSTILE_ACTION.test(options.action)) {
+    throw new LatchwayError(
+      "client_configuration_invalid",
+      "A Turnstile token callback and valid action are required.",
+    );
   }
-  const provider: AttestationProvider = {
+  return {
     provider: "turnstile",
     async getEvidence(context) {
-      return turnstileEvidence(await options.getToken(context), options.action);
+      const advertisedAction = context.challenge.attestation.provider_options?.action;
+      if (advertisedAction !== undefined && advertisedAction !== options.action) {
+        throw new LatchwayError(
+          "client_configuration_invalid",
+          "The Turnstile action does not match the Latchway challenge.",
+        );
+      }
+      return turnstileEvidence(await options.getToken(context));
     },
   };
-  const getRefreshToken = options.getRefreshToken;
-  if (getRefreshToken !== undefined) {
-    provider.getRefreshEvidence = async (context) =>
-      turnstileEvidence(await getRefreshToken(context), options.action);
-  }
-  return provider;
 }
 
-function turnstileEvidence(token: string, action: string | undefined): Readonly<Record<string, unknown>> {
-  if (typeof token !== "string" || token.length === 0) {
+function turnstileEvidence(token: string): Readonly<Record<string, unknown>> {
+  if (typeof token !== "string" || token.length === 0 || token.length > MAX_TURNSTILE_TOKEN_BYTES ||
+      token.trim() !== token || !isPrintableASCII(token)) {
     throw new LatchwayError("attestation_provider_missing", "Turnstile did not return a token.");
   }
-  return { token, ...(action === undefined ? {} : { action }) };
+  return { token };
+}
+
+function isPrintableASCII(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value.charCodeAt(index);
+    if (character <= 0x20 || character > 0x7e) return false;
+  }
+  return true;
 }

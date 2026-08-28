@@ -20,6 +20,9 @@ Versioning once package publication begins.
   names before identity acquisition or network dispatch.
 - Restricted automatic proof/session retries to unambiguous nonce and exact
   pre-dispatch Problem responses.
+- Bound Turnstile Siteverify verdicts to the session challenge through widget
+  `cData`, send token-only evidence, and require a fresh challenge instead of
+  attempting to reuse single-use Turnstile evidence during refresh.
 
 ### Added
 

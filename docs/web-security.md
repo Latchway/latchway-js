@@ -37,7 +37,9 @@ Android, or React Native integrations.
 - Configure the gateway allowed-origin list narrowly.
 - Use a strict CSP and minimize third-party JavaScript.
 - Obtain Turnstile or Firebase App Check tokens through their official SDK and
-  let Latchway verify them server-side.
+  let Latchway verify them server-side. Execute Turnstile once for each session
+  challenge with the configured `action` and with `cData` set exactly to the
+  challenge's `client_data_hash`; never reuse the token for refresh.
 - Treat diagnostics as operational data and never attach browser storage
   exports or live tokens to bug reports.
 - Revoke the current installation after suspected origin compromise.
