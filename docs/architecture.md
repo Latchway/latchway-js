@@ -5,7 +5,8 @@
 The SDK consumes Latchway contract 0.4.0 and wire protocol 1. The core commit
 and contract-bundle SHA-256 are immutable inputs in `contract.lock`; vendored
 test vectors are hash-checked in CI. Public TypeScript APIs are handwritten.
-Wire parsing stays internal and rejects malformed security-critical responses.
+Wire parsing stays internal and rejects oversized, deeply nested, invalid UTF-8,
+duplicate-member, and otherwise malformed security-critical responses.
 
 The server owns identity verification, attestation verdicts, principals,
 policy, routes, quotas, prices, usage, and upstream credentials. The SDK owns
@@ -54,12 +55,14 @@ period so crashed tabs cannot permanently block refresh.
    `client_data_hash` and challenge context.
 5. Exchange provider evidence for tokens bound to the installation JWK
    thumbprint.
-6. For each protected request, strip credential placeholders, compute `ath`,
-   create a unique proof for the exact method and URI, and add protocol headers.
+6. For each protected request, reject credential-like query names, strip
+   credential placeholders, compute `ath`, create a unique proof for the exact
+   method and URI, and add protocol headers.
 
 Server Date headers adjust DPoP issued-at time within a bounded 24-hour local
-clock discrepancy. A DPoP nonce is accepted only from the configured gateway
-and used once per retry with a newly signed proof.
+clock discrepancy. A DPoP nonce is accepted only from a canonical, correlated
+Problem response from the configured gateway; whitespace, control characters,
+joined values, and oversized values are rejected before signing a new proof.
 
 ## Fetch semantics
 

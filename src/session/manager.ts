@@ -2,6 +2,7 @@ import { createDPoPProof } from "../dpop/proof.js";
 import { generateInstallationKey, jwkThumbprint, type InstallationKeyRecord, type P256PublicJWK } from "../dpop/key.js";
 import { randomID } from "../encoding.js";
 import { errorFromResponse, LatchwayError } from "../errors.js";
+import { readBoundedJSON } from "../json.js";
 import type { StateStore, StoredSession } from "../storage/state.js";
 import type {
   AttestationProvider,
@@ -78,7 +79,7 @@ export class SessionManager {
   }
 
   recordNonce(value: string | null): boolean {
-    if (value === null || value.length < 16 || value.length > 512) return false;
+    if (value === null || !/^[\u0021-\u002b\u002d-\u007e]{16,512}$/u.test(value)) return false;
     this.nonce = value;
     return true;
   }
@@ -335,7 +336,7 @@ export class SessionManager {
       const nonce = response.headers.get("DPoP-Nonce");
       const error = await errorFromResponse(response);
       if (attempt === 0 && error.code === "dpop_nonce_required" && this.recordNonce(nonce)) continue;
-      if (attempt === 0 && error.code === "dpop_invalid" && clockChanged) continue;
+      if (attempt === 0 && error.code === "dpop_invalid" && nonce === null && clockChanged) continue;
       throw error;
     }
     throw new LatchwayError("dpop_invalid", "Latchway rejected the DPoP proof.");
@@ -385,7 +386,7 @@ export class SessionManager {
 
 async function parseJSON(response: Response): Promise<unknown> {
   try {
-    return await response.json();
+    return await readBoundedJSON(response);
   } catch (cause) {
     throw new LatchwayError("protocol_response_invalid", "Latchway returned malformed JSON.", {
       status: response.status,

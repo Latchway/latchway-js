@@ -13,6 +13,13 @@ Versioning once package publication begins.
   fixtures to the unreleased Latchway contract 0.4.0 checkpoint. The contract
   adds server-owned trusted input accounting while preserving the client API
   shape and wire protocol 1.
+- Hardened control and RFC 9457 response parsing with bounded fatal UTF-8,
+  duplicate-member and nesting rejection, exact error-registry metadata,
+  request-ID correlation, and canonical operation reconciliation identifiers.
+- Expanded provider-credential stripping and reject credential-like query
+  names before identity acquisition or network dispatch.
+- Restricted automatic proof/session retries to unambiguous nonce and exact
+  pre-dispatch Problem responses.
 
 ### Added
 

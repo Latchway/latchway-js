@@ -1,4 +1,5 @@
 import { errorFromResponse, LatchwayError } from "../errors.js";
+import { readBoundedJSON } from "../json.js";
 import { SessionManager } from "../session/manager.js";
 import { isRecord } from "../session/wire.js";
 import type {
@@ -12,16 +13,33 @@ import type {
 import { CONTRACT_VERSION, PROTOCOL_VERSION, SDK_KIND, SDK_VERSION } from "../version.js";
 import type { RuntimeConfiguration } from "./config.js";
 
-const forbiddenCredentialHeaders = [
+const forbiddenCredentialHeaders = new Set([
   "authorization",
   "proxy-authorization",
   "api-key",
+  "api_key",
+  "apikey",
   "x-api-key",
   "openai-api-key",
+  "openai_api_key",
   "x-openai-api-key",
+  "anthropic-api-key",
+  "anthropic_api_key",
   "x-goog-api-key",
+  "x-goog_api_key",
+  "access_token",
+  "auth_token",
+  "x-auth-token",
   "cookie",
-];
+  "key",
+  "token",
+  "x-amz-credential",
+  "x-amz-security-token",
+  "x-amz-signature",
+  "x-goog-signature",
+]);
+
+const forbiddenCredentialQueryNames = forbiddenCredentialHeaders;
 
 export class DefaultLatchwayClient implements LatchwayClient {
   private readonly sessions: SessionManager;
@@ -54,8 +72,11 @@ export class DefaultLatchwayClient implements LatchwayClient {
           cause,
         });
       }
-      this.sessions.recordNonce(response.headers.get("DPoP-Nonce"));
-      if (response.ok || !isLatchwayProblem(response)) return response;
+      if (response.ok) {
+        this.sessions.recordNonce(response.headers.get("DPoP-Nonce"));
+        return response;
+      }
+      if (!isLatchwayProblem(response)) return response;
       const error = await errorFromResponse(response.clone());
       if (!nonceRetried && error.code === "dpop_nonce_required" &&
           this.sessions.recordNonce(response.headers.get("DPoP-Nonce"))) {
@@ -63,7 +84,8 @@ export class DefaultLatchwayClient implements LatchwayClient {
         nonceRetried = true;
         continue;
       }
-      if (!sessionRetried && error.code === "session_expired") {
+      if (!sessionRetried && error.code === "session_expired" &&
+          response.headers.get("DPoP-Nonce") === null) {
         await response.body?.cancel();
         await abortable(this.sessions.refresh(), template.signal);
         sessionRetried = true;
@@ -138,15 +160,18 @@ export class DefaultLatchwayClient implements LatchwayClient {
       } catch (cause) {
         throw new LatchwayError("network_error", "The Latchway control request failed.", { retryable: true, cause });
       }
-      this.sessions.recordNonce(response.headers.get("DPoP-Nonce"));
-      if (response.ok) return response;
+      if (response.ok) {
+        this.sessions.recordNonce(response.headers.get("DPoP-Nonce"));
+        return response;
+      }
       const error = await errorFromResponse(response);
       if (!nonceRetried && error.code === "dpop_nonce_required" &&
           this.sessions.recordNonce(response.headers.get("DPoP-Nonce"))) {
         nonceRetried = true;
         continue;
       }
-      if (!sessionRetried && error.code === "session_expired") {
+      if (!sessionRetried && error.code === "session_expired" &&
+          response.headers.get("DPoP-Nonce") === null) {
         await this.sessions.refresh();
         sessionRetried = true;
         continue;
@@ -183,6 +208,14 @@ export class DefaultLatchwayClient implements LatchwayClient {
     if (target.origin !== this.config.baseURL.origin) {
       throw new LatchwayError("client_configuration_invalid", "Latchway only authorizes requests to the configured gateway origin.");
     }
+    for (const name of target.searchParams.keys()) {
+      if (forbiddenCredentialQueryNames.has(name.toLowerCase())) {
+        throw new LatchwayError(
+          "request_invalid",
+          "Upstream provider credentials must not be supplied in the request URL.",
+        );
+      }
+    }
   }
 }
 
@@ -198,7 +231,7 @@ function isLatchwayProblem(response: Response): boolean {
 
 async function safeJSON(response: Response): Promise<unknown> {
   try {
-    return await response.json();
+    return await readBoundedJSON(response);
   } catch (cause) {
     throw new LatchwayError("protocol_response_invalid", "Latchway returned malformed JSON.", {
       status: response.status,

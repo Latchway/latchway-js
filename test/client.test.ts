@@ -24,6 +24,8 @@ describe("Latchway fetch client", () => {
       headers: {
         Authorization: "Bearer latchway-managed",
         "X-API-Key": "must-not-leave-the-client",
+        "Anthropic-Api-Key": "must-also-not-leave-the-client",
+        "X-Amz-Security-Token": "must-also-not-leave-the-client",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ stream: true }),
@@ -36,9 +38,43 @@ describe("Latchway fetch client", () => {
     expect(gateway.lastProtectedHeaders?.get("Authorization")).toMatch(/^DPoP /u);
     expect(gateway.lastProtectedHeaders?.get("DPoP")).toBeTruthy();
     expect(gateway.lastProtectedHeaders?.get("X-API-Key")).toBeNull();
+    expect(gateway.lastProtectedHeaders?.get("Anthropic-Api-Key")).toBeNull();
+    expect(gateway.lastProtectedHeaders?.get("X-Amz-Security-Token")).toBeNull();
     expect(gateway.lastProtectedHeaders?.get("X-Latchway-Feature")).toBe("assistant");
     expect(gateway.lastProtectedHeaders?.get("X-Latchway-SDK")).toBe("javascript");
     expect(globalThis.fetch).toBe(before);
+  });
+
+  it("rejects provider credentials in query names before session or network work", async () => {
+    const gateway = new MockGateway();
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+    const forbiddenNames = [
+      "authorization", "proxy-authorization", "access_token", "api-key", "api_key", "apikey",
+      "x-api-key", "openai-api-key", "openai_api_key", "x-openai-api-key", "anthropic-api-key",
+      "anthropic_api_key", "x-goog-api-key", "x-goog_api_key", "auth_token", "x-auth-token",
+      "cookie", "key", "token", "x-amz-credential", "x-amz-security-token", "x-amz-signature",
+      "x-goog-signature",
+    ];
+    for (const name of forbiddenNames) {
+      await expect(client.fetch(`/v1/responses?${name.toUpperCase()}=provider-secret`, {
+        method: "POST",
+        body: "{}",
+        latchwayFeature: "assistant",
+      })).rejects.toMatchObject({ code: "request_invalid" });
+    }
+    await expect(client.fetch("/v1/responses?api%5Fkey=provider-secret", {
+      method: "POST",
+      body: "{}",
+      latchwayFeature: "assistant",
+    })).rejects.toMatchObject({ code: "request_invalid" });
+    expect(gateway.challengeCalls).toBe(0);
+    expect(gateway.protectedCalls).toBe(0);
+
+    await expect(client.fetch("/v1/responses?model=gpt-5&stream=true", {
+      method: "POST",
+      body: "{}",
+      latchwayFeature: "assistant",
+    })).resolves.toMatchObject({ status: 200 });
   });
 
   it("uses a fresh proof for one DPoP nonce retry", async () => {
@@ -54,6 +90,28 @@ describe("Latchway fetch client", () => {
     expect(gateway.protectedCalls).toBe(2);
     expect(gateway.protectedProofs[0]).not.toBe(gateway.protectedProofs[1]);
     expect(decodePayload(gateway.protectedProofs[1] ?? "").nonce).toBe(MockGateway.nonce);
+  });
+
+  it("does not retry ambiguous nonces or nonce-bearing session expiry", async () => {
+    const ambiguous = new MockGateway();
+    ambiguous.requireNonceOnce = true;
+    ambiguous.nonceResponse = `${MockGateway.nonce},${MockGateway.nonce}`;
+    const ambiguousResponse = await makeBrowserClient(ambiguous, { mode: "memory" }).fetch(
+      "/v1/responses",
+      { method: "POST", body: "{}", latchwayFeature: "assistant" },
+    );
+    expect(ambiguousResponse.status).toBe(401);
+    expect(ambiguous.protectedCalls).toBe(1);
+
+    const expired = new MockGateway();
+    expired.expireSessionOnce = true;
+    const expiredResponse = await makeBrowserClient(expired, { mode: "memory" }).fetch(
+      "/v1/responses",
+      { method: "POST", body: "{}", latchwayFeature: "assistant" },
+    );
+    expect(expiredResponse.status).toBe(401);
+    expect(expired.protectedCalls).toBe(1);
+    expect(expired.refreshCalls).toBe(0);
   });
 
   it("single-flights refreshes within one client", async () => {
@@ -240,6 +298,8 @@ class MockGateway {
   protectedCalls = 0;
   revokeCalls = 0;
   requireNonceOnce = false;
+  nonceResponse = MockGateway.nonce;
+  expireSessionOnce = false;
   omitClientDataHash = false;
   mismatchJkt = false;
   staleRefreshOnce = false;
@@ -248,6 +308,7 @@ class MockGateway {
   platform: Platform = "web";
   private jkt = "";
   private nonceIssued = false;
+  private sessionExpirationIssued = false;
   private generation = 0;
 
   constructor(private readonly now: () => number = Date.now) {}
@@ -318,9 +379,13 @@ class MockGateway {
     this.lastProtectedHeaders = new Headers(request.headers);
     const proof = request.headers.get("DPoP") ?? "";
     this.protectedProofs.push(proof);
+    if (this.expireSessionOnce && !this.sessionExpirationIssued) {
+      this.sessionExpirationIssued = true;
+      return this.problem("session_expired", 401, { "DPoP-Nonce": MockGateway.nonce });
+    }
     if (this.requireNonceOnce && !this.nonceIssued) {
       this.nonceIssued = true;
-      return this.problem("dpop_nonce_required", 401, { "DPoP-Nonce": MockGateway.nonce });
+      return this.problem("dpop_nonce_required", 401, { "DPoP-Nonce": this.nonceResponse });
     }
     if (this.nonceIssued && decodePayload(proof).nonce !== MockGateway.nonce) {
       return this.problem("dpop_invalid", 401);
@@ -388,17 +453,28 @@ class MockGateway {
   }
 
   private problem(code: string, status: number, extraHeaders: HeadersInit = {}): Response {
+    const policy = {
+      attestation_stale: { title: "Attestation stale", retryable: false },
+      dpop_invalid: { title: "DPoP proof invalid", retryable: false },
+      dpop_nonce_required: { title: "DPoP nonce required", retryable: true },
+      session_expired: { title: "Session expired", retryable: true },
+    }[code];
+    if (policy === undefined) throw new Error(`Missing test problem policy for ${code}.`);
     return new Response(JSON.stringify({
-      type: `https://gateway.example.test/problems/${code}`,
-      title: code,
+      type: `https://latchway.dev/problems/${code}`,
+      title: policy.title,
       status,
       detail: "The request was rejected before upstream dispatch.",
       code,
       request_id: "req_12345678",
-      retryable: code === "dpop_nonce_required",
+      retryable: policy.retryable,
     }), {
       status,
-      headers: { "Content-Type": "application/problem+json", ...Object.fromEntries(new Headers(extraHeaders)) },
+      headers: {
+        "Content-Type": "application/problem+json",
+        "X-Latchway-Request-ID": "req_12345678",
+        ...Object.fromEntries(new Headers(extraHeaders)),
+      },
     });
   }
 }

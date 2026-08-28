@@ -1,3 +1,5 @@
+import { readBoundedJSON } from "./json.js";
+
 export type LatchwayServerErrorCode =
   | "request_invalid"
   | "identity_token_missing"
@@ -88,108 +90,174 @@ export class LatchwayError extends Error {
   }
 }
 
-const serverCodes = new Set<LatchwayServerErrorCode>([
-  "request_invalid", "identity_token_missing", "identity_token_invalid", "identity_token_expired",
-  "identity_reauthentication_required", "attestation_required", "attestation_unsupported",
-  "attestation_invalid", "attestation_stale", "attestation_step_up_required", "dpop_missing",
-  "dpop_invalid", "dpop_replayed", "dpop_nonce_required", "session_expired", "session_revoked",
-  "refresh_token_reused", "installation_revoked", "feature_not_found", "feature_not_allowed",
-  "model_not_allowed", "quota_exceeded", "concurrency_exceeded", "output_limit_exceeded",
-  "pricing_unavailable", "route_not_found", "upstream_unavailable", "upstream_timeout",
-  "upstream_protocol_error", "configuration_invalid", "server_not_ready",
-  "protocol_version_unsupported", "authentication_required", "permission_denied", "resource_not_found",
-  "conflict", "etag_required", "etag_mismatch", "bootstrap_disabled", "rate_limited",
-  "operation_indeterminate", "internal_error",
+interface ServerCodePolicy {
+  readonly status: number;
+  readonly title: string;
+  readonly retryable: boolean;
+}
+
+const serverCodePolicies: Readonly<Record<LatchwayServerErrorCode, ServerCodePolicy>> = {
+  request_invalid: { status: 400, title: "Invalid request", retryable: false },
+  identity_token_missing: { status: 401, title: "Identity token required", retryable: false },
+  identity_token_invalid: { status: 401, title: "Identity token invalid", retryable: false },
+  identity_token_expired: { status: 401, title: "Identity token expired", retryable: false },
+  identity_reauthentication_required: { status: 401, title: "Identity reauthentication required", retryable: false },
+  attestation_required: { status: 401, title: "Attestation required", retryable: false },
+  attestation_unsupported: { status: 400, title: "Attestation unsupported", retryable: false },
+  attestation_invalid: { status: 401, title: "Attestation invalid", retryable: false },
+  attestation_stale: { status: 401, title: "Attestation stale", retryable: false },
+  attestation_step_up_required: { status: 401, title: "Stronger attestation required", retryable: false },
+  dpop_missing: { status: 401, title: "DPoP proof required", retryable: false },
+  dpop_invalid: { status: 401, title: "DPoP proof invalid", retryable: false },
+  dpop_replayed: { status: 401, title: "DPoP proof replayed", retryable: false },
+  dpop_nonce_required: { status: 401, title: "DPoP nonce required", retryable: true },
+  session_expired: { status: 401, title: "Session expired", retryable: true },
+  session_revoked: { status: 401, title: "Session revoked", retryable: false },
+  refresh_token_reused: { status: 401, title: "Refresh token reuse detected", retryable: false },
+  installation_revoked: { status: 403, title: "Installation revoked", retryable: false },
+  feature_not_found: { status: 404, title: "Feature not found", retryable: false },
+  feature_not_allowed: { status: 403, title: "Feature not allowed", retryable: false },
+  model_not_allowed: { status: 403, title: "Model not allowed", retryable: false },
+  quota_exceeded: { status: 429, title: "Quota exceeded", retryable: true },
+  concurrency_exceeded: { status: 429, title: "Concurrency limit exceeded", retryable: true },
+  output_limit_exceeded: { status: 400, title: "Output limit exceeded", retryable: false },
+  pricing_unavailable: { status: 503, title: "Pricing unavailable", retryable: true },
+  route_not_found: { status: 503, title: "No route available", retryable: true },
+  upstream_unavailable: { status: 503, title: "Upstream unavailable", retryable: true },
+  upstream_timeout: { status: 504, title: "Upstream timeout", retryable: false },
+  upstream_protocol_error: { status: 502, title: "Upstream protocol error", retryable: false },
+  configuration_invalid: { status: 422, title: "Configuration invalid", retryable: false },
+  server_not_ready: { status: 503, title: "Server not ready", retryable: true },
+  protocol_version_unsupported: { status: 426, title: "Protocol version unsupported", retryable: false },
+  authentication_required: { status: 401, title: "Administrator authentication required", retryable: false },
+  permission_denied: { status: 403, title: "Permission denied", retryable: false },
+  resource_not_found: { status: 404, title: "Resource not found", retryable: false },
+  conflict: { status: 409, title: "Resource conflict", retryable: false },
+  etag_required: { status: 428, title: "ETag required", retryable: false },
+  etag_mismatch: { status: 412, title: "ETag mismatch", retryable: false },
+  bootstrap_disabled: { status: 409, title: "Bootstrap disabled", retryable: false },
+  rate_limited: { status: 429, title: "Rate limited", retryable: true },
+  operation_indeterminate: { status: 503, title: "Operation outcome indeterminate", retryable: true },
+  internal_error: { status: 500, title: "Internal server error", retryable: false },
+};
+
+const problemKeys = new Set([
+  "type", "title", "status", "detail", "code", "request_id", "retryable", "instance",
+  "retry_after", "operation_id", "feature", "supported_protocol_versions", "errors",
 ]);
 
-interface ProblemDocument {
-  title?: unknown;
-  detail?: unknown;
-  status?: unknown;
-  code?: unknown;
-  request_id?: unknown;
-  retryable?: unknown;
-  retry_after?: unknown;
-  operation_id?: unknown;
-  feature?: unknown;
-  errors?: unknown;
+interface ProblemDocument extends Record<string, unknown> {
+  type: string;
+  title: string;
+  detail: string;
+  status: number;
+  code: LatchwayServerErrorCode;
+  request_id: string;
+  retryable: boolean;
+  retry_after?: string;
+  operation_id?: string;
+  feature?: string;
+  errors?: readonly { path: string; message: string }[];
 }
 
 export async function errorFromResponse(response: Response): Promise<LatchwayError> {
-  const requestID = response.headers.get("X-Latchway-Request-ID") ?? undefined;
+  const rawRequestID = response.headers.get("X-Latchway-Request-ID");
+  const requestID = rawRequestID !== null && isRequestID(rawRequestID) ? rawRequestID : undefined;
+  const contentType = response.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
   const problem = await readProblem(response);
-  if (problem === undefined || typeof problem.code !== "string" || !serverCodes.has(problem.code as LatchwayServerErrorCode)) {
+  if (contentType !== "application/problem+json" || requestID === undefined || problem === undefined ||
+      !isProblemDocument(problem, response.status, requestID)) {
     return new LatchwayError("protocol_response_invalid", `Latchway returned HTTP ${response.status}.`, {
       status: response.status,
       requestID,
     });
   }
 
-  const operationID = typeof problem.operation_id === "string" ? problem.operation_id : undefined;
-  const hasOperationID = Object.hasOwn(problem, "operation_id");
-  if ((problem.code === "operation_indeterminate" && !isOperationID(operationID)) ||
-      (problem.code !== "operation_indeterminate" && hasOperationID)) {
-    return new LatchwayError("protocol_response_invalid", `Latchway returned HTTP ${response.status}.`, {
-      status: response.status,
-      requestID,
-    });
-  }
-
-  const detail = typeof problem.detail === "string" ? problem.detail :
-    typeof problem.title === "string" ? problem.title : `Latchway returned HTTP ${response.status}.`;
-  const validationErrors = Array.isArray(problem.errors)
-    ? problem.errors.flatMap((entry) => isValidationError(entry) ? [{ path: entry.path, message: entry.message }] : [])
-    : undefined;
-  return new LatchwayError(problem.code as LatchwayServerErrorCode, detail, {
-    status: typeof problem.status === "number" ? problem.status : response.status,
-    requestID: typeof problem.request_id === "string" ? problem.request_id : requestID,
-    retryable: problem.retryable === true,
-    retryAfter: typeof problem.retry_after === "string" ? problem.retry_after : undefined,
-    operationID,
-    feature: typeof problem.feature === "string" ? problem.feature : undefined,
-    validationErrors,
+  return new LatchwayError(problem.code, problem.detail, {
+    status: problem.status,
+    requestID: problem.request_id,
+    retryable: problem.retryable,
+    retryAfter: problem.retry_after,
+    operationID: problem.operation_id,
+    feature: problem.feature,
+    validationErrors: problem.errors,
   });
 }
 
-async function readProblem(response: Response): Promise<ProblemDocument | undefined> {
-  const reader = response.body?.getReader();
-  if (reader === undefined) return undefined;
-  const chunks: Uint8Array[] = [];
-  let size = 0;
+async function readProblem(response: Response): Promise<Record<string, unknown> | undefined> {
   try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 65_536) {
-        await reader.cancel();
-        return undefined;
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    const parsed: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    const parsed = await readBoundedJSON(response);
     return isObject(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
 }
 
-function isValidationError(value: unknown): value is { path: string; message: string } {
-  return isObject(value) && typeof value.path === "string" && typeof value.message === "string";
+function isProblemDocument(
+  value: Record<string, unknown>,
+  responseStatus: number,
+  responseRequestID: string,
+): value is ProblemDocument {
+  if (Object.keys(value).some((key) => !problemKeys.has(key)) || !isServerCode(value.code)) return false;
+  const policy = serverCodePolicies[value.code];
+  if (value.type !== `https://latchway.dev/problems/${value.code}` || value.title !== policy.title ||
+      value.status !== responseStatus || value.status !== policy.status || value.retryable !== policy.retryable ||
+      typeof value.detail !== "string" || value.detail.length < 1 || value.detail.length > 2_048 ||
+      value.request_id !== responseRequestID || !isRequestID(value.request_id)) {
+    return false;
+  }
+  if (Object.hasOwn(value, "instance") && !isURIReference(value.instance)) return false;
+  if (Object.hasOwn(value, "retry_after") && !isISODate(value.retry_after)) return false;
+  if (Object.hasOwn(value, "feature") &&
+      (typeof value.feature !== "string" || !/^[a-z][a-z0-9_-]{0,62}$/u.test(value.feature))) return false;
+  if (Object.hasOwn(value, "supported_protocol_versions") &&
+      !isProtocolVersions(value.supported_protocol_versions)) return false;
+  if (Object.hasOwn(value, "errors") && !isValidationErrors(value.errors)) return false;
+
+  const operationID = typeof value.operation_id === "string" ? value.operation_id : undefined;
+  return value.code === "operation_indeterminate"
+    ? isOperationID(operationID)
+    : !Object.hasOwn(value, "operation_id");
 }
 
 function isOperationID(value: string | undefined): value is string {
   return value !== undefined && /^arq_[0-7][0-9A-HJKMNPQRSTVWXYZ]{25}$/.test(value);
+}
+
+function isServerCode(value: unknown): value is LatchwayServerErrorCode {
+  return typeof value === "string" && Object.hasOwn(serverCodePolicies, value);
+}
+
+function isRequestID(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(value);
+}
+
+function isISODate(value: unknown): value is string {
+  return typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(value) &&
+    Number.isFinite(Date.parse(value));
+}
+
+function isURIReference(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 2_048 &&
+    Array.from(value).every((character) => character.charCodeAt(0) > 0x20 && character.charCodeAt(0) !== 0x7f);
+}
+
+function isProtocolVersions(value: unknown): value is readonly number[] {
+  if (!Array.isArray(value)) return false;
+  const versions = new Set<number>();
+  for (const version of value) {
+    if (!Number.isSafeInteger(version) || version < 1 || versions.has(version as number)) return false;
+    versions.add(version as number);
+  }
+  return true;
+}
+
+function isValidationErrors(value: unknown): value is readonly { path: string; message: string }[] {
+  return Array.isArray(value) && value.length <= 100 && value.every((entry) =>
+    isObject(entry) && Object.keys(entry).length === 2 && Object.hasOwn(entry, "path") &&
+    Object.hasOwn(entry, "message") && typeof entry.path === "string" && entry.path.length <= 512 &&
+    typeof entry.message === "string" && entry.message.length <= 1_024);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

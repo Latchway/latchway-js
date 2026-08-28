@@ -9,7 +9,11 @@
 - DPoP binds each access token to the installation key and exact request method
   and URI. Every proof uses a fresh identifier.
 - The SDK signs only the configured gateway origin and strips common provider
-  credential headers before authorization.
+  credential headers before authorization. Credential-like query names are
+  rejected before identity acquisition or network dispatch.
+- Security-sensitive JSON is byte- and depth-bounded, uses fatal UTF-8, rejects
+  duplicate object members, and cannot trigger a retry until canonical Problem
+  metadata correlates with the response request-ID header.
 - Strict CSP is supported: the package does not use `eval`, `new Function`,
   inline-script injection, or a provider script loader.
 

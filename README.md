@@ -78,10 +78,12 @@ const openai = new OpenAI({
 });
 ```
 
-The wrapper deletes incoming `Authorization`, `Proxy-Authorization`, `api-key`,
-`x-api-key`, `openai-api-key`, and Cookie headers before adding the DPoP-bound
-Latchway authorization. The compatibility placeholder is never forwarded.
-The SDK never accepts an upstream provider secret.
+The wrapper deletes incoming authorization, proxy, cookie, common AI-provider,
+Google, and signed-cloud credential headers before adding the DPoP-bound
+Latchway authorization. It rejects their case-insensitive or percent-encoded
+query-name forms before acquiring identity, establishing a session, or making
+a network request. Compatibility placeholders are never forwarded, and the SDK
+never accepts an upstream provider secret.
 
 ## Firebase and Turnstile adapters
 
@@ -146,10 +148,17 @@ Ordinary `fetch` semantics are retained: final non-2xx protected responses are
 returned untouched for OpenAI-compatible libraries. Call
 `errorFromResponse(response.clone())` to map one explicitly.
 
-The client retries once with a fresh proof for a valid `DPoP-Nonce` challenge.
-It also refreshes once after a server `session_expired` response, which the
-protocol guarantees occurs before upstream dispatch. It never blindly replays
-upstream timeout or protocol failures.
+Control and Problem JSON is limited to 64 KiB, decoded as fatal UTF-8, bounded
+to 64 nesting levels, and rejected when any object contains duplicate member
+names, including Unicode-escaped aliases. Problem metadata must exactly match
+the contract's media type, status, title, retryability, request-ID header, and
+operation-ID rules before it can influence retry behavior.
+
+The client retries once with a fresh proof for a canonical, unambiguous
+`DPoP-Nonce` challenge. It also refreshes once after a canonical
+`session_expired` response with no nonce, which the protocol guarantees occurs
+before upstream dispatch. It never blindly replays upstream timeout or protocol
+failures.
 
 ## Exports
 
