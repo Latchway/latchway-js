@@ -7,6 +7,12 @@ Versioning once package publication begins.
 
 ## [Unreleased]
 
+### Changed
+
+- Synchronized the SDK contract lock, compatibility constants, and canonical
+  fixtures to the unreleased Latchway contract 0.3.0 checkpoint while keeping
+  wire protocol 1.
+
 ### Added
 
 - Initial governance, contribution, security, and architecture documentation.

@@ -39,6 +39,7 @@ export type LatchwayServerErrorCode =
   | "etag_mismatch"
   | "bootstrap_disabled"
   | "rate_limited"
+  | "operation_indeterminate"
   | "internal_error";
 
 export type LatchwayClientErrorCode =
@@ -57,6 +58,7 @@ export interface LatchwayErrorOptions {
   requestID?: string | undefined;
   retryable?: boolean | undefined;
   retryAfter?: string | undefined;
+  operationID?: string | undefined;
   feature?: string | undefined;
   validationErrors?: readonly Readonly<{ path: string; message: string }>[] | undefined;
   cause?: unknown;
@@ -68,6 +70,7 @@ export class LatchwayError extends Error {
   readonly requestID: string | undefined;
   readonly retryable: boolean;
   readonly retryAfter: string | undefined;
+  readonly operationID: string | undefined;
   readonly feature: string | undefined;
   readonly validationErrors: readonly Readonly<{ path: string; message: string }>[] | undefined;
 
@@ -79,6 +82,7 @@ export class LatchwayError extends Error {
     this.requestID = options.requestID;
     this.retryable = options.retryable ?? false;
     this.retryAfter = options.retryAfter;
+    this.operationID = options.operationID;
     this.feature = options.feature;
     this.validationErrors = options.validationErrors;
   }
@@ -94,7 +98,8 @@ const serverCodes = new Set<LatchwayServerErrorCode>([
   "pricing_unavailable", "route_not_found", "upstream_unavailable", "upstream_timeout",
   "upstream_protocol_error", "configuration_invalid", "server_not_ready",
   "protocol_version_unsupported", "authentication_required", "permission_denied", "resource_not_found",
-  "conflict", "etag_required", "etag_mismatch", "bootstrap_disabled", "rate_limited", "internal_error",
+  "conflict", "etag_required", "etag_mismatch", "bootstrap_disabled", "rate_limited",
+  "operation_indeterminate", "internal_error",
 ]);
 
 interface ProblemDocument {
@@ -105,6 +110,7 @@ interface ProblemDocument {
   request_id?: unknown;
   retryable?: unknown;
   retry_after?: unknown;
+  operation_id?: unknown;
   feature?: unknown;
   errors?: unknown;
 }
@@ -113,6 +119,16 @@ export async function errorFromResponse(response: Response): Promise<LatchwayErr
   const requestID = response.headers.get("X-Latchway-Request-ID") ?? undefined;
   const problem = await readProblem(response);
   if (problem === undefined || typeof problem.code !== "string" || !serverCodes.has(problem.code as LatchwayServerErrorCode)) {
+    return new LatchwayError("protocol_response_invalid", `Latchway returned HTTP ${response.status}.`, {
+      status: response.status,
+      requestID,
+    });
+  }
+
+  const operationID = typeof problem.operation_id === "string" ? problem.operation_id : undefined;
+  const hasOperationID = Object.hasOwn(problem, "operation_id");
+  if ((problem.code === "operation_indeterminate" && !isOperationID(operationID)) ||
+      (problem.code !== "operation_indeterminate" && hasOperationID)) {
     return new LatchwayError("protocol_response_invalid", `Latchway returned HTTP ${response.status}.`, {
       status: response.status,
       requestID,
@@ -129,6 +145,7 @@ export async function errorFromResponse(response: Response): Promise<LatchwayErr
     requestID: typeof problem.request_id === "string" ? problem.request_id : requestID,
     retryable: problem.retryable === true,
     retryAfter: typeof problem.retry_after === "string" ? problem.retry_after : undefined,
+    operationID,
     feature: typeof problem.feature === "string" ? problem.feature : undefined,
     validationErrors,
   });
@@ -169,6 +186,10 @@ async function readProblem(response: Response): Promise<ProblemDocument | undefi
 
 function isValidationError(value: unknown): value is { path: string; message: string } {
   return isObject(value) && typeof value.path === "string" && typeof value.message === "string";
+}
+
+function isOperationID(value: string | undefined): value is string {
+  return value !== undefined && /^arq_[0-7][0-9A-HJKMNPQRSTVWXYZ]{25}$/.test(value);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

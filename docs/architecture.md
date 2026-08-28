@@ -2,7 +2,7 @@
 
 ## Contract boundary
 
-The SDK consumes Latchway contract 0.2.0 and wire protocol 1. The core commit
+The SDK consumes Latchway contract 0.3.0 and wire protocol 1. The core commit
 and contract-bundle SHA-256 are immutable inputs in `contract.lock`; vendored
 test vectors are hash-checked in CI. Public TypeScript APIs are handwritten.
 Wire parsing stays internal and rejects malformed security-critical responses.
