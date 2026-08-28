@@ -62,12 +62,15 @@
     "examples:check": "tsc -p tsconfig.examples.json --noEmit",
     "exports:check": "node scripts/verify-exports.mjs",
     "lint": "eslint . --max-warnings=0",
-    "pack:check": "pnpm build && node scripts/verify-pack.mjs",
+    "pack:check": "node scripts/verify-pack.mjs",
+    "release:check": "node scripts/verify-release-candidate.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify:contracts": "node scripts/verify-contract.mjs",
-    "verify:reproducible": "node scripts/verify-reproducible.mjs"
+    "verify:release-policy": "node scripts/verify-release-policy.mjs",
+    "verify:reproducible": "node scripts/verify-reproducible.mjs",
+    "verify:workflows": "node scripts/verify-workflows.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

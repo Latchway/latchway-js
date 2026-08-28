@@ -1,0 +1,133 @@
+name: Release JavaScript SDK
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: js-sdk-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.repository == 'Latchway/latchway-js'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      artifact_name: ${{ steps.package.outputs.artifact_name }}
+      integrity: ${{ steps.package.outputs.integrity }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+      tarball: ${{ steps.package.outputs.tarball }}
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.ref }}
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Verify annotated stable release tag
+        run: node scripts/verify-release-tag.mjs
+      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: 10.15.0
+          run_install: false
+      - name: Install locked development dependencies without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Run complete release-candidate gate
+        run: pnpm release:check
+      - name: Re-verify tag and capture evidence
+        run: node scripts/verify-release-tag.mjs
+        env:
+          RELEASE_TAG_EVIDENCE_PATH: .artifacts/tag-evidence.json
+      - name: Export verified package coordinates
+        id: package
+        run: node scripts/release-artifact-output.mjs >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: |
+            .artifacts/${{ steps.package.outputs.tarball }}
+            .artifacts/SHA256SUMS
+            .artifacts/build-reproducibility.json
+            .artifacts/contract-evidence.json
+            .artifacts/package-evidence.json
+            .artifacts/release-candidate-evidence.json
+            .artifacts/tag-evidence.json
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 14
+
+  publish:
+    if: github.repository == 'Latchway/latchway-js'
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    env:
+      NPM_CONFIG_CACHE: ${{ runner.temp }}/latchway-npm-cache
+      NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/latchway-release.npmrc
+      RELEASE_TARBALL: .artifacts/${{ needs.verify.outputs.tarball }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.ref }}
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.verify.outputs.artifact_name }}
+          path: .artifacts
+      - name: Prepare tokenless npm OIDC runtime
+        run: node scripts/prepare-publish-runtime.mjs
+      - name: Re-verify annotated release tag
+        run: node scripts/verify-release-tag.mjs
+      - name: Verify downloaded release artifact
+        run: node scripts/verify-release-artifact.mjs
+        env:
+          EXPECTED_INTEGRITY: ${{ needs.verify.outputs.integrity }}
+          EXPECTED_SHA256: ${{ needs.verify.outputs.sha256 }}
+          EXPECTED_SOURCE_COMMIT: ${{ github.sha }}
+          EXPECTED_TARBALL: ${{ needs.verify.outputs.tarball }}
+          EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+      - name: Check immutable npm version state
+        id: registry
+        run: node scripts/check-registry-state.mjs
+      - name: Publish exact verified archive with npm OIDC and provenance
+        if: steps.registry.outputs.publish_required == 'true'
+        run: npm publish "$RELEASE_TARBALL" --provenance --access public --registry=https://registry.npmjs.org/
+      - name: Verify registry integrity, exports, signatures, and provenance
+        run: node scripts/verify-published.mjs
+      - name: Create GitHub release from the verified tag
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          "$RELEASE_TARBALL"
+          .artifacts/SHA256SUMS
+          .artifacts/build-reproducibility.json
+          .artifacts/contract-evidence.json
+          .artifacts/package-evidence.json
+          .artifacts/post-publish-evidence.json
+          .artifacts/publish-input-evidence.json
+          .artifacts/release-candidate-evidence.json
+          .artifacts/tag-evidence.json
+          --verify-tag
+          --title "@latchway/client ${{ needs.verify.outputs.version }}"
+          --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

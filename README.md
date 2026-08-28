@@ -9,6 +9,11 @@ wire protocol 1, and the exact reviewed core bundle are pinned in
 `contract.lock`. `pnpm pack:check` produces a locally installable prerelease
 archive without publishing it.
 
+The tag-triggered release workflow is also fail-closed while this development
+version remains in `package.json`. See [`docs/releasing.md`](docs/releasing.md)
+for the external npm trusted-publisher setup, stable-version procedure, and
+artifact/provenance checks. No repository command publishes implicitly.
+
 ## Browser client
 
 ```ts
@@ -183,6 +188,7 @@ pnpm verify:contracts
 pnpm check
 pnpm verify:reproducible
 pnpm pack:check
+pnpm release:check
 ```
 
 The checks cover strict TypeScript, lint, canonical DPoP and attestation
@@ -191,4 +197,5 @@ streaming, strict CSP, subpath exports, deterministic output, and package
 contents.
 
 See [examples](examples/README.md), [architecture](docs/architecture.md),
-[security policy](SECURITY.md), and [contributing guide](CONTRIBUTING.md).
+[release procedure](docs/releasing.md), [security policy](SECURITY.md), and
+[contributing guide](CONTRIBUTING.md).

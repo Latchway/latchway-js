@@ -14,5 +14,11 @@ verdict.
 
 Live browser provider conformance remains environment-owned because it needs a
 real Firebase App Check project or Turnstile site key, an allowed HTTPS origin,
-and a running server verifier. npm publication also remains a release action;
-this repository only builds and validates the prerelease archive.
+and a running server verifier.
+
+npm publication remains an explicit external release action. The repository
+validates a byte-identical double pack, an exact archive allowlist, a credential
+scan, and clean ESM and TypeScript consumers. A stable annotated version tag can
+then invoke the separately permissioned OIDC workflow described in
+[`releasing.md`](releasing.md). The current `0.1.0-dev.0` version intentionally
+fails the stable-tag gate and has not been published by these checks.

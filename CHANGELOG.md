@@ -35,3 +35,6 @@ Versioning once package publication begins.
   stripping, nonce retry, stable errors, quota, diagnostics, and revocation.
 - Firebase identity/App Check and Turnstile adapter entry points.
 - Strict TypeScript, lint, unit, CSP, export, package, and reproducibility gates.
+- SHA-pinned CI and a fail-closed annotated-tag release path with deterministic
+  archive evidence, clean-package consumers, npm OIDC trusted publishing,
+  provenance/signature verification, and checksummed GitHub release assets.

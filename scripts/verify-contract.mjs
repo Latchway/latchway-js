@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const expected = {
   contract: "0.4.0",
@@ -9,6 +9,14 @@ const expected = {
   minimumServer: "0.4.0",
   maximumTestedServer: "0.4.x",
 };
+const expectedLock = `contract_version: ${expected.contract}
+core_release: unreleased
+core_commit: ${expected.commit}
+bundle_sha256: "${expected.bundle}"
+minimum_server_version: ${expected.minimumServer}
+maximum_tested_server_version: ${expected.maximumTestedServer}
+wire_protocol_version: ${expected.protocol}
+`;
 const fixtureHashes = new Map([
   ["attestation-binding-v1.json", "03e54217ba0da1cac9d882abd26f8cd21642f62dc1fbfaf61c32fc5261d6754e"],
   ["dpop-v1.json", "bd897803b910c58926b3f46c1102a1d33c1df89f0266774e6f12cf144d71e587"],
@@ -16,23 +24,34 @@ const fixtureHashes = new Map([
 ]);
 
 const lock = await readFile(new URL("../contract.lock", import.meta.url), "utf8");
-for (const [field, value] of [
-  ["contract_version", expected.contract],
-  ["core_commit", expected.commit],
-  ["bundle_sha256", `"${expected.bundle}"`],
-  ["minimum_server_version", expected.minimumServer],
-  ["maximum_tested_server_version", expected.maximumTestedServer],
-  ["wire_protocol_version", String(expected.protocol)],
-]) {
-  if (!lock.split("\n").includes(`${field}: ${value}`)) throw new Error(`contract.lock has an unexpected ${field}.`);
+if (lock !== expectedLock) {
+  throw new Error("contract.lock must byte-for-byte match the reviewed core contract pin.");
 }
 
+const verifiedFixtures = [];
 for (const [name, expectedHash] of fixtureHashes) {
   const bytes = await readFile(new URL(`../test/fixtures/contract/${name}`, import.meta.url));
   const actual = createHash("sha256").update(bytes).digest("hex");
   if (actual !== expectedHash) throw new Error(`${name} does not match the pinned core contract.`);
+  verifiedFixtures.push({ name, sha256: actual });
 }
 const protocol = JSON.parse(await readFile(new URL("../test/fixtures/contract/protocol-version.json", import.meta.url), "utf8"));
 if (protocol.contract_version !== expected.contract || protocol.wire_protocol.current !== expected.protocol) {
   throw new Error("The vendored protocol manifest is incompatible with contract.lock.");
 }
+
+const artifacts = new URL("../.artifacts/", import.meta.url);
+await mkdir(artifacts, { recursive: true });
+await writeFile(
+  new URL("contract-evidence.json", artifacts),
+  `${JSON.stringify({
+    schema_version: 1,
+    contract_version: expected.contract,
+    core_commit: expected.commit,
+    bundle_sha256: expected.bundle,
+    wire_protocol_version: expected.protocol,
+    contract_lock_sha256: createHash("sha256").update(lock).digest("hex"),
+    fixtures: verifiedFixtures,
+  }, null, 2)}\n`,
+  { mode: 0o600 },
+);
