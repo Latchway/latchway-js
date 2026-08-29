@@ -255,20 +255,20 @@ jobs:
           EXPECTED_RELEASE_TAG: ${{ needs.promote.outputs.tag }}
           EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
         run: node scripts/verify-published.mjs
-      - name: Create GitHub release from the verified tag
-        run: >-
-          gh release create "$RELEASE_TAG"
-          "$RELEASE_TARBALL"
-          .artifacts/SHA256SUMS
-          .artifacts/build-reproducibility.json
-          .artifacts/contract-evidence.json
-          .artifacts/package-evidence.json
-          .artifacts/post-publish-evidence.json
-          .artifacts/publish-input-evidence.json
-          .artifacts/release-candidate-evidence.json
-          .artifacts/tag-evidence.json
-          --verify-tag
-          --title "@latchway/client ${{ needs.verify.outputs.version }}"
-          --generate-notes
+      - name: Reconcile immutable GitHub release assets
+        run: |
+          python3 scripts/reconcile-github-release.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --title "@latchway/client ${{ needs.verify.outputs.version }}" \
+            "$RELEASE_TARBALL" \
+            .artifacts/SHA256SUMS \
+            .artifacts/build-reproducibility.json \
+            .artifacts/contract-evidence.json \
+            .artifacts/package-evidence.json \
+            .artifacts/post-publish-evidence.json \
+            .artifacts/publish-input-evidence.json \
+            .artifacts/release-candidate-evidence.json \
+            .artifacts/tag-evidence.json
         env:
           GH_TOKEN: ${{ github.token }}

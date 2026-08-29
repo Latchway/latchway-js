@@ -76,14 +76,19 @@ prerelease suffix fail before dependency installation. The release workflow:
    validates npm signature and trusted-publisher metadata, verifies the SLSA
    provenance subject and source workflow/commit, and runs
    `npm audit signatures`.
-5. Creates the GitHub release only after all registry checks pass. The release
-   includes the tarball, `SHA256SUMS`, and verification evidence.
+5. Reconciles the GitHub release only after all registry checks pass. Existing
+   assets are downloaded and compared byte for byte, only missing assets may be
+   attached, and no asset is ever overwritten. A final release must already
+   contain exactly the intended asset set; otherwise the workflow stops.
 
 If npm accepts the package but a later step is interrupted, rerunning the same
 tag is recoverable only when the immutable npm version has the exact verified
 integrity. The post-publish provenance checks still have to bind it to the same
 canonical tag, commit, workflow, and run; a merely matching version string is
-never treated as success.
+never treated as success. The GitHub release is equally resumable: an
+interrupted draft can be completed only when its metadata and every existing
+asset match the exact rerun inputs, while an identical final release is a
+read-only success.
 
 ## Consumer verification
 

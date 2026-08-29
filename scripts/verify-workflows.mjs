@@ -37,6 +37,7 @@ for (const required of [
   "npm publish \"$RELEASE_TARBALL\" --provenance --access public",
   "node scripts/verify-release-tag.mjs",
   "node scripts/verify-published.mjs",
+  "python3 scripts/reconcile-github-release.py",
 ]) {
   if (!release.includes(required)) throw new Error(`release.yml is missing the fail-closed control: ${required}`);
 }
@@ -49,6 +50,7 @@ for (const forbidden of [
   "secrets.",
   "workflow_dispatch",
   "pull_request_target",
+  "--clobber",
 ]) {
   if (release.includes(forbidden)) throw new Error(`release.yml must not contain ${forbidden}.`);
 }
