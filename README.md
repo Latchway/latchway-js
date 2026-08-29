@@ -154,7 +154,7 @@ its debug verifier.
 
 ## Errors and control methods
 
-`quota(feature)`, `diagnostics()`, `revokeCurrentInstallation()`, and session
+`quota(feature)`, `diagnostics()`, `refresh()`, `revokeCurrentInstallation()`, and session
 setup failures throw `LatchwayError` with a stable `code`, HTTP status, request
 ID, retryability, and safe validation fields when supplied by the server.
 Ordinary `fetch` semantics are retained: final non-2xx protected responses are

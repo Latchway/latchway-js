@@ -16,6 +16,20 @@ Live browser provider conformance remains environment-owned because it needs a
 real Firebase App Check project or Turnstile site key, an allowed HTTPS origin,
 and a running server verifier.
 
+The core protected release-evidence workflow uses `scripts/live-conformance.mjs`
+for the Node live path after building this exact checkout. It accepts only the
+core-produced canonical candidate manifest and HTTPS gateway origin, verifies
+that this clean checkout equals the manifest's JavaScript commit, and requires
+the runtime/server version, contract, protocol, core commit, and release image
+identity to agree. Protected environment values provide the application,
+environment, identity provider, model, real feature, guaranteed-absent error
+mapping feature, and either `firebase_app_check` or `turnstile`. The identity
+and attestation tokens are read only from
+`LATCHWAY_LIVE_SDK_IDENTITY_TOKEN` and
+`LATCHWAY_LIVE_SDK_ATTESTATION_TOKEN`; they never enter arguments or retained
+output. The retained report contains concrete canonical response metadata,
+bounded stream/quota facts, and SHA-256-only session-rotation observations.
+
 npm publication remains an explicit external release action. The repository
 validates a byte-identical double pack, an exact archive allowlist, a credential
 scan, and clean ESM and TypeScript consumers. A stable annotated version tag can

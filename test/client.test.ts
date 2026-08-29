@@ -128,6 +128,15 @@ describe("Latchway fetch client", () => {
     expect(Object.keys(gateway.refreshBodies[0] ?? {})).toEqual(["refresh_token"]);
   });
 
+  it("exposes explicit rotation without returning either credential", async () => {
+    const gateway = new MockGateway();
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+    await client.fetch("/v1/responses", { method: "POST", body: "{}", latchwayFeature: "assistant" });
+    await expect(client.refresh()).resolves.toBeUndefined();
+    expect(gateway.refreshCalls).toBe(1);
+    expect(Object.keys(gateway.refreshBodies[0] ?? {})).toEqual(["refresh_token"]);
+  });
+
   it("starts a fresh challenge when refresh requires renewed attestation", async () => {
     let now = Date.now();
     vi.spyOn(Date, "now").mockImplementation(() => now);

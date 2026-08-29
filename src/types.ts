@@ -141,6 +141,8 @@ export interface LatchwayClient {
   fetch(input: RequestInfo | URL, init?: LatchwayFetchInit): Promise<Response>;
   authorize(request: Request, feature: string): Promise<Request>;
   quota(feature: string): Promise<QuotaSnapshot>;
+  /** Explicitly rotates session credentials without exposing either token. */
+  refresh(): Promise<void>;
   revokeCurrentInstallation(): Promise<void>;
   diagnostics(): Promise<Diagnostics>;
 }

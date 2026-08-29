@@ -118,6 +118,10 @@ export class DefaultLatchwayClient implements LatchwayClient {
     return parseQuota(await safeJSON(response));
   }
 
+  async refresh(): Promise<void> {
+    await this.sessions.refresh();
+  }
+
   async revokeCurrentInstallation(): Promise<void> {
     const response = await this.sendControl("DELETE", "/client/v1/installations/current");
     if (response.status !== 204) {
