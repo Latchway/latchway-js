@@ -1,6 +1,6 @@
 {
   "name": "@latchway/client",
-  "version": "0.1.0-dev.0",
+  "version": "1.0.0",
   "description": "DPoP-bound browser and Node.js client for the Latchway AI gateway",
   "license": "Apache-2.0",
   "type": "module",

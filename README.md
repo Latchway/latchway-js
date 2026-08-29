@@ -4,14 +4,15 @@
 self-hosted Latchway gateway. It establishes a short-lived, P-256 DPoP-bound
 session without placing an AI-provider credential in the application.
 
-The package is pre-release and has not been published to npm. Contract 0.4.0,
+Version `1.0.0` is the intended stable source candidate and has not yet been
+published to npm. Contract 0.4.0,
 wire protocol 1, and the exact reviewed core bundle are pinned in
 `contract.lock`. `pnpm pack:check` produces a locally installable prerelease
 archive without publishing it.
 
-The tag-triggered release workflow is also fail-closed while this development
-version remains in `package.json`. See [`docs/releasing.md`](docs/releasing.md)
-for the external npm trusted-publisher setup, stable-version procedure, and
+The tag-triggered release workflow remains fail-closed until promotion evidence
+authorizes the exact commit. See [`docs/releasing.md`](docs/releasing.md) for
+the external npm trusted-publisher setup, stable-version procedure, and
 artifact/provenance checks. No repository command publishes implicitly.
 
 ## Browser client

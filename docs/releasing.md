@@ -1,9 +1,9 @@
 # Releasing `@latchway/client`
 
-The repository contains a fail-closed npm release workflow, but the current
-`0.1.0-dev.0` package is intentionally not publishable. Adding a stable version
-and pushing an annotated tag are explicit maintainer release actions. This
-repository change does not create a tag, an npm version, or a GitHub release.
+The repository contains a fail-closed npm release workflow. Version `1.0.0` is
+the intended stable source coordinate; pushing its annotated tag remains an
+explicit maintainer release action. Preparing that version does not create a
+tag, an npm version, or a GitHub release.
 
 ## Registry and repository setup
 

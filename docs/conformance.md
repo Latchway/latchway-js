@@ -20,5 +20,5 @@ npm publication remains an explicit external release action. The repository
 validates a byte-identical double pack, an exact archive allowlist, a credential
 scan, and clean ESM and TypeScript consumers. A stable annotated version tag can
 then invoke the separately permissioned OIDC workflow described in
-[`releasing.md`](releasing.md). The current `0.1.0-dev.0` version intentionally
-fails the stable-tag gate and has not been published by these checks.
+[`releasing.md`](releasing.md). The `1.0.0` source coordinate passes the stable
+version check, but has not been published by these source-only checks.
