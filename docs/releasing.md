@@ -1,9 +1,10 @@
 # Releasing `@latchway/client`
 
 The repository contains a fail-closed npm release workflow. Version `1.0.0` is
-the intended stable source coordinate; pushing its annotated tag remains an
-explicit maintainer release action. Preparing that version does not create a
-tag, an npm version, or a GitHub release.
+the intended stable source coordinate. Preparing that version does not create a
+tag, an npm version, or a GitHub release. Only the verified core-promotion
+`repository_dispatch` may start the release workflow; that workflow owns
+creation or verification of the evidence-bound annotated SDK tag.
 
 ## Registry and repository setup
 
@@ -57,19 +58,16 @@ Review `.artifacts/package-evidence.json`,
 `.artifacts/release-candidate-evidence.json`, and `.artifacts/SHA256SUMS`.
 Generated artifacts are ignored by Git and must not be committed.
 
-## Tag and publish
+## Promotion dispatch and publish
 
-After the release commit is on `main`, create and push an annotated tag whose
-name exactly matches `v` plus `package.json` version:
-
-```bash
-git tag -a vX.Y.Z -m "@latchway/client X.Y.Z"
-git push origin vX.Y.Z
-```
-
-Lightweight tags, non-canonical repositories, commits not reachable from
-`origin/main`, mismatched versions, and any version containing `-dev` or another
-prerelease suffix fail before dependency installation. The release workflow:
+Do not create or push the SDK tag manually. After the reviewed source commit is
+part of the accepted cross-repository candidate, the core promotion workflow
+sends `latchway_release_promoted` with the exact SDK commit, intended tag, core
+tag, immutable image digest, and attested promotion-report coordinates. The SDK
+workflow verifies that envelope and report before it creates, or byte-for-byte
+verifies, the annotated tag through the GitHub API. A conflicting tag,
+mismatched version, or non-stable JavaScript coordinate fails before dependency
+installation or publication. The release workflow then:
 
 1. Repeats the full candidate gate in a clean GitHub-hosted runner.
 2. Transfers only the verified tarball, checksum, and machine-readable evidence

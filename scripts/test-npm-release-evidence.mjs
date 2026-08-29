@@ -155,6 +155,15 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
   assert.doesNotMatch(workflow, /--source-commit/u);
 });
 
+test("release documentation forbids maintainer-created tags", async () => {
+  const documentation = await readFile(new URL("../docs/releasing.md", import.meta.url), "utf8");
+  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+  assert.match(documentation, /repository_dispatch/u);
+  assert.match(documentation, /tag manually/iu);
+  assert.doesNotMatch(documentation, /\n(?:git tag|git push)\s/u);
+  assert.doesNotMatch(`${documentation}\n${readme}`, /tag-triggered release workflow|the tag workflow/iu);
+});
+
 function provenanceStatement(invocation, overrides = {}) {
   const resolvedCommit = overrides.commit ?? commit;
   return {

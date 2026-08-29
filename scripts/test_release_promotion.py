@@ -373,6 +373,13 @@ class PromotionVerifierTests(unittest.TestCase):
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_release_docs_delegate_tag_creation_to_promoted_dispatch(self) -> None:
+        documentation = (ROOT / "docs/releasing.md").read_text(encoding="utf-8")
+        self.assertIn("repository_dispatch", documentation)
+        self.assertIn("tag manually", documentation.lower())
+        self.assertNotIn("\ngit tag ", documentation)
+        self.assertNotIn("\ngit push", documentation)
+
     def test_only_attested_core_dispatch_can_reach_tag_and_publication(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         self.assertIn("repository_dispatch:", workflow)

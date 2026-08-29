@@ -23,6 +23,7 @@ for (const name of entries) {
 }
 
 const release = await readFile(new URL("release.yml", workflows), "utf8");
+const releaseDocumentation = await readFile(new URL("../docs/releasing.md", import.meta.url), "utf8");
 for (const required of [
   "repository_dispatch:",
   "latchway_release_promoted",
@@ -67,4 +68,9 @@ const secretReferences = [...release.matchAll(/\$\{\{\s*secrets\.([A-Z0-9_]+)\s*
 if (secretReferences.length !== 2 || secretReferences.some((name) =>
   name !== "LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN")) {
   throw new Error("release.yml may use only the protected immutable-release settings credential.");
+}
+if (!releaseDocumentation.includes("repository_dispatch")
+  || !releaseDocumentation.toLowerCase().includes("tag manually")
+  || /\n(?:git tag|git push)\s/u.test(releaseDocumentation)) {
+  throw new Error("Release documentation must delegate tag creation to the verified promotion dispatch.");
 }

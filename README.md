@@ -10,8 +10,8 @@ wire protocol 1, and the exact reviewed core bundle are pinned in
 `contract.lock`. `pnpm pack:check` produces a locally installable prerelease
 archive without publishing it.
 
-The tag-triggered release workflow remains fail-closed until promotion evidence
-authorizes the exact commit. See [`docs/releasing.md`](docs/releasing.md) for
+The promotion-dispatched release workflow remains fail-closed until promotion
+evidence authorizes the exact commit. See [`docs/releasing.md`](docs/releasing.md) for
 the external npm trusted-publisher setup, stable-version procedure, and
 artifact/provenance checks. No repository command publishes implicitly.
 
