@@ -206,6 +206,7 @@ jobs:
     environment: npm
     permissions:
       actions: read
+      attestations: write
       contents: write
       id-token: write
     env:
@@ -244,6 +245,13 @@ jobs:
           EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
           EXPECTED_TARBALL: ${{ needs.verify.outputs.tarball }}
           EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+      - name: Attest reviewed npm package and reproducibility inputs
+        uses: actions/attest-build-provenance@e4d4f7c39adfa4c260fb5c147f0622000aa14b99 # v4.0.0
+        with:
+          subject-path: |
+            ${{ env.RELEASE_TARBALL }}
+            .artifacts/package-evidence.json
+            .artifacts/build-reproducibility.json
       - name: Check immutable npm version state
         id: registry
         run: node scripts/check-registry-state.mjs
