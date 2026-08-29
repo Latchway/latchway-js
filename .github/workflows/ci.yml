@@ -28,5 +28,7 @@ jobs:
         with:
           node-version: 24.19.0
           cache: pnpm
+      - name: Install pinned actionlint
+        run: node scripts/install-actionlint.mjs
       - run: pnpm install --frozen-lockfile
       - run: pnpm release:check

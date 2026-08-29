@@ -167,6 +167,8 @@ jobs:
         with:
           node-version: 24.19.0
           package-manager-cache: false
+      - name: Install pinned actionlint
+        run: node scripts/install-actionlint.mjs
       - name: Verify annotated stable release tag
         env:
           EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
@@ -219,12 +221,17 @@ jobs:
       contents: write
       id-token: write
     env:
-      NPM_CONFIG_CACHE: ${{ runner.temp }}/latchway-npm-cache
-      NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/latchway-release.npmrc
       RELEASE_TARBALL: .artifacts/${{ needs.verify.outputs.tarball }}
       RELEASE_COMMIT: ${{ needs.promote.outputs.commit }}
       RELEASE_TAG: ${{ needs.promote.outputs.tag }}
     steps:
+      - name: Configure isolated npm runtime paths
+        shell: bash
+        run: |
+          printf '%s\n' \
+            "NPM_CONFIG_CACHE=$RUNNER_TEMP/latchway-npm-cache" \
+            "NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/latchway-release.npmrc" \
+            >> "$GITHUB_ENV"
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
