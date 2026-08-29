@@ -23,11 +23,20 @@ const manifest = await readRootManifest();
 const packageEvidence = JSON.parse(await readFile(join(ARTIFACTS_PATH, "package-evidence.json"), "utf8"));
 const localArchive = join(ARTIFACTS_PATH, packageEvidence.tarball);
 const localBytes = await readFile(localArchive);
-const expectedCommit = requiredEnvironment("GITHUB_SHA", /^[0-9a-f]{40}$/u);
+const expectedCommit = requiredEnvironment("EXPECTED_SOURCE_COMMIT", /^[0-9a-f]{40}$/u);
+const workflowCommit = requiredEnvironment("GITHUB_SHA", /^[0-9a-f]{40}$/u);
+const expectedReleaseTag = requiredEnvironment(
+  "EXPECTED_RELEASE_TAG",
+  /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u,
+);
 const expectedRepository = requiredEnvironment("GITHUB_REPOSITORY", /^Latchway\/latchway-js$/u);
-const expectedRef = requiredEnvironment("GITHUB_REF", /^refs\/tags\/v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u);
+const expectedRef = requiredEnvironment("GITHUB_REF", /^refs\/heads\/main$/u);
+const expectedEvent = requiredEnvironment("GITHUB_EVENT_NAME", /^repository_dispatch$/u);
 const runID = requiredEnvironment("GITHUB_RUN_ID", /^\d+$/u);
 const runAttempt = requiredEnvironment("GITHUB_RUN_ATTEMPT", /^\d+$/u);
+if (workflowCommit !== expectedCommit) {
+  throw new Error("The publication workflow commit does not match the promoted source commit.");
+}
 
 const metadata = await waitForPublishedMetadata();
 assertPublishedMetadata(metadata);
@@ -72,6 +81,7 @@ const evidence = {
   package: manifest.name,
   version: manifest.version,
   source_commit: expectedCommit,
+  release_tag: expectedReleaseTag,
   workflow: ".github/workflows/release.yml",
   workflow_ref: expectedRef,
   tarball: packageEvidence.tarball,
@@ -163,11 +173,11 @@ function verifyProvenance(attestation, statement) {
     ? Number(invocationID.slice(invocationPrefix.length))
     : Number.NaN;
   if (workflow?.repository !== expectedRepositoryURL || workflow?.path !== ".github/workflows/release.yml" ||
-      workflow?.ref !== expectedRef || github?.event_name !== "push" ||
+      workflow?.ref !== expectedRef || github?.event_name !== expectedEvent ||
       !Array.isArray(resolved) || !resolved.some((dependency) => dependency?.digest?.gitCommit === expectedCommit) ||
       runDetails?.builder?.id !== "https://github.com/actions/runner/github-hosted" ||
       !Number.isInteger(provenanceAttempt) || provenanceAttempt < 1 || provenanceAttempt > Number(runAttempt)) {
-    throw new Error("The npm provenance statement does not bind the canonical tag, commit, workflow, and run.");
+    throw new Error("The npm provenance statement does not bind the promoted commit, workflow, event, and run.");
   }
 
   const certificateBytes = attestation?.bundle?.verificationMaterial?.certificate?.rawBytes;

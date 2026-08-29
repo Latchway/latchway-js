@@ -16,9 +16,10 @@ const expected = {
   sha256: requiredEnvironment("EXPECTED_SHA256", /^[0-9a-f]{64}$/u),
   integrity: requiredEnvironment("EXPECTED_INTEGRITY", /^sha512-[A-Za-z0-9+/]+={0,2}$/u),
   commit: requiredEnvironment("EXPECTED_SOURCE_COMMIT", /^[0-9a-f]{40}$/u),
+  tag: requiredEnvironment("EXPECTED_RELEASE_TAG", /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u),
 };
 const manifest = await readRootManifest();
-assertReleaseCoordinates(process.env.GITHUB_REF_NAME, expected.version);
+assertReleaseCoordinates(expected.tag, expected.version);
 if (manifest.version !== expected.version) throw new Error("The checkout version differs from the verified artifact version.");
 
 const archivePath = join(ARTIFACTS_PATH, expected.tarball);

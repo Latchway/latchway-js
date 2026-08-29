@@ -6,20 +6,21 @@ import { assertReleaseCoordinates, verifyAnnotatedReleaseTag } from "./release-p
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-const tag = process.env.GITHUB_REF_NAME;
-const commit = process.env.GITHUB_SHA;
+const tag = process.env.EXPECTED_RELEASE_TAG;
+const commit = process.env.EXPECTED_SOURCE_COMMIT;
 
-if (process.env.GITHUB_ACTIONS !== "true" || process.env.GITHUB_EVENT_NAME !== "push") {
-  throw new Error("Release tags are accepted only from a GitHub Actions push event.");
+if (process.env.GITHUB_ACTIONS !== "true" || process.env.GITHUB_EVENT_NAME !== "repository_dispatch") {
+  throw new Error("Release tags are accepted only from the core promotion dispatch.");
 }
 if (process.env.GITHUB_REPOSITORY !== "Latchway/latchway-js") {
   throw new Error("Publishing is restricted to the canonical Latchway/latchway-js repository.");
 }
-if (process.env.GITHUB_REF_TYPE !== "tag" || process.env.GITHUB_REF !== `refs/tags/${tag}`) {
-  throw new Error("The release workflow must be triggered by a tag ref.");
-}
 if (typeof tag !== "string" || typeof commit !== "string") {
-  throw new Error("The GitHub release tag and commit are required.");
+  throw new Error("The promoted release tag and commit are required.");
+}
+if (process.env.GITHUB_REF_TYPE !== "branch" || process.env.GITHUB_REF_NAME !== "main" ||
+    process.env.GITHUB_REF !== "refs/heads/main" || process.env.GITHUB_SHA !== commit) {
+  throw new Error("The promotion dispatch must run from the exact canonical main commit.");
 }
 
 assertReleaseCoordinates(tag, manifest.version);

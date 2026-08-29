@@ -24,7 +24,13 @@ for (const name of entries) {
 
 const release = await readFile(new URL("release.yml", workflows), "utf8");
 for (const required of [
-  "tags:",
+  "repository_dispatch:",
+  "latchway_release_promoted",
+  "gh attestation verify",
+  "--signer-workflow Latchway/latchway/.github/workflows/cross-repository-conformance.yml",
+  "--source-ref refs/heads/main",
+  "sha256sum --check --strict",
+  "python3 scripts/verify-release-promotion.py",
   "id-token: write",
   "environment: npm",
   "persist-credentials: false",
@@ -34,6 +40,15 @@ for (const required of [
 ]) {
   if (!release.includes(required)) throw new Error(`release.yml is missing the fail-closed control: ${required}`);
 }
-for (const forbidden of ["NPM_TOKEN", "NODE_AUTH_TOKEN", "secrets.", "workflow_dispatch", "pull_request_target"]) {
+for (const forbidden of [
+  "\n  push:",
+  "\n    tags:",
+  "GITHUB_EVENT_NAME=push",
+  "NPM_TOKEN",
+  "NODE_AUTH_TOKEN",
+  "secrets.",
+  "workflow_dispatch",
+  "pull_request_target",
+]) {
   if (release.includes(forbidden)) throw new Error(`release.yml must not contain ${forbidden}.`);
 }

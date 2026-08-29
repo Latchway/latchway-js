@@ -1,20 +1,145 @@
 name: Release JavaScript SDK
 
 on:
-  push:
-    tags:
-      - "v*"
+  repository_dispatch:
+    types: [latchway_release_promoted]
 
 permissions:
   contents: read
 
 concurrency:
-  group: js-sdk-release-${{ github.ref }}
+  group: js-sdk-release-${{ github.event.client_payload.repository.commit }}
   cancel-in-progress: false
 
 jobs:
+  promote:
+    name: Verify core promotion and create SDK tag
+    if: github.repository == 'Latchway/latchway-js'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      attestations: read
+      contents: write
+    outputs:
+      commit: ${{ steps.promotion.outputs.release_commit }}
+      tag: ${{ steps.promotion.outputs.release_tag }}
+      version: ${{ steps.promotion.outputs.release_version }}
+    steps:
+      - name: Check out exact promoted JavaScript source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.client_payload.repository.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate dispatch envelope before network access
+        shell: bash
+        env:
+          SDK_ID: ${{ github.event.client_payload.repository.id }}
+          SDK_COMMIT: ${{ github.event.client_payload.repository.commit }}
+          SDK_VERSION: ${{ github.event.client_payload.repository.version }}
+          SDK_TAG: ${{ github.event.client_payload.repository.intended_tag }}
+          CORE_TAG: ${{ github.event.client_payload.core_tag }}
+          REPORT_URL: ${{ github.event.client_payload.promotion_evidence_url }}
+          REPORT_SHA256: ${{ github.event.client_payload.promotion_evidence_sha256 }}
+          OCI_IMAGE_DIGEST: ${{ github.event.client_payload.oci_image_digest }}
+        run: |
+          set -euo pipefail
+          test "$SDK_ID" = javascript
+          [[ "$SDK_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SDK_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$SDK_TAG" = "v$SDK_VERSION"
+          [[ "$CORE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]
+          [[ "$REPORT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$OCI_IMAGE_DIGEST" =~ ^ghcr\.io/latchway/latchway@sha256:[0-9a-f]{64}$ ]]
+          test "$REPORT_URL" = "https://github.com/Latchway/latchway/releases/download/$CORE_TAG/latchway-cross-repository-promotion.json"
+          test "$GITHUB_SHA" = "$SDK_COMMIT"
+          test "$(git rev-parse --verify HEAD)" = "$SDK_COMMIT"
+      - name: Download and hash the exact core promotion report
+        shell: bash
+        env:
+          CORE_TAG: ${{ github.event.client_payload.core_tag }}
+          REPORT_URL: ${{ github.event.client_payload.promotion_evidence_url }}
+          REPORT_SHA256: ${{ github.event.client_payload.promotion_evidence_sha256 }}
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/latchway-cross-repository-promotion.json"
+          test "$REPORT_URL" = "https://github.com/Latchway/latchway/releases/download/$CORE_TAG/latchway-cross-repository-promotion.json"
+          curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --connect-timeout 15 --max-time 120 --max-filesize 2097152 \
+            --fail --location --silent --show-error --output "$report" "$REPORT_URL"
+          printf '%s  %s\n' "$REPORT_SHA256" "$report" | sha256sum --check --strict
+      - name: Verify the core workflow artifact attestation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify "$RUNNER_TEMP/latchway-cross-repository-promotion.json" \
+            --repo Latchway/latchway \
+            --signer-workflow Latchway/latchway/.github/workflows/cross-repository-conformance.yml \
+            --source-ref refs/heads/main \
+            --deny-self-hosted-runners
+      - name: Validate exact report, dispatch, and local source bindings
+        id: promotion
+        shell: bash
+        env:
+          SDK_COMMIT: ${{ github.event.client_payload.repository.commit }}
+          SDK_VERSION: ${{ github.event.client_payload.repository.version }}
+          SDK_TAG: ${{ github.event.client_payload.repository.intended_tag }}
+          CORE_TAG: ${{ github.event.client_payload.core_tag }}
+          REPORT_URL: ${{ github.event.client_payload.promotion_evidence_url }}
+          REPORT_SHA256: ${{ github.event.client_payload.promotion_evidence_sha256 }}
+          OCI_IMAGE_DIGEST: ${{ github.event.client_payload.oci_image_digest }}
+        run: |
+          python3 scripts/verify-release-promotion.py \
+            --report "$RUNNER_TEMP/latchway-cross-repository-promotion.json" \
+            --report-url "$REPORT_URL" \
+            --report-sha256 "$REPORT_SHA256" \
+            --repository-id javascript \
+            --repository-commit "$SDK_COMMIT" \
+            --repository-version "$SDK_VERSION" \
+            --repository-tag "$SDK_TAG" \
+            --workflow-commit "$GITHUB_SHA" \
+            --core-tag "$CORE_TAG" \
+            --oci-image-digest "$OCI_IMAGE_DIGEST" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Create or verify evidence-gated annotated SDK tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ steps.promotion.outputs.release_commit }}
+          RELEASE_TAG: ${{ steps.promotion.outputs.release_tag }}
+          CORE_TAG: ${{ steps.promotion.outputs.core_tag }}
+          REPORT_SHA256: ${{ steps.promotion.outputs.report_sha256 }}
+        run: |
+          set -euo pipefail
+          message="JavaScript SDK $RELEASE_TAG
+
+          Core promotion: $CORE_TAG
+          Promotion evidence SHA-256: $REPORT_SHA256"
+          remote=$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")
+          if [[ -n "$remote" ]]; then
+            tag_object=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)
+            test "$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" --jq .object.type)" = commit
+            test "$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" --jq .object.sha)" = "$RELEASE_COMMIT"
+            test "$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" --jq .message)" = "$message"
+          else
+            jq --null-input --arg tag "$RELEASE_TAG" --arg message "$message" \
+              --arg object "$RELEASE_COMMIT" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              '{tag: $tag, message: $message, object: $object, type: "commit", tagger: {name: "github-actions[bot]", email: "41898282+github-actions[bot]@users.noreply.github.com", date: $date}}' \
+              > "$RUNNER_TEMP/sdk-tag-object.json"
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" --input "$RUNNER_TEMP/sdk-tag-object.json" > "$RUNNER_TEMP/sdk-tag-result.json"
+            tag_object=$(jq --raw-output .sha "$RUNNER_TEMP/sdk-tag-result.json")
+            jq --null-input --arg ref "refs/tags/$RELEASE_TAG" --arg sha "$tag_object" \
+              '{ref: $ref, sha: $sha}' > "$RUNNER_TEMP/sdk-tag-ref.json"
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" --input "$RUNNER_TEMP/sdk-tag-ref.json" >/dev/null
+          fi
+          git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git cat-file -t "refs/tags/$RELEASE_TAG")" = tag
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RELEASE_COMMIT"
+
   verify:
     if: github.repository == 'Latchway/latchway-js'
+    needs: promote
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
@@ -28,12 +153,15 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.ref }}
+          ref: ${{ needs.promote.outputs.commit }}
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: 24.19.0
           package-manager-cache: false
       - name: Verify annotated stable release tag
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
+          EXPECTED_RELEASE_TAG: ${{ needs.promote.outputs.tag }}
         run: node scripts/verify-release-tag.mjs
       - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
         with:
@@ -44,11 +172,15 @@ jobs:
       - name: Run complete release-candidate gate
         run: pnpm release:check
       - name: Re-verify tag and capture evidence
-        run: node scripts/verify-release-tag.mjs
         env:
+          EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
+          EXPECTED_RELEASE_TAG: ${{ needs.promote.outputs.tag }}
           RELEASE_TAG_EVIDENCE_PATH: .artifacts/tag-evidence.json
+        run: node scripts/verify-release-tag.mjs
       - name: Export verified package coordinates
         id: package
+        env:
+          EXPECTED_RELEASE_TAG: ${{ needs.promote.outputs.tag }}
         run: node scripts/release-artifact-output.mjs >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -68,7 +200,7 @@ jobs:
 
   publish:
     if: github.repository == 'Latchway/latchway-js'
-    needs: verify
+    needs: [promote, verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: npm
@@ -80,12 +212,14 @@ jobs:
       NPM_CONFIG_CACHE: ${{ runner.temp }}/latchway-npm-cache
       NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/latchway-release.npmrc
       RELEASE_TARBALL: .artifacts/${{ needs.verify.outputs.tarball }}
+      RELEASE_COMMIT: ${{ needs.promote.outputs.commit }}
+      RELEASE_TAG: ${{ needs.promote.outputs.tag }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.ref }}
+          ref: ${{ needs.promote.outputs.commit }}
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: 24.19.0
@@ -97,13 +231,17 @@ jobs:
       - name: Prepare tokenless npm OIDC runtime
         run: node scripts/prepare-publish-runtime.mjs
       - name: Re-verify annotated release tag
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
+          EXPECTED_RELEASE_TAG: ${{ needs.promote.outputs.tag }}
         run: node scripts/verify-release-tag.mjs
       - name: Verify downloaded release artifact
         run: node scripts/verify-release-artifact.mjs
         env:
           EXPECTED_INTEGRITY: ${{ needs.verify.outputs.integrity }}
+          EXPECTED_RELEASE_TAG: ${{ needs.promote.outputs.tag }}
           EXPECTED_SHA256: ${{ needs.verify.outputs.sha256 }}
-          EXPECTED_SOURCE_COMMIT: ${{ github.sha }}
+          EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
           EXPECTED_TARBALL: ${{ needs.verify.outputs.tarball }}
           EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
       - name: Check immutable npm version state
@@ -113,10 +251,13 @@ jobs:
         if: steps.registry.outputs.publish_required == 'true'
         run: npm publish "$RELEASE_TARBALL" --provenance --access public --registry=https://registry.npmjs.org/
       - name: Verify registry integrity, exports, signatures, and provenance
+        env:
+          EXPECTED_RELEASE_TAG: ${{ needs.promote.outputs.tag }}
+          EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
         run: node scripts/verify-published.mjs
       - name: Create GitHub release from the verified tag
         run: >-
-          gh release create "$GITHUB_REF_NAME"
+          gh release create "$RELEASE_TAG"
           "$RELEASE_TARBALL"
           .artifacts/SHA256SUMS
           .artifacts/build-reproducibility.json
