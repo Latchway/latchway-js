@@ -25,6 +25,11 @@ Before the first automated release, configure these external controls:
    repository or workflow.
 4. Confirm the public package repository URL is exactly
    `https://github.com/Latchway/latchway-js`.
+5. If the core repository remains private, configure
+   `LATCHWAY_SIBLING_REPOSITORIES_READ_TOKEN` as a fine-grained Contents: read
+   credential scoped to `Latchway/latchway`. It authenticates only the pinned
+   promotion asset download and attestation verification. Public core
+   repositories need no secret and fall back to the job token.
 
 npm currently requires a package to exist before its trusted publisher can be
 configured. If `@latchway/client` has no npm package record, initial namespace
