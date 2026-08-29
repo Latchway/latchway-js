@@ -253,8 +253,15 @@ export async function fetchBytes(url, { maximumBytes, accept = "application/json
   if (Number.isFinite(advertised) && advertised > limit) {
     throw new Error("The npm registry response exceeds the release-verification limit.");
   }
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.byteLength > limit) throw new Error("The npm registry response exceeds the release-verification limit.");
+  if (response.body === null) throw new Error("The npm registry returned no response body.");
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of response.body) {
+    size += chunk.byteLength;
+    if (size > limit) throw new Error("The npm registry response exceeds the release-verification limit.");
+    chunks.push(Buffer.from(chunk));
+  }
+  const bytes = Buffer.concat(chunks, size);
   return { response, bytes };
 }
 

@@ -11,6 +11,11 @@ Before the first automated release, configure these external controls:
 
 1. Protect release tags and the `npm` GitHub environment. Require an independent
    reviewer for the environment.
+   Store a fine-grained `LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN` in that protected
+   environment with read-only repository Administration permission. The workflow
+   uses it only to require GitHub's exact immutable-release setting response
+   (`enabled: true` and a Boolean `enforced_by_owner`) before any draft or asset
+   mutation.
 2. In npm package settings, configure the GitHub Actions trusted publisher for
    organization `Latchway`, repository `latchway-js`, workflow file
    `release.yml`, environment `npm`, and the `npm publish` action.
@@ -75,17 +80,28 @@ prerelease suffix fail before dependency installation. The release workflow:
 4. Downloads the exact registry tarball, checks byte identity and exports,
    validates npm signature and trusted-publisher metadata, verifies the SLSA
    provenance subject and source workflow/commit, and runs
-   `npm audit signatures`.
-5. Reconciles the GitHub release only after all registry checks pass. Existing
+   `npm audit signatures`. The bounded, credential-scanned bytes returned by
+   the registry version endpoint, `npm view --json --include-attestations`, the
+   Sigstore bundle, and the signature audit are retained as release assets and
+   bound by `npm-registry-evidence-manifest.json`.
+5. Creates or resumes a draft only after the protected administration read proves
+   immutable releases are enabled, then reconciles it after all registry checks
+   pass. Existing
    assets are downloaded and compared byte for byte, only missing assets may be
    attached, and no asset is ever overwritten. A final release must already
-   contain exactly the intended asset set; otherwise the workflow stops.
+   contain exactly the intended asset set; otherwise the workflow stops. After
+   publication, `gh release verify` and `gh release verify-asset` independently
+   validate GitHub's immutable-release attestation and every exact release asset.
 
 If npm accepts the package but a later step is interrupted, rerunning the same
 tag is recoverable only when the immutable npm version has the exact verified
-integrity. The post-publish provenance checks still have to bind it to the same
-canonical tag, commit, workflow, and run; a merely matching version string is
-never treated as success. The GitHub release is equally resumable: an
+integrity and bytes. The post-publish provenance checks still have to bind it to
+the same canonical tag, commit, and workflow; a merely matching version string
+is never treated as success. An attested, attempt-specific adoption record binds
+the immutable npm provenance-producing run and attempt, exact registry evidence
+manifest, and the current successful adoption run and attempt. The provenance
+producer is therefore allowed to be the earlier interrupted attempt without
+misrepresenting the successful rerun. The GitHub release is equally resumable: an
 interrupted draft can be completed only when its metadata and every existing
 asset match the exact rerun inputs, while an identical final release is a
 read-only success.

@@ -245,6 +245,33 @@ jobs:
           EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
           EXPECTED_TARBALL: ${{ needs.verify.outputs.tarball }}
           EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+      - name: Create or resume the fail-closed GitHub draft
+        id: github_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN: ${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}
+        run: |
+          python3 scripts/reconcile-github-release.py \
+            --prepare-draft \
+            --npm-adoption-history \
+            --source-commit "$RELEASE_COMMIT" \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --title "@latchway/client ${{ needs.verify.outputs.version }}" \
+            --expected-asset-name "${{ needs.verify.outputs.tarball }}" \
+            --expected-asset-name SHA256SUMS \
+            --expected-asset-name build-reproducibility.json \
+            --expected-asset-name contract-evidence.json \
+            --expected-asset-name package-evidence.json \
+            --expected-asset-name post-publish-evidence.json \
+            --expected-asset-name publish-input-evidence.json \
+            --expected-asset-name release-candidate-evidence.json \
+            --expected-asset-name tag-evidence.json \
+            --expected-asset-name npm-registry-version.json \
+            --expected-asset-name npm-registry-view.json \
+            --expected-asset-name npm-attestations.json \
+            --expected-asset-name npm-audit-signatures.json \
+            --expected-asset-name npm-registry-evidence-manifest.json
       - name: Attest reviewed npm package and reproducibility inputs
         uses: actions/attest-build-provenance@e4d4f7c39adfa4c260fb5c147f0622000aa14b99 # v4.0.0
         with:
@@ -255,17 +282,37 @@ jobs:
       - name: Check immutable npm version state
         id: registry
         run: node scripts/check-registry-state.mjs
+      - name: Require an immutable GitHub rerun to adopt an existing npm version
+        if: steps.github_release.outputs.release_state == 'immutable'
+        env:
+          PUBLISH_REQUIRED: ${{ steps.registry.outputs.publish_required }}
+        run: test "$PUBLISH_REQUIRED" = false
       - name: Publish exact verified archive with npm OIDC and provenance
-        if: steps.registry.outputs.publish_required == 'true'
+        if: steps.registry.outputs.publish_required == 'true' && steps.github_release.outputs.release_state == 'draft'
         run: npm publish "$RELEASE_TARBALL" --provenance --access public --registry=https://registry.npmjs.org/
       - name: Verify registry integrity, exports, signatures, and provenance
+        id: registry_evidence
         env:
           EXPECTED_RELEASE_TAG: ${{ needs.promote.outputs.tag }}
           EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
+          PUBLISH_PERFORMED: ${{ steps.registry.outputs.publish_required }}
         run: node scripts/verify-published.mjs
-      - name: Reconcile immutable GitHub release assets
+      - name: Attest exact retained registry and adoption evidence
+        uses: actions/attest-build-provenance@e4d4f7c39adfa4c260fb5c147f0622000aa14b99 # v4.0.0
+        with:
+          subject-path: |
+            .artifacts/npm-registry-version.json
+            .artifacts/npm-registry-view.json
+            .artifacts/npm-attestations.json
+            .artifacts/npm-audit-signatures.json
+            .artifacts/npm-registry-evidence-manifest.json
+            .artifacts/post-publish-evidence.json
+            .artifacts/${{ steps.registry_evidence.outputs.adoption_asset }}
+      - name: Attach every fixed asset, publish once, and require immutability
         run: |
           python3 scripts/reconcile-github-release.py \
+            --npm-adoption-history \
+            --source-commit "$RELEASE_COMMIT" \
             --repository "$GITHUB_REPOSITORY" \
             --tag "$RELEASE_TAG" \
             --title "@latchway/client ${{ needs.verify.outputs.version }}" \
@@ -277,6 +324,13 @@ jobs:
             .artifacts/post-publish-evidence.json \
             .artifacts/publish-input-evidence.json \
             .artifacts/release-candidate-evidence.json \
-            .artifacts/tag-evidence.json
+            .artifacts/tag-evidence.json \
+            .artifacts/npm-registry-version.json \
+            .artifacts/npm-registry-view.json \
+            .artifacts/npm-attestations.json \
+            .artifacts/npm-audit-signatures.json \
+            .artifacts/npm-registry-evidence-manifest.json \
+            ".artifacts/${{ steps.registry_evidence.outputs.adoption_asset }}"
         env:
           GH_TOKEN: ${{ github.token }}
+          LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN: ${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}

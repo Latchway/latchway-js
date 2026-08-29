@@ -38,6 +38,14 @@ for (const required of [
   "node scripts/verify-release-tag.mjs",
   "node scripts/verify-published.mjs",
   "python3 scripts/reconcile-github-release.py",
+  "--prepare-draft",
+  "--npm-adoption-history",
+  "npm-registry-view.json",
+  "npm-attestations.json",
+  "npm-audit-signatures.json",
+  "npm-registry-evidence-manifest.json",
+  "actions/attest-build-provenance@",
+  "release_state == 'immutable'",
 ]) {
   if (!release.includes(required)) throw new Error(`release.yml is missing the fail-closed control: ${required}`);
 }
@@ -47,10 +55,16 @@ for (const forbidden of [
   "GITHUB_EVENT_NAME=push",
   "NPM_TOKEN",
   "NODE_AUTH_TOKEN",
-  "secrets.",
   "workflow_dispatch",
   "pull_request_target",
   "--clobber",
+  "--draft=false\n      - name:",
 ]) {
   if (release.includes(forbidden)) throw new Error(`release.yml must not contain ${forbidden}.`);
+}
+const secretReferences = [...release.matchAll(/\$\{\{\s*secrets\.([A-Z0-9_]+)\s*\}\}/gu)]
+  .map((match) => match[1]);
+if (secretReferences.length !== 2 || secretReferences.some((name) =>
+  name !== "LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN")) {
+  throw new Error("release.yml may use only the protected immutable-release settings credential.");
 }

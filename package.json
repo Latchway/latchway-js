@@ -64,7 +64,7 @@
     "lint": "eslint . --max-warnings=0",
     "pack:check": "node scripts/verify-pack.mjs",
     "release:check": "node scripts/verify-release-candidate.mjs",
-    "test": "vitest run && node --test scripts/test-live-conformance.mjs",
+    "test": "vitest run && node --test scripts/test-live-conformance.mjs scripts/test-npm-release-evidence.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify:contracts": "node scripts/verify-contract.mjs",

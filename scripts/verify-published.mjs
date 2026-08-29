@@ -1,15 +1,28 @@
 import { X509Certificate } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import {
+  PROVENANCE_TYPE,
+  PUBLISH_TYPE,
+  SOURCE_REF,
+  WORKFLOW_PATH,
+  assertSafeRetainedOutput,
+  buildAdoptionRecord,
+  buildRegistryManifest,
+  requireCurrentPublicationOrigin,
+  sha256,
+  verifyProvenanceStatement,
+  verifyPublishStatement,
+} from "./npm-release-evidence.mjs";
+import {
   ARTIFACTS_PATH,
   REGISTRY_URL,
+  ROOT_PATH,
   fetchBytes,
-  fetchJSON,
   inspectTarball,
   packageVersionURL,
   readRootManifest,
@@ -17,8 +30,6 @@ import {
   sleep,
 } from "./release-utils.mjs";
 
-const PROVENANCE_TYPE = "https://slsa.dev/provenance/v1";
-const PUBLISH_TYPE = "https://github.com/npm/attestation/tree/main/specs/publish/v0.1";
 const manifest = await readRootManifest();
 const packageEvidence = JSON.parse(await readFile(join(ARTIFACTS_PATH, "package-evidence.json"), "utf8"));
 const localArchive = join(ARTIFACTS_PATH, packageEvidence.tarball);
@@ -32,14 +43,27 @@ const expectedReleaseTag = requiredEnvironment(
 const expectedRepository = requiredEnvironment("GITHUB_REPOSITORY", /^Latchway\/latchway-js$/u);
 const expectedRef = requiredEnvironment("GITHUB_REF", /^refs\/heads\/main$/u);
 const expectedEvent = requiredEnvironment("GITHUB_EVENT_NAME", /^repository_dispatch$/u);
-const runID = requiredEnvironment("GITHUB_RUN_ID", /^\d+$/u);
-const runAttempt = requiredEnvironment("GITHUB_RUN_ATTEMPT", /^\d+$/u);
-if (workflowCommit !== expectedCommit) {
+const currentRunID = Number(requiredEnvironment("GITHUB_RUN_ID", /^[1-9]\d*$/u));
+const currentRunAttempt = Number(requiredEnvironment("GITHUB_RUN_ATTEMPT", /^[1-9]\d*$/u));
+const publishPerformed = requiredEnvironment("PUBLISH_PERFORMED", /^(?:true|false)$/u) === "true";
+if (workflowCommit !== expectedCommit || expectedRef !== SOURCE_REF) {
   throw new Error("The publication workflow commit does not match the promoted source commit.");
 }
 
-const metadata = await waitForPublishedMetadata();
+const expectedRepositoryURL = `https://github.com/${expectedRepository}`;
+const published = await waitForPublishedMetadata();
+const metadata = published.value;
 assertPublishedMetadata(metadata);
+
+const npmViewBytes = runNpmCaptured([
+  "view",
+  `${manifest.name}@${manifest.version}`,
+  "--json",
+  "--include-attestations",
+  `--registry=${REGISTRY_URL}`,
+], ROOT_PATH, 2 * 1024 * 1024, "npm view");
+const npmView = assertSafeRetainedOutput(npmViewBytes, "npm view output", 2 * 1024 * 1024);
+assertNpmView(npmView);
 
 const tarballResult = await fetchBytes(metadata.dist.tarball, {
   maximumBytes: 10 * 1024 * 1024,
@@ -49,18 +73,37 @@ if (tarballResult.response.status !== 200 || !localBytes.equals(tarballResult.by
   throw new Error("The npm registry tarball is not byte-identical to the verified release archive.");
 }
 
-const attestationResult = await fetchJSON(metadata.dist.attestations.url, { maximumBytes: 5 * 1024 * 1024 });
+const attestationResult = await fetchBytes(metadata.dist.attestations.url, { maximumBytes: 5 * 1024 * 1024 });
 if (attestationResult.response.status !== 200) {
   throw new Error(`npm attestation retrieval failed with HTTP ${attestationResult.response.status}.`);
 }
-const attestations = attestationResult.value.attestations;
+const attestationDocument = assertSafeRetainedOutput(
+  attestationResult.bytes,
+  "npm Sigstore attestation output",
+  5 * 1024 * 1024,
+);
+const attestations = attestationDocument.attestations;
 if (!Array.isArray(attestations)) throw new Error("The npm attestation response is malformed.");
 const provenance = exactlyOne(attestations, PROVENANCE_TYPE);
 const publish = exactlyOne(attestations, PUBLISH_TYPE);
 const provenanceStatement = decodeStatement(provenance);
 const publishStatement = decodeStatement(publish);
-verifyProvenance(provenance, provenanceStatement);
-verifyPublishAttestation(publishStatement);
+const provenanceOrigin = verifyProvenanceStatement(provenanceStatement, {
+  packageName: manifest.name,
+  packageVersion: manifest.version,
+  sha512: packageEvidence.sha512,
+  expectedRepositoryURL,
+  expectedCommit,
+  expectedEvent,
+});
+verifyWorkflowCertificate(provenance, expectedRepositoryURL);
+requireCurrentPublicationOrigin(provenanceOrigin, { publishPerformed, currentRunID, currentRunAttempt });
+verifyPublishStatement(publishStatement, {
+  packageName: manifest.name,
+  packageVersion: manifest.version,
+  sha512: packageEvidence.sha512,
+  registryURL: REGISTRY_URL,
+});
 
 const downloaded = await mkdtemp(join(tmpdir(), "latchway-published-package-"));
 try {
@@ -75,46 +118,129 @@ try {
   await rm(downloaded, { recursive: true, force: true });
 }
 
-await auditRegistrySignatures();
-const evidence = {
-  schema_version: 1,
+const auditBytes = await auditRegistrySignatures();
+const audit = assertSafeRetainedOutput(auditBytes, "npm audit signatures output", 2 * 1024 * 1024);
+if (audit === null || typeof audit !== "object" || Object.hasOwn(audit, "error")) {
+  throw new Error("npm audit signatures returned an invalid verification result.");
+}
+
+const retained = [
+  { name: "npm-registry-version.json", bytes: published.bytes },
+  { name: "npm-registry-view.json", bytes: npmViewBytes },
+  { name: "npm-attestations.json", bytes: attestationResult.bytes },
+  { name: "npm-audit-signatures.json", bytes: auditBytes },
+];
+for (const asset of retained) {
+  assertSafeRetainedOutput(asset.bytes, asset.name, asset.name === "npm-attestations.json" ? 5 * 1024 * 1024 : 2 * 1024 * 1024);
+  await writeFile(join(ARTIFACTS_PATH, asset.name), asset.bytes, { mode: 0o600 });
+}
+
+const registryManifest = buildRegistryManifest({
+  packageName: manifest.name,
+  packageVersion: manifest.version,
+  tarball: {
+    name: packageEvidence.tarball,
+    bytes: localBytes.byteLength,
+    sha256: packageEvidence.sha256,
+    sha512: packageEvidence.sha512,
+    integrity: packageEvidence.integrity,
+  },
+  evidence: retained,
+});
+const registryManifestBytes = jsonBytes(registryManifest);
+await writeFile(join(ARTIFACTS_PATH, "npm-registry-evidence-manifest.json"), registryManifestBytes, { mode: 0o600 });
+
+const evidenceReferences = Object.fromEntries(retained.map((asset) => [asset.name, {
+  bytes: asset.bytes.byteLength,
+  sha256: sha256(asset.bytes),
+}]));
+const postPublishEvidence = {
+  schema_version: 2,
+  kind: "latchway_npm_publication_evidence",
   package: manifest.name,
   version: manifest.version,
-  source_commit: expectedCommit,
+  source: {
+    repository: expectedRepositoryURL,
+    commit: expectedCommit,
+    workflow: WORKFLOW_PATH,
+    ref: SOURCE_REF,
+  },
   release_tag: expectedReleaseTag,
-  workflow: ".github/workflows/release.yml",
-  workflow_ref: expectedRef,
-  tarball: packageEvidence.tarball,
-  sha256: packageEvidence.sha256,
-  integrity: packageEvidence.integrity,
-  registry_tarball_byte_identical: true,
-  registry_signature_present: true,
-  trusted_publisher: "github",
-  provenance_predicate_type: PROVENANCE_TYPE,
-  provenance_subject_verified: true,
-  provenance_source_verified: true,
-  npm_audit_signatures: "passed",
-  export_smoke: "passed",
+  registry: REGISTRY_URL,
+  tarball: {
+    name: packageEvidence.tarball,
+    bytes: localBytes.byteLength,
+    sha256: packageEvidence.sha256,
+    sha512: packageEvidence.sha512,
+    integrity: packageEvidence.integrity,
+    registry_bytes_sha256: sha256(tarballResult.bytes),
+  },
+  trusted_publisher: {
+    provider: "github",
+    provenance_predicate_type: PROVENANCE_TYPE,
+    provenance_origin: provenanceOrigin,
+    sigstore_bundle: {
+      file: "npm-attestations.json",
+      ...evidenceReferences["npm-attestations.json"],
+    },
+  },
+  registry_signature_verification: {
+    command: `npm audit signatures --json --registry=${REGISTRY_URL}`,
+    output: {
+      file: "npm-audit-signatures.json",
+      ...evidenceReferences["npm-audit-signatures.json"],
+    },
+  },
+  retained_outputs: evidenceReferences,
+  evidence_manifest: {
+    file: "npm-registry-evidence-manifest.json",
+    bytes: registryManifestBytes.byteLength,
+    sha256: sha256(registryManifestBytes),
+  },
 };
-await writeFile(
-  join(ARTIFACTS_PATH, "post-publish-evidence.json"),
-  `${JSON.stringify(evidence, null, 2)}\n`,
-  { mode: 0o600 },
-);
-process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
+const postPublishBytes = jsonBytes(postPublishEvidence);
+await writeFile(join(ARTIFACTS_PATH, "post-publish-evidence.json"), postPublishBytes, { mode: 0o600 });
+
+const adoption = buildAdoptionRecord({
+  packageName: manifest.name,
+  packageVersion: manifest.version,
+  releaseTag: expectedReleaseTag,
+  repositoryURL: expectedRepositoryURL,
+  sourceCommit: expectedCommit,
+  provenanceOrigin,
+  tarball: registryManifest.tarball,
+  manifestSHA256: sha256(registryManifestBytes),
+  currentRunID,
+  currentRunAttempt,
+  publishPerformed,
+});
+const adoptionName = `npm-release-adoption-${currentRunID}-${currentRunAttempt}.json`;
+const adoptionBytes = jsonBytes(adoption);
+await writeFile(join(ARTIFACTS_PATH, adoptionName), adoptionBytes, { mode: 0o600 });
+if (typeof process.env.GITHUB_OUTPUT === "string") {
+  await appendFile(process.env.GITHUB_OUTPUT, `adoption_asset=${adoptionName}\n`, { mode: 0o600 });
+}
+process.stdout.write(`${JSON.stringify({
+  ...postPublishEvidence,
+  adoption: { file: adoptionName, bytes: adoptionBytes.byteLength, sha256: sha256(adoptionBytes) },
+}, null, 2)}\n`);
 
 async function waitForPublishedMetadata() {
   const url = packageVersionURL(manifest.name, manifest.version);
   for (let attempt = 0; attempt < 24; attempt += 1) {
-    const result = await fetchJSON(url, { maximumBytes: 2 * 1024 * 1024 });
+    const result = await fetchBytes(url, { maximumBytes: 2 * 1024 * 1024 });
     if (result.response.status === 200) {
-      if (result.value.name !== manifest.name || result.value.version !== manifest.version ||
-          result.value.dist?.integrity !== packageEvidence.integrity ||
-          result.value.dist?.shasum !== packageEvidence.sha1) {
+      const value = assertSafeRetainedOutput(result.bytes, "npm registry version output", 2 * 1024 * 1024);
+      if (
+        value.name !== manifest.name
+        || value.version !== manifest.version
+        || value.dist?.integrity !== packageEvidence.integrity
+        || value.dist?.shasum !== packageEvidence.sha1
+      ) {
         throw new Error("The published npm version does not match the verified release archive.");
       }
-      if (result.value.dist?.attestations?.provenance?.predicateType === PROVENANCE_TYPE) {
-        return result.value;
+      if (value.dist?.attestations?.provenance?.predicateType === PROVENANCE_TYPE) {
+        return { value, bytes: result.bytes };
       }
     } else if (result.response.status !== 404) {
       throw new Error(`npm publication verification failed with HTTP ${result.response.status}.`);
@@ -125,14 +251,36 @@ async function waitForPublishedMetadata() {
 }
 
 function assertPublishedMetadata(value) {
-  if (value.name !== manifest.name || value.version !== manifest.version ||
-      !isDeepStrictEqual(value.exports, manifest.exports) ||
-      !isDeepStrictEqual(value.repository, manifest.repository) || value._nodeVersion !== "24.19.0" ||
-      value.dist?.integrity !== packageEvidence.integrity || value.dist?.shasum !== packageEvidence.sha1 ||
-      !Array.isArray(value.dist?.signatures) || value.dist.signatures.length === 0 ||
-      value.dist?.attestations?.provenance?.predicateType !== PROVENANCE_TYPE ||
-      value._npmUser?.trustedPublisher?.id !== "github") {
+  if (
+    value.name !== manifest.name
+    || value.version !== manifest.version
+    || !isDeepStrictEqual(value.exports, manifest.exports)
+    || !isDeepStrictEqual(value.repository, manifest.repository)
+    || value._nodeVersion !== "24.19.0"
+    || value.dist?.integrity !== packageEvidence.integrity
+    || value.dist?.shasum !== packageEvidence.sha1
+    || !Array.isArray(value.dist?.signatures)
+    || value.dist.signatures.length === 0
+    || value.dist?.attestations?.provenance?.predicateType !== PROVENANCE_TYPE
+    || value._npmUser?.trustedPublisher?.id !== "github"
+  ) {
     throw new Error("The npm version metadata is missing exact exports, integrity, signature, or trusted-publisher state.");
+  }
+}
+
+function assertNpmView(value) {
+  const repository = typeof value.repository === "object" ? value.repository?.url : value.repository;
+  if (
+    value.name !== manifest.name
+    || value.version !== manifest.version
+    || value.dist?.integrity !== packageEvidence.integrity
+    || value.dist?.shasum !== packageEvidence.sha1
+    || !Array.isArray(value.dist?.signatures)
+    || value.dist.signatures.length === 0
+    || value.dist?.attestations?.provenance?.predicateType !== PROVENANCE_TYPE
+    || normalizeRepository(repository) !== normalizeRepository(manifest.repository.url)
+  ) {
+    throw new Error("npm view did not return the exact signed, attested package coordinate.");
   }
 }
 
@@ -144,9 +292,13 @@ function exactlyOne(attestations, predicateType) {
 
 function decodeStatement(attestation) {
   const envelope = attestation?.bundle?.dsseEnvelope;
-  if (envelope?.payloadType !== "application/vnd.in-toto+json" ||
-      !Array.isArray(envelope.signatures) || envelope.signatures.length === 0 ||
-      typeof envelope.payload !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/u.test(envelope.payload)) {
+  if (
+    envelope?.payloadType !== "application/vnd.in-toto+json"
+    || !Array.isArray(envelope.signatures)
+    || envelope.signatures.length === 0
+    || typeof envelope.payload !== "string"
+    || !/^[A-Za-z0-9+/]+={0,2}$/u.test(envelope.payload)
+  ) {
     throw new Error("The npm Sigstore DSSE envelope is malformed.");
   }
   const bytes = Buffer.from(envelope.payload, "base64");
@@ -160,51 +312,13 @@ function decodeStatement(attestation) {
   }
 }
 
-function verifyProvenance(attestation, statement) {
-  verifySubject(statement, PROVENANCE_TYPE, "https://in-toto.io/Statement/v1");
-  const expectedRepositoryURL = `https://github.com/${expectedRepository}`;
-  const workflow = statement.predicate?.buildDefinition?.externalParameters?.workflow;
-  const resolved = statement.predicate?.buildDefinition?.resolvedDependencies;
-  const github = statement.predicate?.buildDefinition?.internalParameters?.github;
-  const runDetails = statement.predicate?.runDetails;
-  const invocationPrefix = `${expectedRepositoryURL}/actions/runs/${runID}/attempts/`;
-  const invocationID = runDetails?.metadata?.invocationId;
-  const provenanceAttempt = typeof invocationID === "string" && invocationID.startsWith(invocationPrefix)
-    ? Number(invocationID.slice(invocationPrefix.length))
-    : Number.NaN;
-  if (workflow?.repository !== expectedRepositoryURL || workflow?.path !== ".github/workflows/release.yml" ||
-      workflow?.ref !== expectedRef || github?.event_name !== expectedEvent ||
-      !Array.isArray(resolved) || !resolved.some((dependency) => dependency?.digest?.gitCommit === expectedCommit) ||
-      runDetails?.builder?.id !== "https://github.com/actions/runner/github-hosted" ||
-      !Number.isInteger(provenanceAttempt) || provenanceAttempt < 1 || provenanceAttempt > Number(runAttempt)) {
-    throw new Error("The npm provenance statement does not bind the promoted commit, workflow, event, and run.");
-  }
-
+function verifyWorkflowCertificate(attestation, repositoryURL) {
   const certificateBytes = attestation?.bundle?.verificationMaterial?.certificate?.rawBytes;
   if (typeof certificateBytes !== "string") throw new Error("The provenance bundle is missing its signing certificate.");
   const certificate = new X509Certificate(Buffer.from(certificateBytes, "base64"));
-  const expectedIdentity = `URI:${expectedRepositoryURL}/.github/workflows/release.yml@${expectedRef}`;
+  const expectedIdentity = `URI:${repositoryURL}/${WORKFLOW_PATH}@${SOURCE_REF}`;
   if (certificate.subjectAltName !== expectedIdentity) {
     throw new Error("The provenance signing certificate has an unexpected workflow identity.");
-  }
-}
-
-function verifyPublishAttestation(statement) {
-  verifySubject(statement, PUBLISH_TYPE, "https://in-toto.io/Statement/v0.1");
-  if (statement.predicate?.name !== manifest.name || statement.predicate?.version !== manifest.version ||
-      statement.predicate?.registry !== REGISTRY_URL.slice(0, -1)) {
-    throw new Error("The npm publish attestation does not bind the exact package and registry.");
-  }
-}
-
-function verifySubject(statement, predicateType, statementType) {
-  const [scope, packageName] = manifest.name.split("/");
-  const expectedPURL = `pkg:npm/${encodeURIComponent(scope)}/${packageName}@${manifest.version}`;
-  if (statement?._type !== statementType || statement.predicateType !== predicateType ||
-      !Array.isArray(statement.subject) || statement.subject.length !== 1 ||
-      statement.subject[0]?.name !== expectedPURL ||
-      statement.subject[0]?.digest?.sha512 !== packageEvidence.sha512) {
-    throw new Error(`The ${predicateType} attestation subject does not match the verified npm archive.`);
   }
 }
 
@@ -219,34 +333,62 @@ async function auditRegistrySignatures() {
       private: true,
       dependencies: { [manifest.name]: manifest.version },
     }, null, 2)}\n`);
-    runNpm(["install", "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact"], consumer, npmrc);
+    runNpmCaptured(
+      ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact"],
+      consumer,
+      4 * 1024 * 1024,
+      "npm install",
+      npmrc,
+    );
     const lock = JSON.parse(await readFile(join(consumer, "package-lock.json"), "utf8"));
     if (lock.packages?.[`node_modules/${manifest.name}`]?.integrity !== packageEvidence.integrity) {
       throw new Error("The registry consumer lock does not contain the exact published integrity.");
     }
-    runNpm(["audit", "signatures", `--registry=${REGISTRY_URL}`], consumer, npmrc);
+    return runNpmCaptured(
+      ["audit", "signatures", "--json", `--registry=${REGISTRY_URL}`],
+      consumer,
+      2 * 1024 * 1024,
+      "npm audit signatures",
+      npmrc,
+    );
   } finally {
     await rm(consumer, { recursive: true, force: true });
   }
 }
 
-function runNpm(arguments_, cwd, userconfig) {
-  const environment = { ...process.env };
-  delete environment.NODE_AUTH_TOKEN;
-  delete environment.NPM_TOKEN;
-  environment.NPM_CONFIG_USERCONFIG = userconfig;
-  environment.NPM_CONFIG_CACHE = join(cwd, ".npm-cache");
+function runNpmCaptured(arguments_, cwd, maximumBytes, operation, userconfig) {
+  const excluded = new Set([
+    "NODE_AUTH_TOKEN", "NPM_TOKEN", "npm_config__auth", "npm_config_auth",
+    "npm_config__authToken", "NPM_CONFIG__AUTH", "NPM_CONFIG_AUTH",
+  ]);
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !excluded.has(name)),
+  );
+  environment.NPM_CONFIG_USERCONFIG = userconfig ?? join(tmpdir(), "latchway-empty-release.npmrc");
+  environment.NPM_CONFIG_CACHE = join(tmpdir(), `latchway-npm-read-cache-${process.pid}`);
   const command = process.platform === "win32" ? "npm.cmd" : "npm";
-  try {
-    execFileSync(command, arguments_, {
-      cwd,
-      env: environment,
-      maxBuffer: 4 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  } catch {
-    throw new Error(`npm ${arguments_[0]} failed during published-package verification.`);
+  const result = spawnSync(command, arguments_, {
+    cwd,
+    env: environment,
+    encoding: "buffer",
+    maxBuffer: maximumBytes,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error !== undefined || result.status !== 0 || !Buffer.isBuffer(result.stdout)) {
+    throw new Error(`${operation} failed during published-package verification.`);
   }
+  if (result.stdout.byteLength === 0 || result.stdout.byteLength > maximumBytes) {
+    throw new Error(`${operation} returned an invalid amount of retained output.`);
+  }
+  return result.stdout;
+}
+
+function normalizeRepository(repository) {
+  return String(repository ?? "").replace(/^git\+/u, "").replace(/\.git$/u, "").toLowerCase();
+}
+
+function jsonBytes(value) {
+  return Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 function requiredEnvironment(name, pattern) {
