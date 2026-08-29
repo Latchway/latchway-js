@@ -245,6 +245,13 @@ jobs:
           EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
           EXPECTED_TARBALL: ${{ needs.verify.outputs.tarball }}
           EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+      - name: Require GitHub immutable-release attestation tooling
+        run: |
+          set -euo pipefail
+          verify_help=$(gh release verify --help)
+          verify_asset_help=$(gh release verify-asset --help)
+          grep --fixed-strings -- '--format' <<<"$verify_help" >/dev/null
+          grep --fixed-strings -- '--format' <<<"$verify_asset_help" >/dev/null
       - name: Create or resume the fail-closed GitHub draft
         id: github_release
         env:
@@ -254,7 +261,7 @@ jobs:
           python3 scripts/reconcile-github-release.py \
             --prepare-draft \
             --npm-adoption-history \
-            --source-commit "$RELEASE_COMMIT" \
+            --expected-commit "$RELEASE_COMMIT" \
             --repository "$GITHUB_REPOSITORY" \
             --tag "$RELEASE_TAG" \
             --title "@latchway/client ${{ needs.verify.outputs.version }}" \
@@ -312,7 +319,7 @@ jobs:
         run: |
           python3 scripts/reconcile-github-release.py \
             --npm-adoption-history \
-            --source-commit "$RELEASE_COMMIT" \
+            --expected-commit "$RELEASE_COMMIT" \
             --repository "$GITHUB_REPOSITORY" \
             --tag "$RELEASE_TAG" \
             --title "@latchway/client ${{ needs.verify.outputs.version }}" \

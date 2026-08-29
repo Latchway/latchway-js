@@ -74,7 +74,10 @@ prerelease suffix fail before dependency installation. The release workflow:
 1. Repeats the full candidate gate in a clean GitHub-hosted runner.
 2. Transfers only the verified tarball, checksum, and machine-readable evidence
    to a separately permissioned `npm` environment job.
-3. Re-verifies the artifact and tag, then runs
+3. Re-verifies the artifact and local tag, requires the installed GitHub CLI to
+   support JSON release and asset attestation verification, and resolves the
+   remote annotated tag object to the exact promoted commit immediately before
+   draft creation. It then runs
    `npm publish "$RELEASE_TARBALL" --provenance --access public` with npm OIDC.
    It has `id-token: write` and no long-lived npm credential.
 4. Downloads the exact registry tarball, checks byte identity and exports,
@@ -90,8 +93,10 @@ prerelease suffix fail before dependency installation. The release workflow:
    assets are downloaded and compared byte for byte, only missing assets may be
    attached, and no asset is ever overwritten. A final release must already
    contain exactly the intended asset set; otherwise the workflow stops. After
-   publication, `gh release verify` and `gh release verify-asset` independently
-   validate GitHub's immutable-release attestation and every exact release asset.
+   finalization, the remote annotated tag is resolved again. After publication,
+   bounded retries of `gh release verify` and `gh release verify-asset` are parsed
+   strictly; the signed release subject must identify the promoted commit and the
+   signed asset subjects must be the exact name/SHA-256 closure.
 
 If npm accepts the package but a later step is interrupted, rerunning the same
 tag is recoverable only when the immutable npm version has the exact verified

@@ -122,11 +122,12 @@ test("provenance invocation parser rejects ambiguous or unbounded paths", () => 
 test("release workflow drafts before npm and publishes GitHub only after evidence attestation", async () => {
   const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
   const draft = workflow.indexOf("Create or resume the fail-closed GitHub draft");
+  const cliCapability = workflow.indexOf("gh release verify --help");
   const npmPublish = workflow.indexOf("npm publish \"$RELEASE_TARBALL\"");
   const registryVerify = workflow.indexOf("node scripts/verify-published.mjs");
   const evidenceAttestation = workflow.indexOf("Attest exact retained registry and adoption evidence");
   const githubPublish = workflow.indexOf("Attach every fixed asset, publish once, and require immutability");
-  assert.ok(draft >= 0 && draft < npmPublish);
+  assert.ok(cliCapability >= 0 && cliCapability < draft && draft < npmPublish);
   assert.ok(npmPublish < registryVerify && registryVerify < evidenceAttestation && evidenceAttestation < githubPublish);
   for (const asset of [
     "npm-registry-version.json",
@@ -144,7 +145,14 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
     'set(value) == {"enabled", "enforced_by_owner"}',
     '"gh", "release", "verify"',
     '"gh", "release", "verify-asset"',
+    "validate_remote_tag",
+    "_strict_json_loads",
+    "expected_commit",
+    "os.environ.pop",
+    "_run_json_with_retries",
   ]) assert.ok(reconciler.includes(control), `release reconciler omits ${control}`);
+  assert.match(workflow, /--expected-commit "\$RELEASE_COMMIT"/u);
+  assert.doesNotMatch(workflow, /--source-commit/u);
 });
 
 function provenanceStatement(invocation, overrides = {}) {
