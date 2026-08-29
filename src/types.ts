@@ -114,7 +114,7 @@ export interface TrustSummary {
 export interface ServerDiagnostics {
   request_id: string;
   server_version: string;
-  contract_version: "0.4.0";
+  contract_version: "0.5.1";
   protocol_version: 1;
   installation: InstallationSummary;
   session: {

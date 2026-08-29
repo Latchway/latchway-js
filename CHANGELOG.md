@@ -12,9 +12,10 @@ Versioning once package publication begins.
 ### Changed
 
 - Synchronized the SDK contract lock, compatibility constants, and canonical
-  fixtures to the unreleased Latchway contract 0.4.0 checkpoint. The contract
-  adds server-owned trusted input accounting while preserving the client API
-  shape and wire protocol 1.
+  fixtures to released Latchway contract 0.5.1 at core commit
+  `2f5e5e67c824e270431f1232cc6dc2824848e380` and deterministic bundle SHA-256
+  `52ebacd1e38c522b89bb14a1f34782176be32cdf91d22b7ab962003dbca2d754`,
+  preserving wire protocol 1 and declaring server 1.0.0/1.0.x compatibility.
 - Hardened control and RFC 9457 response parsing with bounded fatal UTF-8,
   duplicate-member and nesting rejection, exact error-registry metadata,
   request-ID correlation, and canonical operation reconciliation identifiers.

@@ -77,7 +77,7 @@ if (tagEvidence.tag !== `v${expected.version}` || tagEvidence.commit !== expecte
 const reproducibility = JSON.parse(await readFile(join(ARTIFACTS_PATH, "build-reproducibility.json"), "utf8"));
 const contract = JSON.parse(await readFile(join(ARTIFACTS_PATH, "contract-evidence.json"), "utf8"));
 if (reproducibility.identical !== true || !/^[0-9a-f]{64}$/u.test(reproducibility.sha256) ||
-    contract.contract_version !== "0.4.0" || !/^[0-9a-f]{64}$/u.test(contract.contract_lock_sha256)) {
+    contract.contract_version !== "0.5.1" || !/^[0-9a-f]{64}$/u.test(contract.contract_lock_sha256)) {
   throw new Error("Contract or reproducible-build evidence is incomplete.");
 }
 

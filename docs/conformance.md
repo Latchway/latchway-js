@@ -1,7 +1,7 @@
 # Conformance
 
 Unit conformance consumes the DPoP and attestation-binding vectors from core
-contract 0.4.0. `pnpm verify:contracts` checks their byte hashes and the pinned
+contract 0.5.1. `pnpm verify:contracts` checks their byte hashes and the pinned
 manifest. Tests cover proof signatures and claims, non-exportable keys,
 IndexedDB cloning and failure, one-tab and multi-tab refresh races, nonce retry,
 streaming, cancellation, origin rejection, provider adapters, stable errors,
