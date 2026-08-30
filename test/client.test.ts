@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createLatchwayClient, createCustomAttestationProvider, LatchwayError } from "../src/index.js";
 import { createNodeLatchwayClient } from "../src/node.js";
-import type { LatchwayClient, LatchwayOptions, Platform } from "../src/types.js";
+import type { LatchwayClient, LatchwayFetchInit, LatchwayOptions, Platform } from "../src/types.js";
 import { base64urlDecode, decodeUTF8 } from "../src/encoding.js";
 import { jwkThumbprint, type P256PublicJWK } from "../src/dpop/key.js";
 
@@ -15,6 +15,120 @@ afterEach(() => {
 });
 
 describe("Latchway fetch client", () => {
+  it("binds a reusable fetch to one feature and exact framework metadata", async () => {
+    const gateway = new MockGateway();
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+    const openAIFetch = client.fetchFor("assistant", { id: "openai-js", version: "7.8.0" });
+
+    await openAIFetch("/v1/responses", {
+      method: "POST",
+      headers: { Authorization: "Bearer framework-placeholder", "X-API-Key": "never-forward" },
+      body: "{}",
+    });
+
+    expect(gateway.lastProtectedHeaders?.get("Authorization")).toMatch(/^DPoP /u);
+    expect(gateway.lastProtectedHeaders?.get("X-API-Key")).toBeNull();
+    expect(gateway.lastProtectedHeaders?.get("X-Latchway-Feature")).toBe("assistant");
+    expect(gateway.lastProtectedHeaders?.get("X-Latchway-Protocol-Version")).toBe("2");
+    expect(gateway.lastProtectedHeaders?.get("X-Latchway-Framework")).toBe("openai-js");
+    expect(gateway.lastProtectedHeaders?.get("X-Latchway-Framework-Version")).toBe("7.8.0");
+  });
+
+  it("accepts only registry framework IDs and canonical SemVer metadata", async () => {
+    const gateway = new MockGateway();
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+    expect(() => client.fetchFor("assistant", {
+      id: "openai-js",
+      version: "7.8.0-beta.1+transport.2",
+    })).not.toThrow();
+    for (const framework of [
+      { id: "caller-selected", version: "1.0.0" },
+      { id: "swift-openai", version: "4.6.0" },
+      { id: "openai-js", version: "01.0.0" },
+      { id: "openai-js", version: "1.0.0-" },
+    ]) {
+      expect(() => client.fetchFor(
+        "assistant",
+        framework as Parameters<LatchwayClient["fetchFor"]>[1],
+      )).toThrow(expect.objectContaining({ code: "client_configuration_invalid" }));
+    }
+    expect(gateway.challengeCalls).toBe(0);
+  });
+
+  it("strips caller-spoofed framework headers unless validated metadata replaces them", async () => {
+    const gateway = new MockGateway();
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+    await client.fetch("/v1/responses", {
+      method: "POST",
+      headers: {
+        "X-Latchway-Framework": "openai-js",
+        "X-Latchway-Framework-Version": "999.0.0",
+      },
+      body: "{}",
+      latchwayFeature: "assistant",
+    });
+    expect(gateway.lastProtectedHeaders?.get("X-Latchway-Framework")).toBeNull();
+    expect(gateway.lastProtectedHeaders?.get("X-Latchway-Framework-Version")).toBeNull();
+  });
+
+  it("rejects undeclared paths, method mismatches, and opaque-route feature confusion", async () => {
+    const gateway = new MockGateway();
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+    for (const [path, method] of [
+      ["/v1/models", "GET"],
+      ["/v1/responses", "GET"],
+      ["/client/v1/diagnostics", "GET"],
+      ["/proxy/other/files", "GET"],
+      ["/proxy/assistant/files?destination=https://other.example", "GET"],
+    ] as const) {
+      await expect(client.fetch(path, { method, latchwayFeature: "assistant" })).rejects.toMatchObject({
+        code: "transport_destination_not_allowed",
+      });
+    }
+    expect(gateway.challengeCalls).toBe(0);
+    await expect(client.fetch("/proxy/assistant/files", {
+      method: "GET",
+      latchwayFeature: "assistant",
+    })).resolves.toMatchObject({ status: 200 });
+  });
+
+  it("authorizes every declared structured protocol and the feature-scoped opaque route", async () => {
+    const gateway = new MockGateway();
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+    for (const path of [
+      "/v1/responses",
+      "/v1/chat/completions",
+      "/v1/embeddings",
+      "/v1/messages",
+    ]) {
+      await expect(client.fetch(path, {
+        method: "POST",
+        body: "{}",
+        latchwayFeature: "assistant",
+      })).resolves.toMatchObject({ status: 200 });
+    }
+    await expect(client.fetch("/proxy/assistant/binary-object", {
+      method: "GET",
+      latchwayFeature: "assistant",
+    })).resolves.toMatchObject({ status: 200 });
+    expect(gateway.protectedCalls).toBe(5);
+  });
+
+  it("fails closed when a custom fetch reports a followed or cross-origin redirect", async () => {
+    for (const destination of [
+      { redirected: true, url: "http://gateway.example.test/v1/responses" },
+      { redirected: false, url: "https://other.example/v1/responses" },
+    ]) {
+      const gateway = new MockGateway();
+      gateway.protectedResponseDestination = destination;
+      await expect(makeBrowserClient(gateway, { mode: "memory" }).fetch(
+        "/v1/responses",
+        { method: "POST", body: "{}", latchwayFeature: "assistant" },
+      )).rejects.toMatchObject({ code: "transport_destination_not_allowed" });
+      expect(gateway.protectedCalls).toBe(1);
+    }
+  });
+
   it("establishes a DPoP session, strips placeholder credentials, and preserves streaming", async () => {
     const gateway = new MockGateway();
     const before = globalThis.fetch;
@@ -90,6 +204,111 @@ describe("Latchway fetch client", () => {
     expect(gateway.protectedCalls).toBe(2);
     expect(gateway.protectedProofs[0]).not.toBe(gateway.protectedProofs[1]);
     expect(decodePayload(gateway.protectedProofs[1] ?? "").nonce).toBe(MockGateway.nonce);
+  });
+
+  it("fails closed instead of buffering or replaying a streaming request body", async () => {
+    const gateway = new MockGateway();
+    gateway.requireNonceOnce = true;
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{}"));
+        controller.close();
+      },
+    });
+    await expect(client.fetch("/v1/responses", {
+      method: "POST",
+      body,
+      duplex: "half",
+      latchwayFeature: "assistant",
+    } as LatchwayFetchInitWithDuplex)).rejects.toMatchObject({
+      code: "transport_request_not_replayable",
+    });
+    expect(gateway.protectedCalls).toBe(1);
+  });
+
+  it("accepts component-aware root grants and preserves them across rotation", async () => {
+    const gateway = new MockGateway();
+    gateway.componentAware = true;
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+    await client.fetch("/v1/responses", { method: "POST", body: "{}", latchwayFeature: "assistant" });
+    await client.refresh();
+    expect(gateway.exchangeCalls).toBe(1);
+    expect(gateway.refreshCalls).toBe(1);
+    expect(gateway.protectedCalls).toBe(1);
+  });
+
+  it("rejects unpaired family state and non-root sessions without explicit delegation provenance", async () => {
+    const unpaired = new MockGateway();
+    unpaired.componentAware = true;
+    unpaired.omitComponentSummary = true;
+    await expect(makeBrowserClient(unpaired, { mode: "memory" }).fetch(
+      "/v1/responses",
+      { method: "POST", body: "{}", latchwayFeature: "assistant" },
+    )).rejects.toMatchObject({ code: "protocol_response_invalid" });
+
+    const missingProvenance = new MockGateway();
+    missingProvenance.componentAware = true;
+    missingProvenance.componentIsRoot = false;
+    await expect(makeBrowserClient(missingProvenance, { mode: "memory" }).fetch(
+      "/v1/responses",
+      { method: "POST", body: "{}", latchwayFeature: "assistant" },
+    )).rejects.toMatchObject({ code: "protocol_response_invalid" });
+
+    const delegatedRoot = new MockGateway();
+    delegatedRoot.componentAware = true;
+    delegatedRoot.trustSource = "delegated_from_attested_root";
+    await expect(makeBrowserClient(delegatedRoot, { mode: "memory" }).fetch(
+      "/v1/responses",
+      { method: "POST", body: "{}", latchwayFeature: "assistant" },
+    )).rejects.toMatchObject({ code: "protocol_response_invalid" });
+  });
+
+  it("provisions only a child public key and supports scoped component and family revocation", async () => {
+    const gateway = new MockGateway();
+    gateway.componentAware = true;
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+
+    const provisioned = await client.provisionComponent({
+      componentDefinitionID: "summary_worker",
+      publicJWK: { kty: "EC", crv: "P-256", x: "x".repeat(43), y: "y".repeat(43) },
+      requestedFeatures: ["weekly_summary"],
+      appVersion: "2.0.0",
+    });
+    expect(provisioned).toMatchObject({
+      componentID: `cmp_${"d".repeat(20)}`,
+      installationFamilyID: `fam_${"f".repeat(20)}`,
+      grantedFeatures: ["weekly_summary"],
+      trust: { source: "delegated_from_attested_root" },
+    });
+    expect(gateway.provisionBodies).toEqual([{
+      component_definition_id: "summary_worker",
+      public_jwk: { kty: "EC", crv: "P-256", x: "x".repeat(43), y: "y".repeat(43) },
+      requested_features: ["weekly_summary"],
+      client_metadata: { app_version: "2.0.0", sdk_version: "1.0.0" },
+    }]);
+
+    await client.revokeComponent(provisioned.componentID);
+    expect(gateway.revokedComponents).toEqual([provisioned.componentID]);
+    await client.revokeCurrentInstallationFamily();
+    expect(gateway.familyRevokeCalls).toBe(1);
+
+    await client.fetch("/v1/responses", { method: "POST", body: "{}", latchwayFeature: "assistant" });
+    expect(gateway.challengeCalls).toBe(2);
+  });
+
+  it("rejects private or malformed child key material before session work", async () => {
+    const gateway = new MockGateway();
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+    await expect(client.provisionComponent({
+      componentDefinitionID: "summary_worker",
+      publicJWK: {
+        kty: "EC", crv: "P-256", x: "x".repeat(43), y: "y".repeat(43),
+        d: "private-material",
+      } as never,
+      requestedFeatures: ["weekly_summary"],
+    })).rejects.toMatchObject({ code: "client_configuration_invalid" });
+    expect(gateway.challengeCalls).toBe(0);
   });
 
   it("does not retry ambiguous nonces or nonce-bearing session expiry", async () => {
@@ -230,7 +449,12 @@ describe("Latchway fetch client", () => {
     const client = makeBrowserClient(gateway, { mode: "memory" });
     await client.fetch("/v1/responses", { method: "POST", body: "{}", latchwayFeature: "assistant" });
     const controller = new AbortController();
-    const pending = client.fetch("/slow", { signal: controller.signal, latchwayFeature: "assistant" });
+    const pending = client.fetch("/v1/responses", {
+      method: "POST",
+      body: JSON.stringify({ input: "slow" }),
+      signal: controller.signal,
+      latchwayFeature: "assistant",
+    });
     controller.abort(new DOMException("cancelled", "AbortError"));
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
   });
@@ -243,7 +467,7 @@ describe("Latchway fetch client", () => {
       limits: [{ metric: "requests", remaining: 9 }],
     });
     await expect(browser.diagnostics()).resolves.toMatchObject({
-      server: { contract_version: "0.5.1", protocol_version: 1 },
+      server: { contract_version: "1.0.0", protocol_version: 2 },
       client: { platform: "web", clockOffsetMilliseconds: expect.any(Number) },
     });
 
@@ -291,9 +515,13 @@ describe("Latchway fetch client", () => {
       .rejects.toBeInstanceOf(LatchwayError);
     const request = new Request("http://gateway.example.test/v1/responses", { method: "POST", body: "{}" });
     await request.text();
-    await expect(client.authorize(request, "assistant")).rejects.toMatchObject({ code: "request_not_replayable" });
+    await expect(client.authorize(request, "assistant")).rejects.toMatchObject({
+      code: "transport_request_not_replayable",
+    });
   });
 });
+
+type LatchwayFetchInitWithDuplex = LatchwayFetchInit & { duplex: "half" };
 
 function makeBrowserClient(gateway: MockGateway, persistence: NonNullable<LatchwayOptions["persistence"]>): LatchwayClient {
   return createLatchwayClient({
@@ -333,6 +561,7 @@ class MockGateway {
   refreshCalls = 0;
   protectedCalls = 0;
   revokeCalls = 0;
+  familyRevokeCalls = 0;
   requireNonceOnce = false;
   nonceResponse = MockGateway.nonce;
   expireSessionOnce = false;
@@ -340,9 +569,16 @@ class MockGateway {
   mismatchJkt = false;
   staleRefreshOnce = false;
   identityRefreshOnce = false;
+  componentAware = false;
+  componentIsRoot = true;
+  omitComponentSummary = false;
+  trustSource: "debug" | "delegated_from_attested_root" = "debug";
   refreshBodies: Array<Record<string, unknown>> = [];
+  provisionBodies: Array<Record<string, unknown>> = [];
+  revokedComponents: string[] = [];
   lastProtectedHeaders: Headers | undefined;
   protectedProofs: string[] = [];
+  protectedResponseDestination: { redirected: boolean; url: string } | undefined;
   platform: Platform = "web";
   private jkt = "";
   private nonceIssued = false;
@@ -408,12 +644,33 @@ class MockGateway {
       return this.json({
         request_id: "req_12345678",
         server_version: "0.1.0",
-        contract_version: "0.5.1",
-        protocol_version: 1,
+        contract_version: "1.0.0",
+        protocol_version: 2,
         installation: this.installation(),
         session: { expires_at: new Date(this.now() + 60_000).toISOString(), refresh_available: true },
         trust: this.trust(),
       });
+    }
+    if (url.pathname === "/client/v1/installation-families/current/components" && request.method === "POST") {
+      this.provisionBodies.push(await request.json() as Record<string, unknown>);
+      const expiresAt = new Date(this.now() + 300_000).toISOString();
+      return this.json({
+        component_id: `cmp_${"d".repeat(20)}`,
+        installation_family_id: `fam_${"f".repeat(20)}`,
+        trust: { source: "delegated_from_attested_root", expires_at: expiresAt },
+        granted_features: ["weekly_summary"],
+        refresh_grant: `crf_${"g".repeat(40)}`,
+        refresh_grant_expires_at: expiresAt,
+      }, 201);
+    }
+    if (url.pathname.startsWith("/client/v1/installation-families/current/components/") &&
+        request.method === "DELETE") {
+      this.revokedComponents.push(decodeURIComponent(url.pathname.split("/").at(-1) ?? ""));
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname === "/client/v1/installation-families/current" && request.method === "DELETE") {
+      this.familyRevokeCalls += 1;
+      return new Response(null, { status: 204 });
     }
     if (url.pathname === "/client/v1/installations/current") {
       this.revokeCalls += 1;
@@ -433,6 +690,14 @@ class MockGateway {
     }
     if (this.nonceIssued && decodePayload(proof).nonce !== MockGateway.nonce) {
       return this.problem("dpop_invalid", 401);
+    }
+    if (this.protectedResponseDestination !== undefined) {
+      const response = this.json({ ok: true });
+      Object.defineProperties(response, {
+        redirected: { value: this.protectedResponseDestination.redirected },
+        url: { value: this.protectedResponseDestination.url },
+      });
+      return response;
     }
     if (url.pathname === "/slow") {
       return new Promise<Response>((_resolve, reject) => {
@@ -463,6 +728,19 @@ class MockGateway {
       refresh_token: `refresh-${this.generation}-${"r".repeat(40)}`,
       refresh_expires_in: 3_600,
       installation: this.installation(),
+      ...(this.componentAware ? {
+        installation_family: { id: `fam_${"f".repeat(20)}`, status: "active" },
+        ...(this.omitComponentSummary ? {} : { component: {
+          id: `cmp_${"c".repeat(20)}`,
+          definition_id: "web_root",
+          kind: "browser",
+          platform: this.platform,
+          is_root: this.componentIsRoot,
+          status: "active",
+          dpop_jkt: this.jkt,
+          granted_features: ["assistant"],
+        } }),
+      } : {}),
       trust: this.trust(),
     }, status);
   }
@@ -482,6 +760,7 @@ class MockGateway {
       level: "debug",
       verified_at: new Date(this.now()).toISOString(),
       expires_at: new Date(this.now() + 300_000).toISOString(),
+      ...(this.componentAware ? { source: this.trustSource } : {}),
     };
   }
 

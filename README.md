@@ -4,11 +4,25 @@
 self-hosted Latchway gateway. It establishes a short-lived, P-256 DPoP-bound
 session without placing an AI-provider credential in the application.
 
+This repository is a pnpm workspace. The audited base transport remains the
+root `@latchway/client` package, while first-party framework adapters live in
+`packages/`:
+
+- `@latchway/openai` for the official OpenAI JavaScript SDK
+- `@latchway/vercel-ai` for the Vercel AI SDK
+- `@latchway/langchain` for LangChain.js through `@langchain/openai`
+
+The adapters are thin transport integrations. They preserve the framework's
+native messages, tools, structured output, streaming, and cancellation APIs;
+Latchway does not introduce a second AI framework.
+
 Version `1.0.0` is the intended stable source candidate and has not yet been
-published to npm. Contract 0.5.1,
-wire protocol 1, and the exact reviewed core bundle are pinned in
-`contract.lock`. `pnpm pack:check` produces a locally installable prerelease
-archive without publishing it.
+published to npm. Draft contract 1.0.0, current wire protocol 2, and the exact
+reviewed core bundle are pinned in `contract.lock`. Wire-1-shaped session
+grants without Installation Family metadata remain parseable for legacy
+server compatibility; new family/component operations require wire 2.
+`pnpm pack:check` produces a locally installable prerelease archive without
+publishing it.
 
 The promotion-dispatched release workflow remains fail-closed until promotion
 evidence authorizes the exact commit. See [`docs/releasing.md`](docs/releasing.md) for
@@ -52,8 +66,16 @@ const response = await latchway.fetch("https://ai.example.com/v1/responses", {
 
 The SDK never patches global `fetch`. `authorize(request, feature)` returns a
 new immutable Request, while `fetch` preserves the Request signal and returns
-the original streaming Response. It signs only requests whose origin exactly
-matches `baseURL`.
+the original streaming Response. `fetchFor(feature, framework?)` creates a
+reusable feature-bound fetch for raw HTTP, framework, React Native, and service
+worker integrations.
+
+Before identity lookup or session creation, the transport requires the exact
+gateway origin and a contract-owned data-plane method/path: structured
+Responses, Chat Completions, Embeddings, Anthropic Messages, or that feature's
+opaque `/proxy/{feature}/...` route. Authenticated fetches use
+`redirect: "error"`; a custom fetch that nevertheless returns a redirected or
+cross-origin response fails closed.
 
 ## Browser persistence
 
@@ -76,23 +98,83 @@ Browser key possession and Firebase App Check or Turnstile signals are useful
 web risk controls, not hardware-backed native application attestation. See
 [`docs/web-security.md`](docs/web-security.md).
 
-## OpenAI-compatible clients
+## Installation Families and components
+
+Component-aware session grants include the current Installation Family, root
+or delegated component, granted features, and explicit trust provenance. The
+SDK validates that family and component state are paired, active, on the same
+platform, and bound to the installation key before persisting a session.
+
+A root component can register a child-owned public key without receiving its
+private key:
 
 ```ts
-const openai = new OpenAI({
-  apiKey: "latchway-managed",
-  baseURL: "https://ai.example.com/v1",
-  fetch: (input, init) =>
-    latchway.fetch(input, { ...init, latchwayFeature: "habit_assistant" }),
+const child = await latchway.provisionComponent({
+  componentDefinitionID: "summary_worker",
+  publicJWK: childGeneratedPublicJWK,
+  requestedFeatures: ["weekly_summary"],
+});
+
+await deliverDirectlyToChild({
+  componentID: child.componentID,
+  refreshGrant: child.refreshGrant,
 });
 ```
 
-The wrapper deletes incoming authorization, proxy, cookie, common AI-provider,
-Google, and signed-cloud credential headers before adding the DPoP-bound
-Latchway authorization. It rejects their case-insensitive or percent-encoded
-query-name forms before acquiring identity, establishing a session, or making
-a network request. Compatibility placeholders are never forwarded, and the SDK
-never accepts an upstream provider secret.
+The refresh grant is a one-time bootstrap credential for the child key. Never
+log it or persist it with the root session. `revokeComponent(id)` revokes one
+delegated component, while `revokeCurrentInstallationFamily()` revokes every
+component and clears local root state. Native and React Native integrations
+must generate and retain child private keys in their native platform SDK.
+
+## Framework integrations
+
+```ts
+import { createLatchwayOpenAI } from "@latchway/openai";
+
+const openai = createLatchwayOpenAI({
+  latchway,
+  feature: "habit_assistant",
+});
+
+const stream = await openai.responses.create({
+  // Compatibility placeholder only. The server selects the physical model.
+  model: "latchway",
+  input: "Summarize today",
+  stream: true,
+});
+```
+
+Vercel AI SDK and LangChain.js applications use `createLatchwayProvider`,
+`createLatchwayChatOpenAI`, and `createLatchwayEmbeddings`. Each model/client is
+bound to an application feature; the physical provider, route, and model remain
+server configuration. Exact tested dependency versions and limitations are in
+[`docs/framework-integrations.md`](docs/framework-integrations.md).
+
+The transport deletes incoming authorization, proxy, cookie, common
+AI-provider, Google, and signed-cloud credential headers before adding the
+DPoP-bound Latchway authorization. It rejects their case-insensitive or
+percent-encoded query-name forms before identity, session, or network work.
+Framework compatibility placeholders are therefore never sent to Latchway or
+upstream, and no adapter accepts an upstream provider secret.
+
+Trusted input-token preflight is intentionally server-owned. It runs after
+route selection, physical-model resolution, and server rewriting; these
+adapters do not estimate tokens from client bytes or caller-supplied model
+names.
+
+## Service workers and React Native
+
+`@latchway/client/service-worker` provides an explicit handler with `route`
+and `handle` methods. The application supplies a synchronous `featureFor`
+selector, and the handler claims only selected requests for the exact gateway
+origin. It never installs a global listener. See
+[`docs/service-worker.md`](docs/service-worker.md).
+
+The exported `AuthenticatedTransport` interface is the shared JavaScript
+surface for native-backed React Native clients. A React Native bridge implements
+`gatewayURL` and `fetchFor`; it must delegate keys, attestation, refresh state,
+and proof creation to the iOS or Android SDK rather than JavaScript storage.
 
 ## Firebase and Turnstile adapters
 
@@ -173,7 +255,10 @@ The client retries once with a fresh proof for a canonical, unambiguous
 before upstream dispatch. A refresh body contains only the rotating token; a
 server request for renewed identity or attestation clears the old session and
 performs a fresh challenge and exchange. It never blindly replays upstream
-timeout or protocol failures.
+timeout or protocol failures. Streaming or already-consumed request bodies are
+never buffered for retry: if Latchway rejects one before dispatch and a fresh
+proof or session would require replay, the client throws
+`transport_request_not_replayable`.
 
 ## Exports
 
@@ -182,6 +267,10 @@ timeout or protocol failures.
 - `@latchway/client/node`
 - `@latchway/client/firebase`
 - `@latchway/client/turnstile`
+- `@latchway/client/service-worker`
+- `@latchway/openai`
+- `@latchway/vercel-ai`
+- `@latchway/langchain`
 
 ## Development
 
@@ -199,7 +288,8 @@ pnpm release:check
 The checks cover strict TypeScript, lint, canonical DPoP and attestation
 vectors, storage failure, refresh races, multiple tabs, cancellation,
 streaming, strict CSP, subpath exports, deterministic output, and package
-contents.
+contents. Framework tests execute the pinned real OpenAI, Vercel AI, and
+LangChain packages through their documented injection seams.
 
 See [examples](examples/README.md), [architecture](docs/architecture.md),
 [release procedure](docs/releasing.md), [security policy](SECURITY.md), and

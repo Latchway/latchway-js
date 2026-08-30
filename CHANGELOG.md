@@ -9,19 +9,36 @@ Versioning once package publication begins.
 
 ### Changed
 
+- Synchronize the SDK, runtime headers, release evidence, and all four canonical
+  fixtures to draft Latchway contract 1.0.0 at core commit
+  `9756a08fe41e6c8a7eba0cf27a5f31379713d733` and deterministic bundle SHA-256
+  `8e916d8b4ae4d002eabb39b867fe6185c7d5f3c97a258b08427a4a96461c938b`,
+  emitting current wire protocol 2 while retaining legacy grant parsing.
 - Require exact-image JavaScript release evidence for both Firebase App Check
   and Cloudflare Turnstile, with separate protected tokens and a non-secret
   provider identity bound into each retained conformance report.
+- Restrict authenticated transports to contract-declared method/path pairs,
+  reject redirected or cross-origin responses, attach exact framework
+  metadata, and fail closed rather than replaying streaming request bodies.
+- Parse and persist Installation Family, component grant, feature scope, and
+  trust provenance fields without weakening legacy wire compatibility.
 
-## [1.0.0] - 2026-08-29
+### Added
+
+- Feature-bound `fetchFor`, root-managed component provisioning/revocation,
+  Installation Family revocation, and an explicit service-worker handler.
+- Workspace adapter packages for OpenAI JavaScript 7.8.0, Vercel AI SDK 7.0.85
+  with `@ai-sdk/openai` 4.0.52, and LangChain OpenAI 1.5.10.
+- Real-framework tests, examples, integration guides, and capability-spike
+  records. Compatibility remains experimental until broader-version and live
+  common conformance evidence exists.
+
+## [1.0.0] - 2026-08-30
 
 ### Changed
 
-- Synchronized the SDK contract lock, compatibility constants, and canonical
-  fixtures to released Latchway contract 0.5.1 at core commit
-  `2f5e5e67c824e270431f1232cc6dc2824848e380` and deterministic bundle SHA-256
-  `52ebacd1e38c522b89bb14a1f34782176be32cdf91d22b7ab962003dbca2d754`,
-  preserving wire protocol 1 and declaring server 1.0.0/1.0.x compatibility.
+- Established the original reviewed client-contract lock, compatibility
+  constants, canonical fixtures, and server 1.0.0/1.0.x compatibility policy.
 - Hardened control and RFC 9457 response parsing with bounded fatal UTF-8,
   duplicate-member and nesting rejection, exact error-registry metadata,
   request-ID correlation, and canonical operation reconciliation identifiers.

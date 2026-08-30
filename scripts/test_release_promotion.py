@@ -148,7 +148,7 @@ class PromotionVerifierTests(unittest.TestCase):
                 "version": "1.0.0",
                 "status": "released",
                 "released_at": "2026-08-29T10:00:00Z",
-                "wire_protocol": 1,
+                "wire_protocol": 2,
                 "bundle_file_name": "latchway-contract-1.0.0.tar.gz",
                 "bundle_sha256": "b" * 64,
                 "core_release": CORE_TAG,
@@ -427,10 +427,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertLess(attestation, verifier)
         self.assertLess(verifier, tag)
         publication_markers = {
-            "javascript": 'npm publish "$archive"',
+            "javascript": '"$LATCHWAY_NPM_CLI" publish "$archive"',
             "ios": "scripts/publish-or-verify-cocoapods.sh",
             "android": "scripts/publish-central.sh",
-            "react_native": 'npm publish "$archive"',
+            "react_native": '"$LATCHWAY_NPM_CLI" publish "$archive"',
         }
         self.assertLess(tag, workflow.index(publication_markers[REPOSITORY_ID]))
         self.assertIn("persist-credentials: false", workflow)
@@ -510,9 +510,63 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertNotIn("python3 ", block, job_name)
             self.assertNotIn("node ", block, job_name)
             self.assertNotIn("./gradlew", block, job_name)
+            self.assertNotIn("npm install", block, job_name)
+            self.assertNotIn("npm exec", block, job_name)
+            self.assertNotRegex(block, r"(?m)^\s*npx\s", job_name)
             self.assertNotIn(
                 "LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN", block, job_name
             )
+
+    def test_trusted_npm_cli_is_authenticated_before_oidc_execution(self) -> None:
+        if REPOSITORY_ID not in ("javascript", "react_native"):
+            self.skipTest("npm publication repositories only")
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        following = "github-draft"
+        trusted = workflow.split("\n  trusted-npm-cli:\n", 1)[1].split(
+            f"\n  {following}:\n", 1
+        )[0]
+        publication = workflow.split("\n  npm-publish:\n", 1)[1].split(
+            "\n  publish:\n", 1
+        )[0]
+
+        self.assertIn("permissions: {}", trusted)
+        self.assertIn('NPM_CONFIG_IGNORE_SCRIPTS: "true"', trusted)
+        self.assertIn("curl --proto '=https' --proto-redir '=https' --tlsv1.2", trusted)
+        self.assertIn("sha256sum --check --strict", trusted)
+        self.assertIn("sha512sum --check --strict", trusted)
+        self.assertIn("Transfer exact npm CLI tarball as inert data", trusted)
+        self.assertIn(
+            "NPM_CLI_SHA512: "
+            "ee22b335fcbc95662cdf3ab8a053daf045d9cf9c6df6040d28965abb707512b2"
+            "c16fa6c5eec049d34c74f78f390cebd14f697919eadb97756564d4f9eccc4954",
+            workflow,
+        )
+        self.assertIn(
+            "NPM_CLI_INTEGRITY: "
+            "sha512-7iKzNfy8lWYs3zq4oFPa8EXZz5xt9gQNKJZau3B1ErLBb6bF7sBJ00x09485"
+            "DOvRT2l5Gerbl3VlZNT57MxJVA==",
+            workflow,
+        )
+        for forbidden in (
+            "actions/checkout", "secrets.", "github.token", "id-token:",
+            "attestations:", "npm install", "npm exec",
+        ):
+            self.assertNotIn(forbidden, trusted)
+        self.assertNotRegex(trusted, r"(?m)^\s*npx\s")
+
+        self.assertIn("trusted-npm-cli", publication.split("steps:", 1)[0])
+        self.assertIn("Verify exact npm CLI closure before extraction or execution", publication)
+        self.assertIn('closure=("$root"/*)', publication)
+        self.assertIn("sha512sum --check --strict", publication)
+        self.assertIn('"$LATCHWAY_NPM_CLI" publish "$archive"', publication)
+        for forbidden in ("npm install", "npm exec"):
+            self.assertNotIn(forbidden, publication)
+        self.assertNotRegex(publication, r"(?m)^\s*npx\s")
+        verification = publication.index("sha512sum --check --strict")
+        extraction = publication.index('tar --extract --gzip --file "$archive"')
+        execution = publication.index('test "$("$cli" --version)"')
+        self.assertLess(verification, extraction)
+        self.assertLess(extraction, execution)
 
 if __name__ == "__main__":
     unittest.main()

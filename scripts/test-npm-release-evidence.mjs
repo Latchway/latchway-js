@@ -123,7 +123,7 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
   const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
   const draft = workflow.indexOf("Preflight immutable release and create draft with fixed API calls");
   const cliCapability = workflow.indexOf("version_line=$(gh version | head -n 1)");
-  const npmPublish = workflow.indexOf('npm publish "$archive"');
+  const npmPublish = workflow.indexOf('"$LATCHWAY_NPM_CLI" publish "$archive"');
   const registryVerify = workflow.indexOf("node scripts/verify-published.mjs");
   const assetClosure = workflow.indexOf(
     "Validate exact JavaScript asset closure before OIDC attestation",
@@ -146,6 +146,34 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
     "npm-release-adoption-",
   ]) assert.ok(workflow.slice(githubPublish).includes(asset), `final reconciliation omits ${asset}`);
   assert.doesNotMatch(workflow, /NPM_TOKEN|NODE_AUTH_TOKEN|--clobber/u);
+  assert.match(workflow,
+    /NPM_CLI_SHA512: ee22b335fcbc95662cdf3ab8a053daf045d9cf9c6df6040d28965abb707512b2c16fa6c5eec049d34c74f78f390cebd14f697919eadb97756564d4f9eccc4954/u);
+  assert.match(workflow,
+    /NPM_CLI_INTEGRITY: sha512-7iKzNfy8lWYs3zq4oFPa8EXZz5xt9gQNKJZau3B1ErLBb6bF7sBJ00x09485DOvRT2l5Gerbl3VlZNT57MxJVA==/u);
+  const trustedNpmJob = workflow.slice(
+    workflow.indexOf("\n  trusted-npm-cli:\n"),
+    workflow.indexOf("\n  github-draft:\n"),
+  );
+  const npmPublishJob = workflow.slice(
+    workflow.indexOf("\n  npm-publish:\n"),
+    workflow.indexOf("\n  publish:\n"),
+  );
+  assert.match(trustedNpmJob, /permissions: \{\}/u);
+  assert.match(trustedNpmJob, /NPM_CONFIG_IGNORE_SCRIPTS: "true"/u);
+  assert.match(trustedNpmJob, /sha512sum --check --strict/u);
+  assert.doesNotMatch(trustedNpmJob,
+    /actions\/checkout|secrets\.|github\.token|id-token:|attestations:|npm install|npm exec/u);
+  assert.doesNotMatch(trustedNpmJob, /(?:^|\n)\s*npx\s/u);
+  assert.match(npmPublishJob, /needs: \[promote, verify, trusted-npm-cli, github-draft\]/u);
+  assert.match(npmPublishJob, /Verify exact npm CLI closure before extraction or execution/u);
+  assert.doesNotMatch(npmPublishJob, /npm install|npm exec/u);
+  assert.doesNotMatch(npmPublishJob, /(?:^|\n)\s*npx\s/u);
+  assert.ok(
+    npmPublishJob.indexOf("sha512sum --check --strict")
+      < npmPublishJob.indexOf('tar --extract --gzip --file "$archive"')
+      && npmPublishJob.indexOf('tar --extract --gzip --file "$archive"')
+      < npmPublishJob.indexOf('test "$("$cli" --version)"'),
+  );
   assert.equal((workflow.match(/\$\{\{\s*secrets\.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN\s*\}\}/gu) ?? []).length, 2);
   const policyJob = workflow.slice(
     workflow.indexOf("\n  github-release-policy:\n"),

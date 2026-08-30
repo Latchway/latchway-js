@@ -30,9 +30,10 @@ A useful report includes:
 ## Security-sensitive scope
 
 Treat changes to non-exportable WebCrypto keys, IndexedDB persistence, P-256
-signing, JWK thumbprints, DPoP proofs, refresh coordination, origin handling,
-fetch wrapping, token redaction, and browser-versus-Node trust claims as
-security-sensitive. They require focused tests and cross-repository conformance.
+signing, JWK thumbprints, DPoP proofs, refresh coordination, origin/path/method
+and redirect enforcement, component provisioning, framework fetch wrapping,
+token redaction, and browser-versus-Node trust claims as security-sensitive.
+They require focused tests and cross-repository conformance.
 
 WebCrypto possession is not equivalent to hardware-backed native attestation.
 The SDK must never accept or forward an upstream AI-provider secret. Latchway

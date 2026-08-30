@@ -1,11 +1,23 @@
 # Conformance
 
-Unit conformance consumes the DPoP and attestation-binding vectors from core
-contract 0.5.1. `pnpm verify:contracts` checks their byte hashes and the pinned
-manifest. Tests cover proof signatures and claims, non-exportable keys,
+Unit conformance consumes the DPoP, attestation-binding, and Installation
+Family vectors from draft core contract 1.0.0. `pnpm verify:contracts` checks
+their byte hashes and the pinned manifest. Tests cover proof signatures and
+claims, non-exportable keys,
 IndexedDB cloning and failure, one-tab and multi-tab refresh races, nonce retry,
 streaming, cancellation, origin rejection, provider adapters, stable errors,
-and strict CSP.
+strict CSP, contract route/method enforcement, redirect failure, non-replayable
+bodies, component/family grant validation, public-key-only child provisioning,
+and scoped component/family revocation.
+
+The framework suite executes the pinned real `openai`, `ai`,
+`@ai-sdk/openai`, and `@langchain/openai` packages through their documented
+fetch/provider/underlying-client seams. It currently proves OpenAI Responses
+and Chat SSE, Vercel text generation and streaming, LangChain chat and
+embeddings, feature/version binding, and AbortSignal forwarding. This is one
+exact-version workspace gate; it is not minimum/latest or live-core evidence,
+so the canonical framework registry remains experimental and its limitations
+remain release gates.
 
 The Node entry point is suitable for the core `latchway verify local` flow when
 the gateway supplies a mock OIDC issuer and explicitly enabled debug

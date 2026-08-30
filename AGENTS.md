@@ -8,10 +8,12 @@ Build the TypeScript client that lets browser and bounded Node.js applications
 authenticate to Latchway, establish DPoP-bound sessions, and authorize ordinary
 fetch requests without holding an upstream provider credential.
 
-The version 1 JavaScript implementation is locked to released contract
-checkpoint 0.5.1, wire protocol 1, and the reviewed core bundle recorded in
-`contract.lock`. The package remains unpublished until protected registry,
-provenance, compatibility, and immutable-release evidence gates pass.
+The version 1 JavaScript implementation is locked to draft contract checkpoint
+1.0.0, current wire protocol 2, and the reviewed core bundle recorded in
+`contract.lock`. Compatible legacy wire-1 session grants remain parseable, but
+Installation Family and Client Component operations require wire 2. The
+package remains unpublished until the draft contract is promoted and protected
+registry, provenance, compatibility, and immutable-release evidence gates pass.
 Production source, package metadata, tests, examples, and CI are authorized.
 Never invent a temporary wire contract, fake production behavior, or describe
 an unpublished package as released.
@@ -23,8 +25,9 @@ an unpublished package as released.
   and compatibility policy.
 - Consume checksummed contract releases. Generated DTOs may be internal; public
   TypeScript APIs must remain handwritten and idiomatic.
-- Planned exports are @latchway/client, /browser, /node, /firebase, and
-  /turnstile. Keep their dependency graphs explicit and environment-safe.
+- Package exports are @latchway/client, /browser, /node, /firebase,
+  /turnstile, and /service-worker. Keep their dependency graphs explicit and
+  environment-safe.
 - React Native may consume shared transport concepts but must use its native
   SDK dependencies for hardware keys and attestation.
 

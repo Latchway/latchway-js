@@ -8,8 +8,13 @@ export function createBrowserLatchwayClient(options: LatchwayOptions): LatchwayC
 export type {
   AttestationContext,
   AttestationProvider,
+  FrameworkID,
+  FrameworkMetadata,
   IdentityTokenProvider,
   LatchwayClient,
   LatchwayFetchInit,
   LatchwayOptions,
+  ProvisionComponentOptions,
+  ProvisionedComponent,
+  PublicP256JWK,
 } from "./types.js";

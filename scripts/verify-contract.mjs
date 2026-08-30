@@ -2,25 +2,27 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const expected = {
-  contract: "0.5.1",
-  commit: "2f5e5e67c824e270431f1232cc6dc2824848e380",
-  bundle: "52ebacd1e38c522b89bb14a1f34782176be32cdf91d22b7ab962003dbca2d754",
-  protocol: 1,
+  contract: "1.0.0",
+  release: "unreleased",
+  commit: "9756a08fe41e6c8a7eba0cf27a5f31379713d733",
+  bundle: "8e916d8b4ae4d002eabb39b867fe6185c7d5f3c97a258b08427a4a96461c938b",
+  protocol: 2,
   minimumServer: "1.0.0",
   maximumTestedServer: "1.0.x",
 };
 const expectedLock = `contract_version: ${expected.contract}
-core_release: v1.0.0
+wire_protocol: ${expected.protocol}
+core_release: ${expected.release}
 core_commit: ${expected.commit}
 bundle_sha256: "${expected.bundle}"
 minimum_server_version: ${expected.minimumServer}
 maximum_tested_server_version: ${expected.maximumTestedServer}
-wire_protocol_version: ${expected.protocol}
 `;
 const fixtureHashes = new Map([
-  ["attestation-binding-v1.json", "e24ec75cc37b331060c67637fe3a4421c644e354fe73b9049b652d61a9e2896b"],
-  ["dpop-v1.json", "d14702db02a4498e8d52b5b39d5bc25d141dcf87ea4f7c4aeb929fd191eb8101"],
-  ["protocol-version.json", "c469ab7c23c78dc5de2430bdc1d524268afe400f7af7eb8efb36b1c5d739fd51"],
+  ["attestation-binding-v1.json", "aaadef1172dffc3e600029e03259ff636a969cd4f925544fdccfb2c704b03659"],
+  ["dpop-v1.json", "b639e22dcd1c1a18e1292a044d96ec043c3be1e0271aacd6904bca39253bc5d4"],
+  ["installation-family-v2.json", "87ea67542983a406ef7257476429b8d23e36a90c1b448142a5728632e63395f3"],
+  ["protocol-version.json", "7e63b0820b459606c0f0478770a6b1f4fa17d800578b7522c2e9e1210f79f784"],
 ]);
 
 const lock = await readFile(new URL("../contract.lock", import.meta.url), "utf8");
@@ -47,6 +49,7 @@ await writeFile(
   `${JSON.stringify({
     schema_version: 1,
     contract_version: expected.contract,
+    core_release: expected.release,
     core_commit: expected.commit,
     bundle_sha256: expected.bundle,
     wire_protocol_version: expected.protocol,

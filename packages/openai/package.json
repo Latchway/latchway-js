@@ -1,0 +1,32 @@
+{
+  "name": "@latchway/openai",
+  "version": "1.0.0",
+  "description": "Feature-bound Latchway transport adapter for the official OpenAI JavaScript SDK",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=24.19.0" },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "LICENSE", "NOTICE", "README.md"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Latchway/latchway-js.git",
+    "directory": "packages/openai"
+  },
+  "publishConfig": { "access": "public" },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "peerDependencies": {
+    "@latchway/client": "workspace:^",
+    "openai": "7.8.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

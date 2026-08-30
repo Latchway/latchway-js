@@ -6,10 +6,16 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-import { LatchwayError, errorFromResponse } from "../dist/index.js";
-import { createCustomAttestationProvider, createNodeLatchwayClient } from "../dist/node.js";
-
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const PROTOCOL_MANIFEST = JSON.parse(readFileSync(
+  resolve(ROOT, "test/fixtures/contract/protocol-version.json"),
+  "utf8",
+));
+const CONTRACT_VERSION = PROTOCOL_MANIFEST.contract_version;
+const PROTOCOL_VERSION = PROTOCOL_MANIFEST.wire_protocol?.current;
+if (CONTRACT_VERSION !== "1.0.0" || PROTOCOL_VERSION !== 2) {
+  throw new Error("javascript_contract_runtime_identity_invalid");
+}
 const COMMIT = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const SEMVER = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/u;
@@ -127,7 +133,8 @@ export function validateReport(report, candidate, gateway, expectedAttestationPr
       report.gateway.build.commit !== candidate.core_commit ||
       report.gateway.build.version !== candidate.repositories.core.version ||
       report.gateway.build.contract_version !== candidate.contract_version ||
-      report.gateway.build.protocol_version !== "1") {
+      report.gateway.build.contract_version !== CONTRACT_VERSION ||
+      report.gateway.build.protocol_version !== String(PROTOCOL_VERSION)) {
     throw new Error("live_report_gateway_identity_invalid");
   }
   if (!Array.isArray(report.tests) || report.tests.length !== REQUIRED_TESTS.length ||
@@ -183,6 +190,8 @@ function validateConcreteTests(tests) {
 }
 
 export async function runLive({ candidate, gateway, config, fetchImplementation = fetch }) {
+  const [{ LatchwayError, errorFromResponse }, { createCustomAttestationProvider, createNodeLatchwayClient }] =
+    await Promise.all([import("../dist/index.js"), import("../dist/node.js")]);
   const provider = createCustomAttestationProvider({
     provider: config.provider,
     getEvidence: async () => ({ token: config.attestationToken }),
@@ -207,14 +216,18 @@ export async function runLive({ candidate, gateway, config, fetchImplementation 
   const tests = [];
 
   const authorized = await client.authorize(probe, config.feature);
-  const first = await safeHTTP(await fetchImplementation(authorized), 65_536);
+  const first = await safeHTTP(await fetchImplementation(authorized), 65_536, errorFromResponse);
   tests.push(httpTest("dpop_authorized_request", first, first.status >= 200 && first.status < 300));
-  const replay = await safeHTTP(await fetchImplementation(authorized), 65_536);
+  const replay = await safeHTTP(await fetchImplementation(authorized), 65_536, errorFromResponse);
   tests.push(httpTest("dpop_replay_rejected", replay, replay.status === 401 && replay.errorCode === "dpop_replayed"));
   const tampered = await client.authorize(probe, config.feature);
   const tamperedHeaders = new globalThis.Headers(tampered.headers);
   tamperedHeaders.set("DPoP", tamperedDPoP(tamperedHeaders.get("DPoP")));
-  const tamper = await safeHTTP(await fetchImplementation(new globalThis.Request(tampered, { headers: tamperedHeaders })), 65_536);
+  const tamper = await safeHTTP(
+    await fetchImplementation(new globalThis.Request(tampered, { headers: tamperedHeaders })),
+    65_536,
+    errorFromResponse,
+  );
   tests.push(httpTest("tampered_dpop_rejected", tamper, tamper.status === 401 && tamper.errorCode === "dpop_invalid"));
 
   try {
@@ -242,9 +255,10 @@ export async function runLive({ candidate, gateway, config, fetchImplementation 
   for (const diagnostics of [beforeDiagnostics, afterDiagnostics]) {
     if (diagnostics.client.sdkVersion !== candidate.repositories.javascript.version ||
         diagnostics.client.contractVersion !== candidate.contract_version ||
-        diagnostics.client.protocolVersion !== 1 || diagnostics.client.platform !== "node" ||
+        diagnostics.client.contractVersion !== CONTRACT_VERSION ||
+        diagnostics.client.protocolVersion !== PROTOCOL_VERSION || diagnostics.client.platform !== "node" ||
         diagnostics.server.contract_version !== candidate.contract_version ||
-        diagnostics.server.protocol_version !== 1) {
+        diagnostics.server.protocol_version !== PROTOCOL_VERSION) {
       throw new Error("live_javascript_runtime_identity_invalid");
     }
   }
@@ -261,7 +275,11 @@ export async function runLive({ candidate, gateway, config, fetchImplementation 
   const unsupported = await client.authorize(probe, config.feature);
   const unsupportedHeaders = new globalThis.Headers(unsupported.headers);
   unsupportedHeaders.set("X-Latchway-Protocol-Version", "0");
-  const protocol = await safeHTTP(await fetchImplementation(new globalThis.Request(unsupported, { headers: unsupportedHeaders })), 65_536);
+  const protocol = await safeHTTP(
+    await fetchImplementation(new globalThis.Request(unsupported, { headers: unsupportedHeaders })),
+    65_536,
+    errorFromResponse,
+  );
   tests.push({
     ...httpTest("protocol_version_rejection", protocol, protocol.status === 426 && protocol.errorCode === "protocol_version_unsupported"),
     protocol_version_sent: 0,
@@ -297,7 +315,7 @@ export async function runLive({ candidate, gateway, config, fetchImplementation 
 
   const pending = await client.authorize(probe, config.feature);
   await client.revokeCurrentInstallation();
-  const revoked = await safeHTTP(await fetchImplementation(pending), 65_536);
+  const revoked = await safeHTTP(await fetchImplementation(pending), 65_536, errorFromResponse);
   tests.push(httpTest("installation_revocation", revoked, revoked.status === 403 && revoked.errorCode === "installation_revoked"));
 
   return {
@@ -329,7 +347,7 @@ function httpTest(id, response, passed) {
   };
 }
 
-async function safeHTTP(response, maximumBytes) {
+async function safeHTTP(response, maximumBytes, errorFromResponse) {
   const error = response.ok ? undefined : await errorFromResponse(response.clone());
   await readBounded(response, maximumBytes);
   const requestID = REQUEST_ID.test(response.headers.get("X-Latchway-Request-ID") ?? "")

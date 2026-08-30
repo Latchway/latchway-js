@@ -14,12 +14,17 @@
     "useUnknownInCatchVariables": true,
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,
+    "skipLibCheck": true,
     "paths": {
       "@latchway/client": ["./src/index.ts"],
       "@latchway/client/browser": ["./src/browser.ts"],
       "@latchway/client/node": ["./src/node.ts"],
       "@latchway/client/firebase": ["./src/firebase.ts"],
-      "@latchway/client/turnstile": ["./src/turnstile.ts"]
+      "@latchway/client/turnstile": ["./src/turnstile.ts"],
+      "@latchway/client/service-worker": ["./src/service-worker.ts"],
+      "@latchway/openai": ["./packages/openai/src/index.ts"],
+      "@latchway/vercel-ai": ["./packages/vercel-ai/src/index.ts"],
+      "@latchway/langchain": ["./packages/langchain/src/index.ts"]
     },
     "types": ["node", "vitest/globals"]
   },

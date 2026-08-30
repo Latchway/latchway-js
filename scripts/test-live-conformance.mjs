@@ -16,7 +16,7 @@ function candidate() {
   return {
     core_commit: "1".repeat(40),
     core_release: "v1.0.0",
-    contract_version: "0.5.1",
+    contract_version: "1.0.0",
     bundle_sha256: "a".repeat(64),
     oci_image_digest: `ghcr.io/latchway/latchway@sha256:${"b".repeat(64)}`,
     repositories,
@@ -38,8 +38,8 @@ function report() {
         version: "1.0.0",
         commit: "1".repeat(40),
         build_date: "2026-08-29T10:00:00Z",
-        contract_version: "0.5.1",
-        protocol_version: "1",
+        contract_version: "1.0.0",
+        protocol_version: "2",
       },
     },
     tests: [

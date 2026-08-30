@@ -6,6 +6,7 @@ const expected = new Map([
   ["../dist/node.js", "createNodeLatchwayClient"],
   ["../dist/firebase.js", "createFirebaseAppCheckProvider"],
   ["../dist/turnstile.js", "createTurnstileProvider"],
+  ["../dist/service-worker.js", "createLatchwayServiceWorkerHandler"],
 ]);
 for (const [relative, symbol] of expected) {
   const module = await import(new URL(relative, import.meta.url));

@@ -1,5 +1,10 @@
 import type { InstallationKeyRecord } from "../dpop/key.js";
-import type { InstallationSummary, TrustSummary } from "../types.js";
+import type {
+  ClientComponentSummary,
+  InstallationFamilySummary,
+  InstallationSummary,
+  TrustSummary,
+} from "../types.js";
 
 export interface StoredSession {
   accessToken: string;
@@ -7,6 +12,8 @@ export interface StoredSession {
   accessExpiresAt: number;
   refreshExpiresAt: number;
   installation: InstallationSummary;
+  installationFamily?: InstallationFamilySummary;
+  component?: ClientComponentSummary;
   trust: TrustSummary;
   generation: number;
   clockOffsetMilliseconds: number;

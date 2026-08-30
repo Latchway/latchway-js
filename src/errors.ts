@@ -19,6 +19,23 @@ export type LatchwayServerErrorCode =
   | "session_revoked"
   | "refresh_token_reused"
   | "installation_revoked"
+  | "installation_family_revoked"
+  | "installation_family_not_found"
+  | "component_definition_not_found"
+  | "component_not_configured"
+  | "component_not_provisioned"
+  | "component_revoked"
+  | "component_key_invalid"
+  | "component_key_replaced"
+  | "component_delegation_expired"
+  | "component_feature_not_granted"
+  | "component_parent_trust_expired"
+  | "component_direct_attestation_required"
+  | "containing_app_setup_required"
+  | "framework_integration_unsupported"
+  | "framework_version_unsupported"
+  | "transport_destination_not_allowed"
+  | "transport_request_not_replayable"
   | "feature_not_found"
   | "feature_not_allowed"
   | "model_not_allowed"
@@ -115,6 +132,23 @@ const serverCodePolicies: Readonly<Record<LatchwayServerErrorCode, ServerCodePol
   session_revoked: { status: 401, title: "Session revoked", retryable: false },
   refresh_token_reused: { status: 401, title: "Refresh token reuse detected", retryable: false },
   installation_revoked: { status: 403, title: "Installation revoked", retryable: false },
+  installation_family_revoked: { status: 403, title: "Installation family revoked", retryable: false },
+  installation_family_not_found: { status: 404, title: "Installation family not found", retryable: false },
+  component_definition_not_found: { status: 404, title: "Component definition not found", retryable: false },
+  component_not_configured: { status: 422, title: "Component not configured", retryable: false },
+  component_not_provisioned: { status: 403, title: "Component not provisioned", retryable: false },
+  component_revoked: { status: 403, title: "Component revoked", retryable: false },
+  component_key_invalid: { status: 401, title: "Component key invalid", retryable: false },
+  component_key_replaced: { status: 401, title: "Component key replaced", retryable: false },
+  component_delegation_expired: { status: 401, title: "Component delegation expired", retryable: false },
+  component_feature_not_granted: { status: 403, title: "Component feature not granted", retryable: false },
+  component_parent_trust_expired: { status: 401, title: "Parent component trust expired", retryable: false },
+  component_direct_attestation_required: { status: 401, title: "Direct component attestation required", retryable: false },
+  containing_app_setup_required: { status: 409, title: "Containing app setup required", retryable: false },
+  framework_integration_unsupported: { status: 400, title: "Framework integration unsupported", retryable: false },
+  framework_version_unsupported: { status: 400, title: "Framework version unsupported", retryable: false },
+  transport_destination_not_allowed: { status: 403, title: "Transport destination not allowed", retryable: false },
+  transport_request_not_replayable: { status: 409, title: "Transport request not replayable", retryable: false },
   feature_not_found: { status: 404, title: "Feature not found", retryable: false },
   feature_not_allowed: { status: 403, title: "Feature not allowed", retryable: false },
   model_not_allowed: { status: 403, title: "Model not allowed", retryable: false },

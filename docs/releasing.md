@@ -76,13 +76,24 @@ installation or publication. The release workflow then:
 
 1. Repeats the full candidate gate in a clean GitHub-hosted runner.
 2. Transfers only the verified tarball, checksum, and machine-readable evidence
-   to a separately permissioned `npm` environment job.
-3. Re-verifies the artifact and local tag, requires the installed GitHub CLI to
+   to a separately permissioned `npm` environment job. In parallel, a
+   source-free `permissions: {}` job downloads the exact npm 11.6.2 registry
+   tarball with lifecycle scripts disabled. It requires a one-file artifact
+   closure, 2,663,834 bytes, 2,133 regular archive entries, 11,785,613 unpacked
+   bytes, SHA-256
+   `585f95094ee5cb2788ee11d90f2a518a7c9ef6e083fa141d0b63ca3383675a20`,
+   and npm integrity
+   `sha512-7iKzNfy8lWYs3zq4oFPa8EXZz5xt9gQNKJZau3B1ErLBb6bF7sBJ00x09485DOvRT2l5Gerbl3VlZNT57MxJVA==`
+   before handing that tarball to the protected job as inert data.
+3. Re-verifies the package artifact and local tag, requires the installed GitHub CLI to
    support JSON release and asset attestation verification, and resolves the
    remote annotated tag object to the exact promoted commit immediately before
-   draft creation. It then runs
-   `npm publish "$RELEASE_TARBALL" --provenance --access public` with npm OIDC.
-   It has `id-token: write` and no long-lived npm credential.
+   draft creation. Before extraction or execution, the OIDC job independently
+   rechecks the exact npm CLI handoff name-only closure, byte size, SHA-256,
+   SHA-512, integrity, entry paths and types, and unpacked size. It invokes the
+   verified CLI directly for `publish --provenance --access public`; it never
+   runs `npm install`, `npm exec`, or `npx`. It has `id-token: write` and no
+   long-lived npm credential.
 4. Downloads the exact registry tarball, checks byte identity and exports,
    validates npm signature and trusted-publisher metadata, verifies the SLSA
    provenance subject and source workflow/commit, and runs

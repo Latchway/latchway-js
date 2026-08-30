@@ -1,6 +1,9 @@
 import { LatchwayError } from "../errors.js";
 import type {
   AttestationProviderID,
+  ClientComponentKind,
+  ClientComponentSummary,
+  InstallationFamilySummary,
   InstallationSummary,
   SessionChallenge,
   TrustSummary,
@@ -13,6 +16,8 @@ export interface SessionGrant {
   refresh_token: string;
   refresh_expires_in: number;
   installation: InstallationSummary;
+  installation_family?: InstallationFamilySummary;
+  component?: ClientComponentSummary;
   trust: TrustSummary;
 }
 
@@ -25,6 +30,15 @@ const platforms = new Set<InstallationSummary["platform"]>([
 const trustLevels = new Set<TrustSummary["level"]>([
   "none", "identity_only", "web_risk_verified", "app_verified", "device_verified",
   "strong_device_verified", "debug",
+]);
+const componentKinds = new Set<ClientComponentKind>([
+  "main_app", "widget", "share_extension", "app_intent_extension",
+  "notification_service_extension", "action_extension", "sso_extension",
+  "watch_extension", "android_app", "wear_app", "browser", "node_process",
+]);
+const trustSources = new Set<NonNullable<TrustSummary["source"]>>([
+  "direct_attested", "delegated_from_attested_root", "delegated_identity_only",
+  "identity_only", "web_risk_verified", "debug",
 ]);
 
 export function parseSessionChallenge(value: unknown): SessionChallenge {
@@ -59,7 +73,10 @@ export function parseSessionChallenge(value: unknown): SessionChallenge {
 }
 
 export function parseSessionGrant(value: unknown): SessionGrant {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["access_token", "token_type", "expires_in", "refresh_token", "refresh_expires_in", "installation", "trust"]) ||
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "access_token", "token_type", "expires_in", "refresh_token", "refresh_expires_in",
+    "installation", "installation_family", "component", "trust",
+  ]) ||
       typeof value.access_token !== "string" || value.token_type !== "DPoP" ||
       !isInteger(value.expires_in) || typeof value.refresh_token !== "string" ||
       !isInteger(value.refresh_expires_in)) {
@@ -71,14 +88,65 @@ export function parseSessionGrant(value: unknown): SessionGrant {
       value.refresh_expires_in < 300 || value.refresh_expires_in > 31_536_000) {
     throw invalidResponse("session grant");
   }
+  const installation = parseInstallation(value.installation);
+  const family = value.installation_family === undefined
+    ? undefined
+    : parseInstallationFamily(value.installation_family);
+  const component = value.component === undefined
+    ? undefined
+    : parseComponent(value.component, installation);
+  if ((family === undefined) !== (component === undefined)) throw invalidResponse("session grant");
+  const trust = parseTrust(value.trust);
+  validateTrustProvenance(component, trust);
   return {
     access_token: value.access_token,
     token_type: "DPoP",
     expires_in: value.expires_in,
     refresh_token: value.refresh_token,
     refresh_expires_in: value.refresh_expires_in,
-    installation: parseInstallation(value.installation),
-    trust: parseTrust(value.trust),
+    installation,
+    ...(family === undefined ? {} : { installation_family: family }),
+    ...(component === undefined ? {} : { component }),
+    trust,
+  };
+}
+
+function parseInstallationFamily(value: unknown): InstallationFamilySummary {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["id", "status"]) ||
+      typeof value.id !== "string" || !/^fam_[A-Za-z0-9_-]{16,128}$/u.test(value.id) ||
+      (value.status !== "active" && value.status !== "revoked")) {
+    throw invalidResponse("installation family summary");
+  }
+  return { id: value.id, status: value.status };
+}
+
+function parseComponent(value: unknown, installation: InstallationSummary): ClientComponentSummary {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "id", "definition_id", "kind", "platform", "is_root", "status", "dpop_jkt", "granted_features",
+  ]) || typeof value.id !== "string" || !/^cmp_[A-Za-z0-9_-]{16,128}$/u.test(value.id) ||
+      typeof value.definition_id !== "string" || !/^[a-z][a-z0-9_-]{0,62}$/u.test(value.definition_id) ||
+      typeof value.kind !== "string" || !componentKinds.has(value.kind as ClientComponentKind) ||
+      value.platform !== installation.platform || typeof value.is_root !== "boolean" ||
+      (value.status !== "active" && value.status !== "revoked") ||
+      value.dpop_jkt !== installation.dpop_jkt || !Array.isArray(value.granted_features) ||
+      value.granted_features.length < 1 || value.granted_features.length > 256) {
+    throw invalidResponse("client component summary");
+  }
+  const grantedFeatures = value.granted_features as unknown[];
+  if (grantedFeatures.some((feature) => typeof feature !== "string" ||
+      !/^[a-z][a-z0-9_-]{0,62}$/u.test(feature)) ||
+      new Set(grantedFeatures).size !== grantedFeatures.length) {
+    throw invalidResponse("client component summary");
+  }
+  return {
+    id: value.id,
+    definition_id: value.definition_id,
+    kind: value.kind as ClientComponentKind,
+    platform: installation.platform,
+    is_root: value.is_root,
+    status: value.status,
+    dpop_jkt: value.dpop_jkt,
+    granted_features: [...grantedFeatures] as string[],
   };
 }
 
@@ -99,10 +167,23 @@ function parseInstallation(value: unknown): InstallationSummary {
 }
 
 function parseTrust(value: unknown): TrustSummary {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["provider", "level", "verified_at", "expires_at"]) ||
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "provider", "level", "source", "parent_component_id", "parent_attestation_provider",
+    "delegation_id", "verified_at", "expires_at",
+  ]) ||
       typeof value.provider !== "string" || typeof value.level !== "string" ||
       !trustLevels.has(value.level as TrustSummary["level"]) || typeof value.verified_at !== "string" ||
-      !isISODate(value.verified_at) || typeof value.expires_at !== "string" || !isISODate(value.expires_at)) {
+      !isISODate(value.verified_at) || typeof value.expires_at !== "string" || !isISODate(value.expires_at) ||
+      (value.source !== undefined && (typeof value.source !== "string" ||
+        !trustSources.has(value.source as NonNullable<TrustSummary["source"]>))) ||
+      (value.parent_component_id !== undefined && (typeof value.parent_component_id !== "string" ||
+        !/^cmp_[A-Za-z0-9_-]{16,128}$/u.test(value.parent_component_id))) ||
+      (value.parent_attestation_provider !== undefined &&
+        (typeof value.parent_attestation_provider !== "string" ||
+          !/^[a-z][a-z0-9_-]{0,62}$/u.test(value.parent_attestation_provider))) ||
+      (value.delegation_id !== undefined && (typeof value.delegation_id !== "string" ||
+        !/^dlg_[A-Za-z0-9_-]{16,128}$/u.test(value.delegation_id))) ||
+      Date.parse(value.expires_at) <= Date.parse(value.verified_at)) {
     throw invalidResponse("trust summary");
   }
   return {
@@ -110,7 +191,35 @@ function parseTrust(value: unknown): TrustSummary {
     level: value.level as TrustSummary["level"],
     verified_at: value.verified_at,
     expires_at: value.expires_at,
+    ...(value.source === undefined ? {} : { source: value.source as NonNullable<TrustSummary["source"]> }),
+    ...(value.parent_component_id === undefined ? {} : { parent_component_id: value.parent_component_id as string }),
+    ...(value.parent_attestation_provider === undefined
+      ? {}
+      : { parent_attestation_provider: value.parent_attestation_provider as string }),
+    ...(value.delegation_id === undefined ? {} : { delegation_id: value.delegation_id as string }),
   };
+}
+
+function validateTrustProvenance(
+  component: ClientComponentSummary | undefined,
+  trust: TrustSummary,
+): void {
+  if (component === undefined) return;
+  if (trust.source === undefined) throw invalidResponse("component trust provenance");
+  const delegatedSource = trust.source === "delegated_from_attested_root" ||
+    trust.source === "delegated_identity_only";
+  const hasDelegation = trust.parent_component_id !== undefined ||
+    trust.parent_attestation_provider !== undefined || trust.delegation_id !== undefined;
+  if (component.is_root) {
+    if (delegatedSource || hasDelegation) {
+      throw invalidResponse("component trust provenance");
+    }
+    return;
+  }
+  if (!delegatedSource || trust.parent_component_id === undefined ||
+      trust.parent_attestation_provider === undefined || trust.delegation_id === undefined) {
+    throw invalidResponse("component trust provenance");
+  }
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

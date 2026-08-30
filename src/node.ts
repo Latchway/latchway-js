@@ -18,4 +18,13 @@ export function createNodeLatchwayClient(options: NodeLatchwayOptions): Latchway
 
 export { createCustomAttestationProvider } from "./attestation/custom.js";
 export type { CustomAttestationProviderOptions } from "./attestation/custom.js";
-export type { AttestationProvider, IdentityTokenProvider, LatchwayClient } from "./types.js";
+export type {
+  AttestationProvider,
+  FrameworkID,
+  FrameworkMetadata,
+  IdentityTokenProvider,
+  LatchwayClient,
+  ProvisionComponentOptions,
+  ProvisionedComponent,
+  PublicP256JWK,
+} from "./types.js";

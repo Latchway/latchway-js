@@ -38,7 +38,14 @@ for (const required of [
   "id-token: write",
   "environment: npm",
   "persist-credentials: false",
-  "npm publish \"$archive\" --provenance --access public",
+  "\"$LATCHWAY_NPM_CLI\" publish \"$archive\" --provenance --access public",
+  "Prepare exact trusted-publishing npm CLI without credentials",
+  "Download and authenticate npm CLI without lifecycle scripts",
+  "Verify exact npm CLI closure before extraction or execution",
+  "NPM_CONFIG_IGNORE_SCRIPTS",
+  "sha512-7iKzNfy8lWYs3zq4oFPa8EXZz5xt9gQNKJZau3B1ErLBb6bF7sBJ00x09485DOvRT2l5Gerbl3VlZNT57MxJVA==",
+  "NPM_CLI_SHA256: 585f95094ee5cb2788ee11d90f2a518a7c9ef6e083fa141d0b63ca3383675a20",
+  "NPM_CLI_SHA512: ee22b335fcbc95662cdf3ab8a053daf045d9cf9c6df6040d28965abb707512b2c16fa6c5eec049d34c74f78f390cebd14f697919eadb97756564d4f9eccc4954",
   "node scripts/verify-release-tag.mjs",
   "node scripts/verify-published.mjs",
   "Preflight immutable release and create draft with fixed API calls",
@@ -52,6 +59,7 @@ for (const required of [
   "RELEASE_STATE",
   "NPM_CONFIG_CACHE=$RUNNER_TEMP/latchway-npm-cache",
   "NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/latchway-release.npmrc",
+  "node scripts/prepare-verification-runtime.mjs",
 ]) {
   if (!release.includes(required)) throw new Error(`release.yml is missing the fail-closed control: ${required}`);
 }
@@ -71,6 +79,7 @@ for (const forbidden of [
   "--clobber",
   "python3 scripts/reconcile-github-release.py",
   "--draft=false\n      - name:",
+  "npm install --global npm@11.6.2",
 ]) {
   if (release.includes(forbidden)) throw new Error(`release.yml must not contain ${forbidden}.`);
 }
@@ -85,12 +94,83 @@ for (const [index, header] of jobHeaders.entries()) {
 }
 if (oidcJobs.length === 0) throw new Error("release.yml must retain fixed OIDC publication jobs.");
 for (const [name, block] of oidcJobs) {
-  for (const forbidden of ["actions/checkout", "scripts/", "working-directory:", "python3 ", "node ", "./gradlew"]) {
+  for (const forbidden of [
+    "actions/checkout", "scripts/", "working-directory:", "python3 ", "node ",
+    "./gradlew", "npm install", "npm exec",
+  ]) {
     if (block.includes(forbidden)) throw new Error(`${name} must not execute candidate source with OIDC permissions.`);
   }
   if (block.includes("LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN")) {
     throw new Error(`${name} must not receive the protected immutable-release administration credential.`);
   }
+}
+const trustedNpmStart = release.indexOf("\n  trusted-npm-cli:\n");
+const draftStart = release.indexOf("\n  github-draft:\n");
+const npmPublishStart = release.indexOf("\n  npm-publish:\n");
+const publishStart = release.indexOf("\n  publish:\n");
+if (trustedNpmStart < 0 || draftStart <= trustedNpmStart || npmPublishStart <= draftStart
+  || publishStart <= npmPublishStart) {
+  throw new Error("release.yml must prepare the trusted npm CLI before the OIDC publication job.");
+}
+const trustedNpmJob = release.slice(trustedNpmStart, draftStart);
+const npmPublishJob = release.slice(npmPublishStart, publishStart);
+for (const marker of [
+  "permissions: {}",
+  "NPM_CONFIG_IGNORE_SCRIPTS: \"true\"",
+  "curl --proto '=https' --proto-redir '=https' --tlsv1.2",
+  "--max-filesize 3145728",
+  "sha256sum --check --strict",
+  "sha512sum --check --strict",
+  "gzip --test",
+  "Transfer exact npm CLI tarball as inert data",
+]) {
+  if (!trustedNpmJob.includes(marker)) throw new Error(`trusted-npm-cli is missing ${marker}.`);
+}
+for (const forbidden of [
+  "actions/checkout", "secrets.", "github.token", "id-token:", "attestations:",
+  "npm install", "npm exec",
+]) {
+  if (trustedNpmJob.includes(forbidden)) throw new Error(`trusted-npm-cli must not contain ${forbidden}.`);
+}
+if (/(?:^|\n)\s*npx\s/u.test(trustedNpmJob)) {
+  throw new Error("trusted-npm-cli must not execute npx.");
+}
+const publishJob = release.slice(publishStart, release.indexOf("\n  github-release-policy:\n"));
+for (const marker of [
+  "name: Generate and stage npm registry evidence without OIDC",
+  "node scripts/prepare-verification-runtime.mjs",
+  "node scripts/verify-published.mjs",
+]) {
+  if (!publishJob.includes(marker)) throw new Error(`tokenless registry-evidence job is missing ${marker}.`);
+}
+for (const forbidden of [
+  "id-token: write", "attestations: write", "ACTIONS_ID_TOKEN_REQUEST_URL",
+  "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "node scripts/prepare-publish-runtime.mjs",
+]) {
+  if (publishJob.includes(forbidden)) {
+    throw new Error(`tokenless registry-evidence job must not contain ${forbidden}.`);
+  }
+}
+for (const marker of [
+  "needs: [promote, verify, trusted-npm-cli, github-draft]",
+  "Verify exact npm CLI closure before extraction or execution",
+  "closure=(\"$root\"/*)",
+  "sha512sum --check --strict",
+  "test \"$observed_integrity\" = \"$NPM_CLI_INTEGRITY\"",
+  "tar --extract --gzip --file \"$archive\"",
+  "\"$LATCHWAY_NPM_CLI\" publish \"$archive\"",
+]) {
+  if (!npmPublishJob.includes(marker)) throw new Error(`npm-publish is missing ${marker}.`);
+}
+const cliClosure = npmPublishJob.indexOf("Verify exact npm CLI closure before extraction or execution");
+const cliExtraction = npmPublishJob.indexOf("tar --extract --gzip --file \"$archive\"");
+const cliExecution = npmPublishJob.indexOf("test \"$(\"$cli\" --version)\"");
+if (cliClosure < 0 || cliExtraction <= cliClosure || cliExecution <= cliExtraction) {
+  throw new Error("The OIDC job must authenticate the npm CLI closure before extraction and execution.");
+}
+if (npmPublishJob.includes("npm install") || npmPublishJob.includes("npm exec")
+  || /(?:^|\n)\s*npx\s/u.test(npmPublishJob)) {
+  throw new Error("The OIDC npm publication job must never live-install executable tooling.");
 }
 const releasePolicyStart = release.indexOf("\n  github-release-policy:\n");
 const releaseStart = release.indexOf("\n  github-release:\n");

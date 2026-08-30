@@ -1,4 +1,5 @@
 import { createDPoPProof } from "../dpop/proof.js";
+import { clientPaths } from "../contract.js";
 import { generateInstallationKey, jwkThumbprint, type InstallationKeyRecord, type P256PublicJWK } from "../dpop/key.js";
 import { randomID } from "../encoding.js";
 import { errorFromResponse, LatchwayError } from "../errors.js";
@@ -189,7 +190,7 @@ export class SessionManager {
   private async establish(generation = 1): Promise<StoredSession> {
     const key = await this.key();
     const identityToken = await this.identityToken();
-    const challengeURL = this.endpoint("/client/v1/session-challenges");
+    const challengeURL = this.endpoint(clientPaths.createSessionChallenge);
     const challengeResponse = await this.sendDPoPJSON(challengeURL, "POST", {
       application_id: this.options.applicationID,
       environment: this.options.environment,
@@ -226,7 +227,7 @@ export class SessionManager {
     if (!isPlainObject(evidence)) {
       throw new LatchwayError("protocol_response_invalid", "The attestation adapter returned invalid evidence.");
     }
-    const exchangeURL = this.endpoint("/client/v1/sessions");
+    const exchangeURL = this.endpoint(clientPaths.exchangeSession);
     const exchangeResponse = await this.sendDPoPJSON(exchangeURL, "POST", {
       challenge_id: challenge.challenge_id,
       attestation: { provider: provider.provider, evidence },
@@ -240,7 +241,7 @@ export class SessionManager {
   }
 
   private async performRefresh(existing: StoredSession): Promise<StoredSession> {
-    const refreshURL = this.endpoint("/client/v1/sessions/refresh");
+    const refreshURL = this.endpoint(clientPaths.refreshSession);
     try {
       const response = await this.sendDPoPJSON(refreshURL, "POST", {
         refresh_token: existing.refreshToken,
@@ -250,6 +251,8 @@ export class SessionManager {
       if (error instanceof LatchwayError && new Set([
         "identity_reauthentication_required", "attestation_required", "attestation_stale",
         "attestation_step_up_required", "refresh_token_reused", "session_revoked", "installation_revoked",
+        "installation_family_revoked", "component_revoked", "component_key_replaced",
+        "component_delegation_expired", "component_parent_trust_expired",
       ]).has(error.code)) {
         await this.options.store.clearSession();
       }
@@ -263,6 +266,14 @@ export class SessionManager {
         grant.installation.status !== "active") {
       throw new LatchwayError("protocol_response_invalid", "The session grant is not bound to this installation key and platform.");
     }
+    if (grant.component !== undefined && (grant.installation_family === undefined ||
+        grant.component.dpop_jkt !== key.thumbprint || grant.component.platform !== this.options.platform ||
+        grant.component.status !== "active" || grant.installation_family.status !== "active")) {
+      throw new LatchwayError(
+        "protocol_response_invalid",
+        "The session grant is not bound to an active Installation Family component.",
+      );
+    }
     const issuedAt = this.now();
     const stored: StoredSession = {
       accessToken: grant.access_token,
@@ -270,6 +281,8 @@ export class SessionManager {
       accessExpiresAt: issuedAt + grant.expires_in * 1_000,
       refreshExpiresAt: issuedAt + grant.refresh_expires_in * 1_000,
       installation: grant.installation,
+      ...(grant.installation_family === undefined ? {} : { installationFamily: grant.installation_family }),
+      ...(grant.component === undefined ? {} : { component: grant.component }),
       trust: grant.trust,
       generation,
       clockOffsetMilliseconds: this.clockOffsetMilliseconds,
@@ -398,6 +411,15 @@ function isValidStoredSession(value: unknown, thumbprint: string, platform: Plat
       value.installation.dpop_jkt !== thumbprint || value.installation.platform !== platform ||
       value.installation.status !== "active" || !isRecord(value.trust) || typeof value.trust.provider !== "string") {
     return false;
+  }
+  if ((value.installationFamily === undefined) !== (value.component === undefined)) return false;
+  if (value.installationFamily !== undefined) {
+    if (!isRecord(value.installationFamily) || !isRecord(value.component) ||
+        value.installationFamily.status !== "active" || value.component.status !== "active" ||
+        value.component.dpop_jkt !== thumbprint || value.component.platform !== platform ||
+        !Array.isArray(value.component.granted_features)) {
+      return false;
+    }
   }
   return true;
 }

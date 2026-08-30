@@ -54,30 +54,38 @@
       "types": "./dist/turnstile.d.ts",
       "import": "./dist/turnstile.js"
     },
+    "./service-worker": {
+      "types": "./dist/service-worker.d.ts",
+      "import": "./dist/service-worker.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json && pnpm --recursive --filter './packages/**' run build",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm examples:check && pnpm exports:check",
     "examples:check": "tsc -p tsconfig.examples.json --noEmit",
     "exports:check": "node scripts/verify-exports.mjs",
     "lint": "eslint . --max-warnings=0",
     "pack:check": "node scripts/verify-pack.mjs",
     "release:check": "node scripts/verify-release-candidate.mjs",
-    "test": "vitest run && node --test scripts/test-live-conformance.mjs scripts/test-npm-release-evidence.mjs",
+    "test": "vitest run && node --test scripts/test-live-conformance.mjs scripts/test-npm-release-evidence.mjs scripts/test-verification-runtime.mjs",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --recursive --filter './packages/**' run typecheck",
     "verify:contracts": "node scripts/verify-contract.mjs",
     "verify:release-policy": "node scripts/verify-release-policy.mjs",
     "verify:reproducible": "node scripts/verify-reproducible.mjs",
     "verify:workflows": "node scripts/verify-workflows.mjs"
   },
   "devDependencies": {
+    "@ai-sdk/openai": "4.0.52",
     "@eslint/js": "10.0.1",
+    "@langchain/openai": "1.5.10",
     "@types/node": "24.13.3",
     "@types/react": "19.2.18",
+    "ai": "7.0.85",
     "eslint": "10.9.1",
     "fake-indexeddb": "6.2.5",
+    "openai": "7.8.0",
     "react": "19.2.8",
     "typescript": "6.0.3",
     "typescript-eslint": "8.68.0",

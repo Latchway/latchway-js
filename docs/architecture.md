@@ -2,27 +2,35 @@
 
 ## Contract boundary
 
-The SDK consumes Latchway contract 0.5.1 and wire protocol 1. The core commit
-and contract-bundle SHA-256 are immutable inputs in `contract.lock`; vendored
-test vectors are hash-checked in CI. Public TypeScript APIs are handwritten.
+The SDK consumes draft Latchway contract 1.0.0 and emits current wire protocol
+2. The core commit and contract-bundle SHA-256 are immutable inputs in
+`contract.lock`; vendored test vectors are hash-checked in CI. Legacy
+wire-1-shaped installation grants without family/component summaries remain
+parseable, while all family/component control operations require wire 2.
+Public TypeScript APIs are handwritten.
 Wire parsing stays internal and rejects oversized, deeply nested, invalid UTF-8,
 duplicate-member, and otherwise malformed security-critical responses.
 
 The server owns identity verification, attestation verdicts, principals,
-policy, routes, quotas, prices, usage, and upstream credentials. The SDK owns
-only installation-key possession, session transport, provider-token callbacks,
-and request authorization.
+Installation Family membership, component definitions, policy, routes,
+physical models, trusted input-token preflight, quotas, prices, usage, and
+upstream credentials. The SDK owns only local component-key possession,
+session transport, provider-token callbacks, and request authorization.
 
 ## Dependency direction
 
 ~~~text
-index / browser / node / firebase / turnstile
-                    |
-              handwritten client
-                    |
-       session  -> DPoP -> WebCrypto
-          |
-   StateStore -> IndexedDB or explicit memory
+framework adapters / service-worker / React Native bridge
+                            |
+             feature-bound AuthenticatedTransport
+                            |
+       index / browser / node / firebase / turnstile
+                            |
+                     handwritten client
+                            |
+              session -> DPoP -> WebCrypto
+                 |
+          StateStore -> IndexedDB or explicit memory
 ~~~
 
 Shared modules do not import Node-only or provider packages. The Node subpath is
@@ -50,6 +58,24 @@ Identity reauthentication and attestation expiry or step-up clear the old
 session and start a fresh challenge; unbound identity and attestation material
 is never sent to the refresh endpoint.
 
+## Installation Family and session flow
+
+The runtime hierarchy is application user → Installation Family → client
+component. A root web or Node session grant may carry paired
+`installation_family` and `component` summaries. The parser rejects an
+unpaired summary, inactive state, platform mismatch, component key mismatch,
+duplicate or malformed feature grants, and inconsistent delegated provenance.
+State storage keeps component/family metadata with the rotating session so a
+restored session cannot silently lose its attribution boundary.
+
+Root code may provision a configured delegated component by submitting only
+the child's public P-256 JWK and requested feature subset. The resulting
+one-time refresh grant belongs to that child key. This package deliberately
+does not accept or copy the child private key; native and React Native child
+session creation remains owned by their platform SDK. Component and family
+revocation use centralized client-contract paths so a wire adjustment is
+localized.
+
 ## Session and request flow
 
 1. Resolve or create the installation key.
@@ -61,7 +87,8 @@ is never sent to the refresh endpoint.
    thumbprint.
 6. For each protected request, reject credential-like query names, strip
    credential placeholders, compute `ath`, create a unique proof for the exact
-   method and URI, and add protocol headers.
+   method and URI, and add protocol, SDK, feature, and optional framework
+   headers.
 
 Server Date headers adjust DPoP issued-at time within a bounded 24-hour local
 clock discrepancy. A DPoP nonce is accepted only from a canonical, correlated
@@ -71,16 +98,31 @@ joined values, and oversized values are rejected before signing a new proof.
 ## Fetch semantics
 
 The wrapper constructs new Request values and leaves caller objects unchanged.
-Only the configured gateway origin may be signed. Request signals and response
+Only the configured gateway origin and contract-declared data-plane
+method/path pairs may be signed. Opaque paths must remain under the bound
+feature's prefix and cannot contain a query. Request signals and response
 bodies pass through, so cancellation and incremental SSE remain native Fetch
-API behavior. Final protected HTTP errors remain Response objects; internal
-session and control operations map RFC 9457 documents to stable
-`LatchwayError` instances.
+API behavior. Authenticated requests disable redirects; returned redirected or
+cross-origin responses also fail closed. Final protected HTTP errors remain
+Response objects; internal session and control operations map RFC 9457
+documents to stable `LatchwayError` instances.
 
 No request is retried for upstream timeouts or ambiguous dispatch failures.
 The only automatic protected-request retries are a single DPoP nonce response
 and a single `session_expired` response, both rejected before upstream dispatch
-by the protocol.
+by the protocol. The retry path creates a fresh proof and reauthorizes the
+final request. It proceeds only for a body represented by a replay-safe Fetch
+value; streams and caller-supplied `Request` bodies fail with
+`transport_request_not_replayable` rather than being buffered.
+
+## Framework boundary
+
+`@latchway/openai`, `@latchway/vercel-ai`, and `@latchway/langchain` inject a
+feature-bound custom fetch into the framework's supported extension point.
+They attach exact package-version metadata and leave prompts, messages, tools,
+structured output, streams, errors, and cancellation in the framework's own
+types. Provider and model selection remain server-owned. See
+[`framework-integrations.md`](framework-integrations.md).
 
 ## Trust limits
 
@@ -91,5 +133,7 @@ and Turnstile are server-verified web risk signals, not native hardware trust.
 
 Node mode supports custom JWT identity, a software key, custom fetch, and
 server-configured debug conformance. It never claims application attestation.
-React Native delegates installation keys and attestation to the native iOS and
-Android SDKs and is outside this package.
+React Native consumes the structural `AuthenticatedTransport` surface while
+delegating component keys, attestation, session storage, refresh, and DPoP to
+the native iOS and Android SDKs. A JavaScript-only implementation must not
+claim native key isolation or physical-device proof.
