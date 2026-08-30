@@ -38,18 +38,18 @@ for (const required of [
   "id-token: write",
   "environment: npm",
   "persist-credentials: false",
-  "npm publish \"$RELEASE_TARBALL\" --provenance --access public",
+  "npm publish \"$archive\" --provenance --access public",
   "node scripts/verify-release-tag.mjs",
   "node scripts/verify-published.mjs",
-  "python3 scripts/reconcile-github-release.py",
-  "--prepare-draft",
-  "--npm-adoption-history",
+  "Preflight immutable release and create draft with fixed API calls",
+  "Reconcile, publish, and verify immutable release with fixed API calls",
+  "npm-release-adoption-",
   "npm-registry-view.json",
   "npm-attestations.json",
   "npm-audit-signatures.json",
   "npm-registry-evidence-manifest.json",
   "actions/attest-build-provenance@",
-  "release_state == 'immutable'",
+  "RELEASE_STATE",
   "NPM_CONFIG_CACHE=$RUNNER_TEMP/latchway-npm-cache",
   "NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/latchway-release.npmrc",
 ]) {
@@ -69,9 +69,47 @@ for (const forbidden of [
   "workflow_dispatch",
   "pull_request_target",
   "--clobber",
+  "python3 scripts/reconcile-github-release.py",
   "--draft=false\n      - name:",
 ]) {
   if (release.includes(forbidden)) throw new Error(`release.yml must not contain ${forbidden}.`);
+}
+const jobHeaders = [...release.matchAll(/^ {2}([a-z0-9_-]+):$/gmu)];
+const oidcJobs = [];
+for (const [index, header] of jobHeaders.entries()) {
+  const end = jobHeaders[index + 1]?.index ?? release.length;
+  const block = release.slice(header.index, end);
+  if (block.includes("id-token: write") || block.includes("attestations: write")) {
+    oidcJobs.push([header[1], block]);
+  }
+}
+if (oidcJobs.length === 0) throw new Error("release.yml must retain fixed OIDC publication jobs.");
+for (const [name, block] of oidcJobs) {
+  for (const forbidden of ["actions/checkout", "scripts/", "working-directory:", "python3 ", "node ", "./gradlew"]) {
+    if (block.includes(forbidden)) throw new Error(`${name} must not execute candidate source with OIDC permissions.`);
+  }
+  if (block.includes("LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN")) {
+    throw new Error(`${name} must not receive the protected immutable-release administration credential.`);
+  }
+}
+const releasePolicyStart = release.indexOf("\n  github-release-policy:\n");
+const releaseStart = release.indexOf("\n  github-release:\n");
+if (releasePolicyStart < 0 || releaseStart <= releasePolicyStart) {
+  throw new Error("release.yml must isolate the final immutable-release policy check.");
+}
+const releasePolicyJob = release.slice(releasePolicyStart, releaseStart);
+if (!releasePolicyJob.includes("LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN")
+  || releasePolicyJob.includes("id-token: write")
+  || releasePolicyJob.includes("attestations: write")
+  || releasePolicyJob.includes("actions/checkout")
+  || releasePolicyJob.includes("scripts/")) {
+  throw new Error("The immutable-release administration credential must remain in a fixed no-checkout, no-OIDC job.");
+}
+const releaseJob = release.slice(releaseStart);
+const closureValidation = releaseJob.indexOf("Validate exact JavaScript asset closure before OIDC attestation");
+const releaseAttestation = releaseJob.indexOf("Attest exact retained registry and release evidence without candidate checkout");
+if (closureValidation < 0 || releaseAttestation <= closureValidation) {
+  throw new Error("The exact JavaScript release asset closure must be validated before attestation.");
 }
 const secretReferences = [...release.matchAll(/\$\{\{\s*secrets\.([A-Z0-9_]+)\s*\}\}/gu)]
   .map((match) => match[1]);

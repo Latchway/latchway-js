@@ -9,6 +9,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -426,10 +427,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertLess(attestation, verifier)
         self.assertLess(verifier, tag)
         publication_markers = {
-            "javascript": 'npm publish "$RELEASE_TARBALL"',
-            "ios": "pod trunk push Latchway.podspec",
+            "javascript": 'npm publish "$archive"',
+            "ios": "scripts/publish-or-verify-cocoapods.sh",
             "android": "scripts/publish-central.sh",
-            "react_native": "node scripts/publish-or-verify.mjs",
+            "react_native": 'npm publish "$archive"',
         }
         self.assertLess(tag, workflow.index(publication_markers[REPOSITORY_ID]))
         self.assertIn("persist-credentials: false", workflow)
@@ -441,25 +442,44 @@ class ReleaseWorkflowTests(unittest.TestCase):
         elif REPOSITORY_ID in ("ios", "android"):
             self.assertIn("needs: promote", workflow)
 
-    def test_release_remote_tag_reads_use_ephemeral_same_repository_auth(self) -> None:
+    def test_promotion_credentials_never_share_a_runner_with_candidate_code(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-        expected_steps = {"javascript": 1, "ios": 2, "android": 2, "react_native": 3}
-        expected_calls = {"javascript": 2, "ios": 3, "android": 3, "react_native": 4}
-        auth_steps = expected_steps[REPOSITORY_ID]
-        auth_calls = expected_calls[REPOSITORY_ID]
-        self.assertEqual(workflow.count("GIT_TAG_READ_TOKEN: ${{ github.token }}"), auth_steps)
-        self.assertEqual(workflow.count("git_with_auth() {"), auth_steps)
-        self.assertEqual(workflow.count('GIT_ASKPASS="$git_askpass"'), auth_steps)
-        self.assertEqual(workflow.count("GIT_TERMINAL_PROMPT=0"), auth_steps)
-        self.assertEqual(workflow.count('git -c credential.helper= "$@"'), auth_steps)
-        self.assertEqual(workflow.count('chmod 700 "$git_askpass"'), auth_steps)
-        self.assertEqual(workflow.count('trap \'rm -f -- "$git_askpass"\' EXIT'), auth_steps)
-        self.assertEqual(workflow.count("git_with_auth ls-remote"), 1)
-        self.assertEqual(workflow.count("git_with_auth fetch --force origin"), auth_calls - 1)
-        self.assertNotIn("git ls-remote", workflow)
-        self.assertNotIn("git fetch --force origin", workflow)
-        self.assertNotIn("https://x-access-token:", workflow)
-        self.assertNotIn("git config --global", workflow)
+        authorization = workflow.split("\n  authorize-promotion:\n", 1)[1].split(
+            "\n  verify-promotion:\n", 1
+        )[0]
+        verification = workflow.split("\n  verify-promotion:\n", 1)[1].split(
+            "\n  promote:\n", 1
+        )[0]
+        following_job = {
+            "javascript": "verify",
+            "react_native": "locked-sources",
+            "ios": "publish",
+            "android": "publish",
+        }[REPOSITORY_ID]
+        tag_mutation = workflow.split("\n  promote:\n", 1)[1].split(
+            f"\n  {following_job}:\n", 1
+        )[0]
+
+        self.assertNotIn("actions/checkout", authorization)
+        self.assertNotIn("scripts/", authorization)
+        self.assertNotIn("python3 ", authorization)
+        self.assertNotIn("node ", authorization)
+        self.assertIn("LATCHWAY_SIBLING_REPOSITORIES_READ_TOKEN", authorization)
+        self.assertIn("gh attestation verify", authorization)
+
+        self.assertIn("actions/checkout", verification)
+        self.assertIn("python3 scripts/verify-release-promotion.py", verification)
+        self.assertNotIn("secrets.", verification)
+        self.assertNotIn("GH_TOKEN:", verification)
+
+        self.assertNotIn("actions/checkout", tag_mutation)
+        self.assertNotIn("scripts/", tag_mutation)
+        self.assertNotIn("python3 ", tag_mutation)
+        self.assertNotIn("node ", tag_mutation)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", tag_mutation)
+        self.assertIn("gh api", tag_mutation)
+        self.assertNotIn("GIT_TAG_READ_TOKEN", workflow)
+        self.assertNotIn("git_with_auth()", workflow)
 
     def test_react_native_publication_still_waits_for_all_dependency_releases(self) -> None:
         if REPOSITORY_ID != "react_native":
@@ -470,6 +490,29 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertLess(dependency, publish)
         self.assertIn("needs: [promote, verify, android, ios]", workflow)
 
+
+
+    def test_oidc_permissions_are_confined_to_no_checkout_fixed_jobs(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        headers = list(re.finditer(r"(?m)^  ([a-z0-9_-]+):\n", workflow))
+        oidc_jobs: list[tuple[str, str]] = []
+        for index, header in enumerate(headers):
+            end = headers[index + 1].start() if index + 1 < len(headers) else len(workflow)
+            block = workflow[header.start():end]
+            if "id-token: write" in block or "attestations: write" in block:
+                oidc_jobs.append((header.group(1), block))
+
+        self.assertGreaterEqual(len(oidc_jobs), 1)
+        for job_name, block in oidc_jobs:
+            self.assertNotIn("actions/checkout", block, job_name)
+            self.assertNotIn("scripts/", block, job_name)
+            self.assertNotIn("working-directory:", block, job_name)
+            self.assertNotIn("python3 ", block, job_name)
+            self.assertNotIn("node ", block, job_name)
+            self.assertNotIn("./gradlew", block, job_name)
+            self.assertNotIn(
+                "LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN", block, job_name
+            )
 
 if __name__ == "__main__":
     unittest.main()

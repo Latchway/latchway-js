@@ -121,24 +121,41 @@ test("provenance invocation parser rejects ambiguous or unbounded paths", () => 
 
 test("release workflow drafts before npm and publishes GitHub only after evidence attestation", async () => {
   const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
-  const draft = workflow.indexOf("Create or resume the fail-closed GitHub draft");
-  const cliCapability = workflow.indexOf("gh release verify --help");
-  const npmPublish = workflow.indexOf("npm publish \"$RELEASE_TARBALL\"");
+  const draft = workflow.indexOf("Preflight immutable release and create draft with fixed API calls");
+  const cliCapability = workflow.indexOf("version_line=$(gh version | head -n 1)");
+  const npmPublish = workflow.indexOf('npm publish "$archive"');
   const registryVerify = workflow.indexOf("node scripts/verify-published.mjs");
-  const evidenceAttestation = workflow.indexOf("Attest exact retained registry and adoption evidence");
-  const githubPublish = workflow.indexOf("Attach every fixed asset, publish once, and require immutability");
+  const assetClosure = workflow.indexOf(
+    "Validate exact JavaScript asset closure before OIDC attestation",
+  );
+  const evidenceAttestation = workflow.indexOf(
+    "Attest exact retained registry and release evidence without candidate checkout",
+  );
+  const githubPublish = workflow.indexOf(
+    "Reconcile, publish, and verify immutable release with fixed API calls",
+  );
   assert.ok(cliCapability >= 0 && cliCapability < draft && draft < npmPublish);
-  assert.ok(npmPublish < registryVerify && registryVerify < evidenceAttestation && evidenceAttestation < githubPublish);
+  assert.ok(npmPublish < registryVerify && registryVerify < assetClosure
+    && assetClosure < evidenceAttestation && evidenceAttestation < githubPublish);
   for (const asset of [
     "npm-registry-version.json",
     "npm-registry-view.json",
     "npm-attestations.json",
     "npm-audit-signatures.json",
     "npm-registry-evidence-manifest.json",
-    "steps.registry_evidence.outputs.adoption_asset",
+    "npm-release-adoption-",
   ]) assert.ok(workflow.slice(githubPublish).includes(asset), `final reconciliation omits ${asset}`);
   assert.doesNotMatch(workflow, /NPM_TOKEN|NODE_AUTH_TOKEN|--clobber/u);
   assert.equal((workflow.match(/\$\{\{\s*secrets\.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN\s*\}\}/gu) ?? []).length, 2);
+  const policyJob = workflow.slice(
+    workflow.indexOf("\n  github-release-policy:\n"),
+    workflow.indexOf("\n  github-release:\n"),
+  );
+  const releaseJob = workflow.slice(workflow.indexOf("\n  github-release:\n"));
+  assert.match(policyJob, /LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN/u);
+  assert.doesNotMatch(policyJob, /id-token: write|attestations: write|actions\/checkout|scripts\//u);
+  assert.doesNotMatch(releaseJob, /LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN/u);
+  assert.match(releaseJob, /cmp --silent "\$RUNNER_TEMP\/expected-assets\.txt"/u);
   const reconciler = await readFile(new URL("reconcile-github-release.py", import.meta.url), "utf8");
   for (const control of [
     "repos/{repository}/immutable-releases",
@@ -151,8 +168,7 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
     "os.environ.pop",
     "_run_json_with_retries",
   ]) assert.ok(reconciler.includes(control), `release reconciler omits ${control}`);
-  assert.match(workflow, /--expected-commit "\$RELEASE_COMMIT"/u);
-  assert.doesNotMatch(workflow, /--source-commit/u);
+  assert.match(workflow.slice(githubPublish), /\.object\.sha == \$commit/u);
 });
 
 test("release documentation forbids maintainer-created tags", async () => {

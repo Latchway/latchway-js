@@ -91,8 +91,11 @@ installation or publication. The release workflow then:
    Sigstore bundle, and the signature audit are retained as release assets and
    bound by `npm-registry-evidence-manifest.json`.
 5. Creates or resumes a draft only after the protected administration read proves
-   immutable releases are enabled, then reconciles it after all registry checks
-   pass. Existing
+   immutable releases are enabled. A second fresh no-checkout job rechecks that
+   policy with the administration credential but has no OIDC permission; the
+   final OIDC job receives no administration credential and validates the exact
+   local asset closure before asking GitHub to attest it. It then reconciles the
+   draft after all registry checks pass. Existing
    assets are downloaded and compared byte for byte, only missing assets may be
    attached, and no asset is ever overwritten. A final release must already
    contain exactly the intended asset set; otherwise the workflow stops. After
