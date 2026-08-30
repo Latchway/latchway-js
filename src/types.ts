@@ -192,6 +192,7 @@ export interface TrustSummary {
     | "direct_attested"
     | "delegated_from_attested_root"
     | "delegated_identity_only"
+    | "delegated_direct_attested"
     | "identity_only"
     | "web_risk_verified"
     | "debug";

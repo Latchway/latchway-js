@@ -4,8 +4,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 const expected = {
   contract: "1.0.0",
   release: "unreleased",
-  commit: "9756a08fe41e6c8a7eba0cf27a5f31379713d733",
-  bundle: "8e916d8b4ae4d002eabb39b867fe6185c7d5f3c97a258b08427a4a96461c938b",
+  commit: "a62b0f6aa2328604101c1073c56f5ecb3bed3618",
+  bundle: "36aa3c4786e60f2cdbbc3d0cd2f65bffe894a099479517b2e1faa01361c74b00",
   protocol: 2,
   minimumServer: "1.0.0",
   maximumTestedServer: "1.0.x",
@@ -20,9 +20,10 @@ maximum_tested_server_version: ${expected.maximumTestedServer}
 `;
 const fixtureHashes = new Map([
   ["attestation-binding-v1.json", "aaadef1172dffc3e600029e03259ff636a969cd4f925544fdccfb2c704b03659"],
+  ["component-attestation-binding-v2.json", "8411308998cdffccf286892b94a6c759cbcf63b92e4727144d3a755dcd7c13d4"],
   ["dpop-v1.json", "b639e22dcd1c1a18e1292a044d96ec043c3be1e0271aacd6904bca39253bc5d4"],
   ["installation-family-v2.json", "87ea67542983a406ef7257476429b8d23e36a90c1b448142a5728632e63395f3"],
-  ["protocol-version.json", "7e63b0820b459606c0f0478770a6b1f4fa17d800578b7522c2e9e1210f79f784"],
+  ["protocol-version.json", "8b51f10f1e08c3435cd217846a1b6a03ee22cf4640a9d52fde9c71882b0f7385"],
 ]);
 
 const lock = await readFile(new URL("../contract.lock", import.meta.url), "utf8");
@@ -40,6 +41,10 @@ for (const [name, expectedHash] of fixtureHashes) {
 const protocol = JSON.parse(await readFile(new URL("../test/fixtures/contract/protocol-version.json", import.meta.url), "utf8"));
 if (protocol.contract_version !== expected.contract || protocol.wire_protocol.current !== expected.protocol) {
   throw new Error("The vendored protocol manifest is incompatible with contract.lock.");
+}
+if (protocol.component_attestation_binding?.version !== 2 ||
+    protocol.component_attestation_binding?.purpose !== "component_attestation_step_up") {
+  throw new Error("The vendored protocol manifest omits component-attestation binding v2.");
 }
 
 const artifacts = new URL("../.artifacts/", import.meta.url);

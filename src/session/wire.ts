@@ -1,4 +1,5 @@
 import { LatchwayError } from "../errors.js";
+import { base64urlDecode } from "../encoding.js";
 import type {
   AttestationProviderID,
   ClientComponentKind,
@@ -21,6 +22,21 @@ export interface SessionGrant {
   trust: TrustSummary;
 }
 
+/** Strict wire shape for the App Attest-only component step-up contract. */
+export interface ComponentAttestationChallenge {
+  challenge_id: string;
+  challenge_nonce: string;
+  binding_version: 2;
+  issued_at: number;
+  expires_at: string;
+  attestation: {
+    provider: "app_attest";
+    mode: "required";
+    client_data_hash: string;
+    provider_options?: Readonly<Record<string, unknown>>;
+  };
+}
+
 const attestationProviders = new Set<AttestationProviderID>([
   "app_attest", "play_integrity", "firebase_app_check", "turnstile", "debug",
 ]);
@@ -38,7 +54,7 @@ const componentKinds = new Set<ClientComponentKind>([
 ]);
 const trustSources = new Set<NonNullable<TrustSummary["source"]>>([
   "direct_attested", "delegated_from_attested_root", "delegated_identity_only",
-  "identity_only", "web_risk_verified", "debug",
+  "delegated_direct_attested", "identity_only", "web_risk_verified", "debug",
 ]);
 
 export function parseSessionChallenge(value: unknown): SessionChallenge {
@@ -66,6 +82,44 @@ export function parseSessionChallenge(value: unknown): SessionChallenge {
     attestation: {
       provider: value.attestation.provider as AttestationProviderID,
       mode: value.attestation.mode,
+      client_data_hash: value.attestation.client_data_hash,
+      ...(providerOptions === undefined ? {} : { provider_options: providerOptions }),
+    },
+  };
+}
+
+export function parseComponentAttestationChallenge(value: unknown): ComponentAttestationChallenge {
+  if (!isRecord(value) ||
+      !hasOnlyKeys(value, [
+        "challenge_id", "challenge_nonce", "binding_version", "issued_at", "expires_at", "attestation",
+      ]) ||
+      typeof value.challenge_id !== "string" || !/^chl_[A-Za-z0-9_-]{16,128}$/u.test(value.challenge_id) ||
+      typeof value.challenge_nonce !== "string" ||
+      !isBase64urlWithDecodedLength(value.challenge_nonce, 32, 64) ||
+      value.binding_version !== 2 || !isInteger(value.issued_at) ||
+      value.issued_at < 0 || value.issued_at > 253_402_300_799 ||
+      typeof value.expires_at !== "string" || !isISODate(value.expires_at) ||
+      Date.parse(value.expires_at) <= value.issued_at * 1_000 ||
+      !isRecord(value.attestation) ||
+      !hasOnlyKeys(value.attestation, ["provider", "mode", "client_data_hash", "provider_options"]) ||
+      value.attestation.provider !== "app_attest" || value.attestation.mode !== "required" ||
+      typeof value.attestation.client_data_hash !== "string" ||
+      !isBase64urlWithDecodedLength(value.attestation.client_data_hash, 32, 32)) {
+    throw invalidResponse("component attestation challenge");
+  }
+  const providerOptions = value.attestation.provider_options;
+  if (providerOptions !== undefined && !isRecord(providerOptions)) {
+    throw invalidResponse("component attestation challenge");
+  }
+  return {
+    challenge_id: value.challenge_id,
+    challenge_nonce: value.challenge_nonce,
+    binding_version: 2,
+    issued_at: value.issued_at,
+    expires_at: value.expires_at,
+    attestation: {
+      provider: "app_attest",
+      mode: "required",
       client_data_hash: value.attestation.client_data_hash,
       ...(providerOptions === undefined ? {} : { provider_options: providerOptions }),
     },
@@ -207,7 +261,7 @@ function validateTrustProvenance(
   if (component === undefined) return;
   if (trust.source === undefined) throw invalidResponse("component trust provenance");
   const delegatedSource = trust.source === "delegated_from_attested_root" ||
-    trust.source === "delegated_identity_only";
+    trust.source === "delegated_identity_only" || trust.source === "delegated_direct_attested";
   const hasDelegation = trust.parent_component_id !== undefined ||
     trust.parent_attestation_provider !== undefined || trust.delegation_id !== undefined;
   if (component.is_root) {
@@ -238,6 +292,15 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
 function isISODate(value: string): boolean {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) && value.includes("T");
+}
+
+function isBase64urlWithDecodedLength(value: string, minimum: number, maximum: number): boolean {
+  try {
+    const length = base64urlDecode(value).length;
+    return length >= minimum && length <= maximum;
+  } catch {
+    return false;
+  }
 }
 
 function invalidResponse(kind: string): LatchwayError {

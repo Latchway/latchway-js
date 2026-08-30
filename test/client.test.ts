@@ -238,6 +238,29 @@ describe("Latchway fetch client", () => {
     expect(gateway.protectedCalls).toBe(1);
   });
 
+  it("accepts composite direct-attested delegation only with complete parent provenance", async () => {
+    const gateway = new MockGateway();
+    gateway.componentAware = true;
+    gateway.componentIsRoot = false;
+    gateway.trustSource = "delegated_direct_attested";
+    gateway.includeDelegationProvenance = true;
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+
+    await expect(client.fetch(
+      "/v1/responses",
+      { method: "POST", body: "{}", latchwayFeature: "assistant" },
+    )).resolves.toBeInstanceOf(Response);
+
+    const incomplete = new MockGateway();
+    incomplete.componentAware = true;
+    incomplete.componentIsRoot = false;
+    incomplete.trustSource = "delegated_direct_attested";
+    await expect(makeBrowserClient(incomplete, { mode: "memory" }).fetch(
+      "/v1/responses",
+      { method: "POST", body: "{}", latchwayFeature: "assistant" },
+    )).rejects.toMatchObject({ code: "protocol_response_invalid" });
+  });
+
   it("rejects unpaired family state and non-root sessions without explicit delegation provenance", async () => {
     const unpaired = new MockGateway();
     unpaired.componentAware = true;
@@ -571,8 +594,9 @@ class MockGateway {
   identityRefreshOnce = false;
   componentAware = false;
   componentIsRoot = true;
+  includeDelegationProvenance = false;
   omitComponentSummary = false;
-  trustSource: "debug" | "delegated_from_attested_root" = "debug";
+  trustSource: "debug" | "delegated_from_attested_root" | "delegated_direct_attested" = "debug";
   refreshBodies: Array<Record<string, unknown>> = [];
   provisionBodies: Array<Record<string, unknown>> = [];
   revokedComponents: string[] = [];
@@ -761,6 +785,11 @@ class MockGateway {
       verified_at: new Date(this.now()).toISOString(),
       expires_at: new Date(this.now() + 300_000).toISOString(),
       ...(this.componentAware ? { source: this.trustSource } : {}),
+      ...(this.includeDelegationProvenance ? {
+        parent_component_id: `cmp_${"p".repeat(20)}`,
+        parent_attestation_provider: "app_attest",
+        delegation_id: `dlg_${"d".repeat(20)}`,
+      } : {}),
     };
   }
 
