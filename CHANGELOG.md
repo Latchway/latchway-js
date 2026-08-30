@@ -7,6 +7,12 @@ Versioning once package publication begins.
 
 ## [Unreleased]
 
+### Changed
+
+- Require exact-image JavaScript release evidence for both Firebase App Check
+  and Cloudflare Turnstile, with separate protected tokens and a non-secret
+  provider identity bound into each retained conformance report.
+
 ## [1.0.0] - 2026-08-29
 
 ### Changed

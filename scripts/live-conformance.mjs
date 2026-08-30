@@ -17,6 +17,10 @@ const RESOURCE = /^app_[0-9A-HJKMNP-TV-Z]{26}$/u;
 const FEATURE = /^[a-z][a-z0-9_-]{0,62}$/u;
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$/u;
 const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u;
+const ATTESTATION_TOKEN_ENVIRONMENT = new Map([
+  ["firebase_app_check", "LATCHWAY_LIVE_SDK_FIREBASE_APP_CHECK_TOKEN"],
+  ["turnstile", "LATCHWAY_LIVE_SDK_TURNSTILE_TOKEN"],
+]);
 const REPOSITORIES = ["core", "javascript", "ios", "android", "react_native"];
 const REQUIRED_TESTS = [
   "dpop_authorized_request",
@@ -60,7 +64,7 @@ export function parseCandidateManifest(value, gateway) {
   return candidate;
 }
 
-export function liveConfiguration(environment) {
+export function liveConfiguration(environment, attestationProvider) {
   const required = (name) => {
     const value = environment[name];
     if (typeof value !== "string" || value.length === 0 || value.length > 16_384 || value.includes("\0")) {
@@ -71,24 +75,24 @@ export function liveConfiguration(environment) {
   const applicationID = required("LATCHWAY_LIVE_SDK_APPLICATION_ID");
   const feature = required("LATCHWAY_LIVE_SDK_FEATURE");
   const errorMappingFeature = required("LATCHWAY_LIVE_SDK_ERROR_MAPPING_FEATURE");
-  const provider = required("LATCHWAY_LIVE_SDK_ATTESTATION_PROVIDER");
+  const attestationTokenEnvironment = ATTESTATION_TOKEN_ENVIRONMENT.get(attestationProvider);
   if (!RESOURCE.test(applicationID) || !FEATURE.test(feature) || !FEATURE.test(errorMappingFeature) ||
       feature === errorMappingFeature || !FEATURE.test(required("LATCHWAY_LIVE_SDK_ENVIRONMENT")) ||
       !FEATURE.test(required("LATCHWAY_LIVE_SDK_IDENTITY_PROVIDER")) ||
       !MODEL.test(required("LATCHWAY_LIVE_SDK_MODEL")) ||
-      !new Set(["firebase_app_check", "turnstile"]).has(provider)) {
+      attestationTokenEnvironment === undefined) {
     throw new Error("live_configuration_invalid");
   }
   return {
     applicationID,
     feature,
     errorMappingFeature,
-    provider,
+    provider: attestationProvider,
     environment: required("LATCHWAY_LIVE_SDK_ENVIRONMENT"),
     identityProvider: required("LATCHWAY_LIVE_SDK_IDENTITY_PROVIDER"),
     model: required("LATCHWAY_LIVE_SDK_MODEL"),
     identityToken: required("LATCHWAY_LIVE_SDK_IDENTITY_TOKEN"),
-    attestationToken: required("LATCHWAY_LIVE_SDK_ATTESTATION_TOKEN"),
+    attestationToken: required(attestationTokenEnvironment),
   };
 }
 
@@ -107,10 +111,14 @@ export function verifyCheckout(expectedCommit, runner = spawnSync) {
   }
 }
 
-export function validateReport(report, candidate, gateway) {
-  exact(report, ["schema_version", "kind", "platform", "candidate", "gateway", "tests", "redaction"], "report");
+export function validateReport(report, candidate, gateway, expectedAttestationProvider) {
+  exact(report, [
+    "schema_version", "kind", "platform", "attestation_provider", "candidate", "gateway", "tests", "redaction",
+  ], "report");
   if (report.schema_version !== 1 || report.kind !== "latchway_live_javascript_observation" ||
-      report.platform !== "javascript" || JSON.stringify(report.candidate) !== JSON.stringify(candidate)) {
+      report.platform !== "javascript" || report.attestation_provider !== expectedAttestationProvider ||
+      !ATTESTATION_TOKEN_ENVIRONMENT.has(report.attestation_provider) ||
+      JSON.stringify(report.candidate) !== JSON.stringify(candidate)) {
     throw new Error("live_report_identity_invalid");
   }
   exact(report.gateway, ["origin", "status", "build"], "gateway result");
@@ -296,6 +304,7 @@ export async function runLive({ candidate, gateway, config, fetchImplementation 
     schema_version: 1,
     kind: "latchway_live_javascript_observation",
     platform: "javascript",
+    attestation_provider: config.provider,
     candidate,
     gateway: { origin: gateway, status: health.status, build: health.build },
     tests,
@@ -414,10 +423,11 @@ function secretShaped(value) {
 }
 
 function parseArguments(argv) {
-  if (argv.length !== 4 || argv[0] !== "--candidate-manifest" || argv[2] !== "--gateway") {
+  if (argv.length !== 6 || argv[0] !== "--candidate-manifest" || argv[2] !== "--gateway" ||
+      argv[4] !== "--attestation-provider" || !ATTESTATION_TOKEN_ENVIRONMENT.has(argv[5])) {
     throw new Error("live_arguments_invalid");
   }
-  return { manifest: resolve(argv[1]), gateway: argv[3] };
+  return { manifest: resolve(argv[1]), gateway: argv[3], attestationProvider: argv[5] };
 }
 
 export async function main(argv = process.argv.slice(2), environment = process.env) {
@@ -425,8 +435,9 @@ export async function main(argv = process.argv.slice(2), environment = process.e
   const manifest = JSON.parse(readFileSync(argumentsValue.manifest, "utf8"));
   const candidate = parseCandidateManifest(manifest, argumentsValue.gateway);
   verifyCheckout(candidate.repositories.javascript.commit);
-  const report = await runLive({ candidate, gateway: argumentsValue.gateway, config: liveConfiguration(environment) });
-  validateReport(report, candidate, argumentsValue.gateway);
+  const config = liveConfiguration(environment, argumentsValue.attestationProvider);
+  const report = await runLive({ candidate, gateway: argumentsValue.gateway, config });
+  validateReport(report, candidate, argumentsValue.gateway, argumentsValue.attestationProvider);
   process.stdout.write(`${JSON.stringify(report)}\n`);
 }
 
