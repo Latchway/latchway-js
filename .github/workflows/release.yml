@@ -115,17 +115,37 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GIT_TAG_READ_TOKEN: ${{ github.token }}
           RELEASE_COMMIT: ${{ steps.promotion.outputs.release_commit }}
           RELEASE_TAG: ${{ steps.promotion.outputs.release_tag }}
           CORE_TAG: ${{ steps.promotion.outputs.core_tag }}
           REPORT_SHA256: ${{ steps.promotion.outputs.report_sha256 }}
         run: |
           set -euo pipefail
+          git_askpass="$RUNNER_TEMP/latchway-git-askpass"
+          umask 077
+          cat > "$git_askpass" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          case "${1:-}" in
+            *github.com*Username*|*Username*github.com*) printf '%s\n' x-access-token ;;
+            *github.com*Password*|*Password*github.com*)
+              test -n "${GIT_TAG_READ_TOKEN:-}"
+              printf '%s\n' "$GIT_TAG_READ_TOKEN"
+              ;;
+            *) exit 1 ;;
+          esac
+          EOF
+          chmod 700 "$git_askpass"
+          trap 'rm -f -- "$git_askpass"' EXIT
+          git_with_auth() {
+            GIT_ASKPASS="$git_askpass" GIT_TERMINAL_PROMPT=0 git -c credential.helper= "$@"
+          }
           message="JavaScript SDK $RELEASE_TAG
 
           Core promotion: $CORE_TAG
           Promotion evidence SHA-256: $REPORT_SHA256"
-          remote=$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")
+          remote=$(git_with_auth ls-remote --tags origin "refs/tags/$RELEASE_TAG")
           if [[ -n "$remote" ]]; then
             tag_object=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)
             test "$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" --jq .object.type)" = commit
@@ -142,7 +162,10 @@ jobs:
               '{ref: $ref, sha: $sha}' > "$RUNNER_TEMP/sdk-tag-ref.json"
             gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" --input "$RUNNER_TEMP/sdk-tag-ref.json" >/dev/null
           fi
-          git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          git_with_auth fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          rm -f -- "$git_askpass"
+          trap - EXIT
+          unset GIT_TAG_READ_TOKEN
           test "$(git cat-file -t "refs/tags/$RELEASE_TAG")" = tag
           test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RELEASE_COMMIT"
 
@@ -167,12 +190,14 @@ jobs:
         with:
           node-version: 24.19.0
           package-manager-cache: false
+      - name: Install pinned actionlint
+        run: node scripts/install-actionlint.mjs
       - name: Verify annotated stable release tag
         env:
           EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
           EXPECTED_RELEASE_TAG: ${{ needs.promote.outputs.tag }}
         run: node scripts/verify-release-tag.mjs
-      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+      - uses: pnpm/action-setup@d15e628ca66d93ee5f352c71671a7bc6a97af5c9 # v6.0.8
         with:
           version: 10.15.0
           run_install: false
@@ -219,12 +244,17 @@ jobs:
       contents: write
       id-token: write
     env:
-      NPM_CONFIG_CACHE: ${{ runner.temp }}/latchway-npm-cache
-      NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/latchway-release.npmrc
       RELEASE_TARBALL: .artifacts/${{ needs.verify.outputs.tarball }}
       RELEASE_COMMIT: ${{ needs.promote.outputs.commit }}
       RELEASE_TAG: ${{ needs.promote.outputs.tag }}
     steps:
+      - name: Configure isolated npm runtime paths
+        shell: bash
+        run: |
+          printf '%s\n' \
+            "NPM_CONFIG_CACHE=$RUNNER_TEMP/latchway-npm-cache" \
+            "NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/latchway-release.npmrc" \
+            >> "$GITHUB_ENV"
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0

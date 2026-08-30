@@ -22,13 +22,16 @@ core-produced canonical candidate manifest and HTTPS gateway origin, verifies
 that this clean checkout equals the manifest's JavaScript commit, and requires
 the runtime/server version, contract, protocol, core commit, and release image
 identity to agree. Protected environment values provide the application,
-environment, identity provider, model, real feature, guaranteed-absent error
-mapping feature, and either `firebase_app_check` or `turnstile`. The identity
-and attestation tokens are read only from
-`LATCHWAY_LIVE_SDK_IDENTITY_TOKEN` and
-`LATCHWAY_LIVE_SDK_ATTESTATION_TOKEN`; they never enter arguments or retained
-output. The retained report contains concrete canonical response metadata,
-bounded stream/quota facts, and SHA-256-only session-rotation observations.
+environment, identity provider, model, real feature, and guaranteed-absent
+error mapping feature. The core producer runs a fixed two-provider matrix:
+`firebase_app_check` and `turnstile`. The selected provider is a non-secret
+command argument and is bound into the report as `attestation_provider`. The
+identity token and separate provider tokens are read only from
+`LATCHWAY_LIVE_SDK_IDENTITY_TOKEN`,
+`LATCHWAY_LIVE_SDK_FIREBASE_APP_CHECK_TOKEN`, and
+`LATCHWAY_LIVE_SDK_TURNSTILE_TOKEN`; they never enter retained output. Each
+retained report contains concrete canonical response metadata, bounded
+stream/quota facts, and SHA-256-only session-rotation observations.
 
 npm publication remains an explicit external release action. The repository
 validates a byte-identical double pack, an exact archive allowlist, a credential

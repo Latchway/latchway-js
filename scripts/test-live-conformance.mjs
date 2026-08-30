@@ -29,6 +29,7 @@ function report() {
     schema_version: 1,
     kind: "latchway_live_javascript_observation",
     platform: "javascript",
+    attestation_provider: "firebase_app_check",
     candidate: identity,
     gateway: {
       origin: "https://gateway.example.com",
@@ -100,26 +101,28 @@ test("checkout verifier runs only fixed commands and rejects substitution or dir
   })), /javascript_checkout_identity_invalid/u);
 });
 
-test("configuration accepts only bounded protected token mode", () => {
+test("configuration selects only the fixed provider-specific protected token", () => {
   const environment = {
     LATCHWAY_LIVE_SDK_APPLICATION_ID: "app_01J00000000000000000000000",
     LATCHWAY_LIVE_SDK_FEATURE: "assistant",
     LATCHWAY_LIVE_SDK_ERROR_MAPPING_FEATURE: "conformance_missing",
-    LATCHWAY_LIVE_SDK_ATTESTATION_PROVIDER: "firebase_app_check",
     LATCHWAY_LIVE_SDK_ENVIRONMENT: "production",
     LATCHWAY_LIVE_SDK_IDENTITY_PROVIDER: "firebase",
     LATCHWAY_LIVE_SDK_MODEL: "openai/gpt-5-mini",
     LATCHWAY_LIVE_SDK_IDENTITY_TOKEN: "identity-secret",
-    LATCHWAY_LIVE_SDK_ATTESTATION_TOKEN: "attestation-secret",
+    LATCHWAY_LIVE_SDK_FIREBASE_APP_CHECK_TOKEN: "firebase-app-check-secret",
+    LATCHWAY_LIVE_SDK_TURNSTILE_TOKEN: "turnstile-secret",
   };
-  assert.equal(liveConfiguration(environment).model, "openai/gpt-5-mini");
-  assert.throws(() => liveConfiguration({ ...environment, LATCHWAY_LIVE_SDK_ATTESTATION_PROVIDER: "debug" }), /live_configuration_invalid/u);
-  assert.throws(() => liveConfiguration({ ...environment, LATCHWAY_LIVE_SDK_IDENTITY_TOKEN: "" }), /live_configuration_missing/u);
+  assert.equal(liveConfiguration(environment, "firebase_app_check").attestationToken, "firebase-app-check-secret");
+  assert.equal(liveConfiguration(environment, "turnstile").attestationToken, "turnstile-secret");
+  assert.throws(() => liveConfiguration(environment, "debug"), /live_configuration_invalid/u);
+  assert.throws(() => liveConfiguration({ ...environment, LATCHWAY_LIVE_SDK_IDENTITY_TOKEN: "" }, "firebase_app_check"), /live_configuration_missing/u);
+  assert.throws(() => liveConfiguration({ ...environment, LATCHWAY_LIVE_SDK_FIREBASE_APP_CHECK_TOKEN: "" }, "firebase_app_check"), /live_configuration_missing/u);
 });
 
 test("report validator rejects every semantic substitution and secret-shaped output", () => {
   const valid = report();
-  assert.equal(validateReport(valid, valid.candidate, valid.gateway.origin), valid);
+  assert.equal(validateReport(valid, valid.candidate, valid.gateway.origin, "firebase_app_check"), valid);
   const mutations = [
     (value) => { value.candidate.repositories.ios.commit = "f".repeat(40); },
     (value) => { value.gateway.build.commit = "f".repeat(40); },
@@ -135,6 +138,7 @@ test("report validator rejects every semantic substitution and secret-shaped out
   for (const mutate of mutations) {
     const current = globalThis.structuredClone(valid);
     mutate(current);
-    assert.throws(() => validateReport(current, valid.candidate, valid.gateway.origin));
+    assert.throws(() => validateReport(current, valid.candidate, valid.gateway.origin, "firebase_app_check"));
   }
+  assert.throws(() => validateReport(valid, valid.candidate, valid.gateway.origin, "turnstile"), /live_report_identity_invalid/u);
 });
