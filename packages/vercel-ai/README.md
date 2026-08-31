@@ -21,4 +21,6 @@ const stream = streamText({
 
 The adapter delegates streaming, tools, structured output, cancellation,
 middleware, and telemetry to the AI SDK. Every framework retry calls the
-feature-bound transport and therefore receives a fresh DPoP proof.
+feature-bound transport and therefore receives a fresh DPoP proof. Latchway
+correlation IDs are mirrored to the provider-compatible request-ID response
+header without buffering streams.

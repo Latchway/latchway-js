@@ -1,0 +1,92 @@
+name: JavaScript framework compatibility
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * 2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: js-framework-compatibility-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pinned-profiles:
+    name: Pinned ${{ matrix.profile }} framework profile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [minimum, latest]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@d15e628ca66d93ee5f352c71671a7bc6a97af5c9 # v6.0.8
+        with:
+          version: 10.15.0
+          run_install: false
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm framework:verify-profile ${{ matrix.profile }}
+      - run: pnpm test:framework
+      - run: pnpm typecheck
+
+  newest-compatible:
+    name: Newest compatible candidate observation
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@d15e628ca66d93ee5f352c71671a7bc6a97af5c9 # v6.0.8
+        with:
+          version: 10.15.0
+          run_install: false
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install bounded newest-compatible candidates without changing the lockfile
+        run: pnpm framework:install-profile newest-compatible
+      - run: pnpm framework:verify-profile newest-compatible
+      - run: pnpm test:framework
+      - run: pnpm typecheck
+
+  report-newest-failure:
+    name: Report one bounded candidate failure issue
+    needs: newest-compatible
+    if: ${{ always() && github.event_name == 'schedule' && needs.newest-compatible.result == 'failure' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LATCHWAY_REPOSITORY: ${{ github.repository }}
+      LATCHWAY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open at most one active compatibility issue
+        run: |
+          title="Scheduled framework compatibility candidate failed"
+          existing="$(gh api -X GET search/issues \
+            -f q="repo:$LATCHWAY_REPOSITORY is:issue is:open in:title $title" \
+            --jq '.items[] | select(.title == "Scheduled framework compatibility candidate failed") | .number')"
+          if [ -n "$existing" ]; then
+            exit 0
+          fi
+          body="The bounded newest-compatible framework observation failed. No supported range was widened. Inspect: $LATCHWAY_RUN_URL"
+          gh api --method POST "repos/$LATCHWAY_REPOSITORY/issues" \
+            -f title="$title" \
+            -f body="$body"

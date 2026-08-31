@@ -10,14 +10,25 @@ strict CSP, contract route/method enforcement, redirect failure, non-replayable
 bodies, component/family grant validation, public-key-only child provisioning,
 and scoped component/family revocation.
 
-The framework suite executes the pinned real `openai`, `ai`,
-`@ai-sdk/openai`, and `@langchain/openai` packages through their documented
-fetch/provider/underlying-client seams. It currently proves OpenAI Responses
-and Chat SSE, Vercel text generation and streaming, LangChain chat and
-embeddings, feature/version binding, and AbortSignal forwarding. This is one
-exact-version workspace gate; it is not minimum/latest or live-core evidence,
-so the canonical framework registry remains experimental and its limitations
-remain release gates.
+The framework suite executes the real `openai`, `ai`, `@ai-sdk/openai`, and
+`@langchain/openai` packages through their documented
+fetch/provider/underlying-client seams. The reusable catalog in
+`conformance/framework/cases.ts` requires every applicable case ID to be
+registered. Fifty framework/case combinations currently cover feature and
+version binding, Responses, Chat, embeddings, safe headers, SSE plus final
+usage, cancellation, tools, structured output, quota/provider errors, fresh
+proofs across framework retries, safe session refresh, placeholder stripping,
+origin rejection, error redaction, and no global-fetch mutation.
+
+The minimum/latest workflow runs the exact experimental versions recorded in
+`conformance/framework-versions.json`; the two profiles are currently equal.
+A weekly observation installs the newest release within explicitly bounded
+candidate majors, runs the same cases, and opens at most one active issue on
+failure. Candidate success does not alter the manifest or widen a support
+range. The fixture performs real client session bootstrap and DPoP
+authorization, but it is still local debug-attestation evidence rather than a
+hosted core or exact-image observation, so the canonical registry remains
+experimental.
 
 The Node entry point is suitable for the core `latchway verify local` flow when
 the gateway supplies a mock OIDC issuer and explicitly enabled debug

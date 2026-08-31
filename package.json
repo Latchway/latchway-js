@@ -65,10 +65,13 @@
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm examples:check && pnpm exports:check",
     "examples:check": "tsc -p tsconfig.examples.json --noEmit",
     "exports:check": "node scripts/verify-exports.mjs",
+    "framework:install-profile": "node scripts/framework-matrix.mjs install",
+    "framework:verify-profile": "node scripts/framework-matrix.mjs verify",
     "lint": "eslint . --max-warnings=0",
     "pack:check": "node scripts/verify-pack.mjs",
     "release:check": "node scripts/verify-release-candidate.mjs",
     "test": "vitest run && node --test scripts/test-live-conformance.mjs scripts/test-npm-release-evidence.mjs scripts/test-verification-runtime.mjs",
+    "test:framework": "vitest run test/framework-adapters.test.ts",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --recursive --filter './packages/**' run typecheck",
     "verify:contracts": "node scripts/verify-contract.mjs",
@@ -89,7 +92,8 @@
     "react": "19.2.8",
     "typescript": "6.0.3",
     "typescript-eslint": "8.68.0",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "zod": "4.5.4"
   },
   "keywords": [
     "dpop",

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "contract_bundle_sha256": "ad7afe992181553996eba39e44d4aeb498e8159e2b52671756b5c93ab68eb765",
+  "support": "experimental",
+  "profiles": {
+    "minimum": {
+      "openai": "7.8.0",
+      "ai": "7.0.85",
+      "@ai-sdk/openai": "4.0.52",
+      "@langchain/openai": "1.5.10"
+    },
+    "latest": {
+      "openai": "7.8.0",
+      "ai": "7.0.85",
+      "@ai-sdk/openai": "4.0.52",
+      "@langchain/openai": "1.5.10"
+    }
+  },
+  "newest_compatible_candidates": {
+    "openai": ">=7.8.0 <8.0.0",
+    "ai": ">=7.0.85 <8.0.0",
+    "@ai-sdk/openai": ">=4.0.52 <5.0.0",
+    "@langchain/openai": ">=1.5.10 <2.0.0"
+  }
+}

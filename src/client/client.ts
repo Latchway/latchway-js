@@ -266,7 +266,11 @@ export class DefaultLatchwayClient implements LatchwayClient {
   }
 
   private async expectNoContent(response: Response, operation: string): Promise<void> {
-    if (response.status !== 204 || response.body !== null) {
+    // Fetch implementations may expose an empty ReadableStream for a genuine
+    // 204 after an HTTP intermediary even though the Fetch standard normally
+    // represents a null-body status with `body === null`. The status is the
+    // protocol acknowledgement; no response payload is consumed or trusted.
+    if (response.status !== 204) {
       await response.body?.cancel();
       throw new LatchwayError(
         "protocol_response_invalid",

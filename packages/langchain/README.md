@@ -18,4 +18,6 @@ const message = await model.invoke("Summarize today");
 The generated OpenAI-compatible model value is `latchway`; it is not a
 physical model selection. Streaming, batching, tools, structured output,
 cancellation, callbacks, and framework retries remain LangChain behavior over
-the authenticated transport.
+the authenticated transport. Latchway correlation IDs are mirrored to the
+underlying OpenAI client's conventional request-ID header without buffering
+the response.

@@ -26,6 +26,7 @@ for (const name of entries) {
 
 const release = await readFile(new URL("release.yml", workflows), "utf8");
 const continuousIntegration = await readFile(new URL("ci.yml", workflows), "utf8");
+const frameworkCompatibility = await readFile(new URL("framework-compatibility.yml", workflows), "utf8");
 const releaseDocumentation = await readFile(new URL("../docs/releasing.md", import.meta.url), "utf8");
 for (const required of [
   "repository_dispatch:",
@@ -66,6 +67,40 @@ for (const required of [
 for (const [name, source] of [["ci.yml", continuousIntegration], ["release.yml", release]]) {
   if (!source.includes("node scripts/install-actionlint.mjs")) {
     throw new Error(`${name} must install the pinned workflow-schema validator before release verification.`);
+  }
+}
+for (const required of [
+  "profile: [minimum, latest]",
+  "pnpm framework:verify-profile ${{ matrix.profile }}",
+  "pnpm framework:install-profile newest-compatible",
+  "if: github.event_name == 'schedule'",
+  "issues: write",
+  "needs.newest-compatible.result == 'failure'",
+  "Open at most one active compatibility issue",
+  "No supported range was widened",
+  "persist-credentials: false",
+]) {
+  if (!frameworkCompatibility.includes(required)) {
+    throw new Error(`framework-compatibility.yml is missing the fail-closed control: ${required}`);
+  }
+}
+for (const forbidden of [
+  "pull_request_target",
+  "contents: write",
+  "packages: write",
+  "workflow_run",
+  "pnpm update",
+]) {
+  if (frameworkCompatibility.includes(forbidden)) {
+    throw new Error(`framework-compatibility.yml must not contain ${forbidden}.`);
+  }
+}
+const issueJobStart = frameworkCompatibility.indexOf("\n  report-newest-failure:\n");
+if (issueJobStart < 0) throw new Error("framework-compatibility.yml omitted the isolated issue job.");
+const issueJob = frameworkCompatibility.slice(issueJobStart);
+for (const forbidden of ["actions/checkout", "pnpm ", "node ", "scripts/"]) {
+  if (issueJob.includes(forbidden)) {
+    throw new Error(`The framework issue job must not execute candidate source through ${forbidden}.`);
   }
 }
 for (const forbidden of [

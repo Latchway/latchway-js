@@ -6,17 +6,19 @@ messages, tools, output schemas, streams, callbacks, and errors. Every adapter
 binds one Latchway feature and injects a request-time fetch; it does not cache
 an Authorization or DPoP header.
 
-The versions below are the exact packages exercised by this repository. They
-are prerelease evidence for this SDK workspace, not a minimum/latest support
-range. The canonical core `compatibility/frameworks.yaml` registry records
-these JavaScript integrations as `experimental`; hosted common conformance and
-broader version-range evidence remain required before stronger support claims.
+The versions below are the exact packages exercised by this repository. The
+canonical core `compatibility/frameworks.yaml` registry records these
+JavaScript integrations as `experimental`; hosted common conformance remains
+required before stronger support claims. The local minimum and latest profiles
+are intentionally the same exact versions. A scheduled job observes newer
+releases only inside bounded candidate majors and never widens the supported
+range automatically.
 
 | Package | Framework package tested | Injection seam | Local evidence |
 | --- | --- | --- | --- |
-| `@latchway/openai` | `openai` 7.8.0 | official custom `fetch` and `baseURL` | Responses, Chat SSE, AbortSignal forwarding |
-| `@latchway/vercel-ai` | `ai` 7.0.85 and `@ai-sdk/openai` 4.0.52 | custom provider backed by a custom `fetch` | `generateText`, `streamText`, AbortSignal, feature/version binding |
-| `@latchway/langchain` | `@langchain/openai` 1.5.10 | underlying OpenAI client `configuration.fetch` | `ChatOpenAI.invoke`, OpenAI embeddings, AbortSignal, feature/version binding |
+| `@latchway/openai` | `openai` 7.8.0 | official custom `fetch` and `baseURL` | Responses, Chat, embeddings, SSE usage, tools/schema preservation, cancellation and error/retry mapping |
+| `@latchway/vercel-ai` | `ai` 7.0.85 and `@ai-sdk/openai` 4.0.52 | custom provider backed by a custom `fetch` | Responses/Chat `generateText`, embeddings, `streamText`, tools/typed output, cancellation and error/retry mapping |
+| `@latchway/langchain` | `@langchain/openai` 1.5.10 | underlying OpenAI client `configuration.fetch` | Chat, embeddings, streaming usage, tools/structured output, cancellation and error/retry mapping |
 
 ## OpenAI JavaScript SDK
 
@@ -111,12 +113,18 @@ OpenAI-compatible response returns numeric vectors.
 - Provider-compatible final HTTP failures remain framework-visible. Session
   and protocol setup failures surface as `LatchwayError` before framework
   dispatch.
+- Adapters mirror `X-Latchway-Request-ID` to the conventional
+  `X-Request-ID` response header without buffering the body, allowing the
+  underlying OpenAI-compatible clients to retain the Latchway correlation ID.
 
 ## Current limitations
 
-This workspace does not yet claim a supported minimum/latest range. Common
-conformance still needs live core tests for tools, structured output, provider
-error mapping, quota denial, framework-owned retries after session rotation,
-and every capability marked planned in the core registry. Audio, image, and
-remote-file surfaces also require server route/protocol evidence before a
+The case-ID local harness proves the applicable authentication boundary,
+Responses/Chat/embeddings surfaces, streaming usage, cancellation, safe
+headers, tools, structured output, quota/provider errors, session refresh,
+framework retries with fresh proofs, placeholder stripping, origin rejection,
+redaction, and lack of global-fetch mutation. It uses a protocol-valid in-memory
+gateway and debug attestation, so it is not hosted or exact-image evidence.
+Revocation, real identity reauthentication, live providers, audio, image, and
+remote-file surfaces still require server/environment evidence before a
 support claim.

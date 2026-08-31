@@ -4,8 +4,9 @@ import {
   OpenAIEmbeddings,
   type OpenAIEmbeddingsParams,
 } from "@langchain/openai";
+import langchainOpenAIPackage from "@langchain/openai/package.json" with { type: "json" };
 
-const frameworkVersion = "1.5.10";
+const frameworkVersion = langchainOpenAIPackage.version;
 const placeholder = "latchway-managed-not-a-provider-secret";
 
 export interface AuthenticatedTransport {
@@ -39,21 +40,26 @@ export interface CreateLatchwayEmbeddingsOptions {
 }
 
 export function createLatchwayChatOpenAI(options: CreateLatchwayChatOpenAIOptions): ChatOpenAI {
+  const authenticatedFetch = options.latchway.fetchFor(options.feature, {
+    id: "langchain-js",
+    version: frameworkVersion,
+  });
   return new ChatOpenAI({
     ...options.chatOptions,
     apiKey: placeholder,
     model: "latchway",
     configuration: {
       baseURL: `${options.latchway.gatewayURL}/v1`,
-      fetch: options.latchway.fetchFor(options.feature, {
-        id: "langchain-js",
-        version: frameworkVersion,
-      }),
+      fetch: withProviderRequestID(authenticatedFetch),
     },
   });
 }
 
 export function createLatchwayEmbeddings(options: CreateLatchwayEmbeddingsOptions): OpenAIEmbeddings {
+  const authenticatedFetch = options.latchway.fetchFor(options.feature, {
+    id: "langchain-js",
+    version: frameworkVersion,
+  });
   return new OpenAIEmbeddings({
     ...options.embeddingsOptions,
     apiKey: placeholder,
@@ -61,12 +67,37 @@ export function createLatchwayEmbeddings(options: CreateLatchwayEmbeddingsOption
     model: "latchway",
     configuration: {
       baseURL: `${options.latchway.gatewayURL}/v1`,
-      fetch: options.latchway.fetchFor(options.feature, {
-        id: "langchain-js",
-        version: frameworkVersion,
-      }),
+      fetch: withProviderRequestID(authenticatedFetch),
     },
   });
 }
 
 export const LANGCHAIN_OPENAI_VERSION = frameworkVersion;
+
+function withProviderRequestID(
+  fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+): (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
+  return async (input, init) => aliasRequestID(await fetch(input, init));
+}
+
+function aliasRequestID(response: Response): Response {
+  const requestID = response.headers.get("X-Latchway-Request-ID");
+  if (requestID === null || response.headers.has("X-Request-ID")) return response;
+  const headers = new Headers(response.headers);
+  headers.set("X-Request-ID", requestID);
+  const aliased = new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+  preserveResponseLocation(aliased, response);
+  return aliased;
+}
+
+function preserveResponseLocation(target: Response, source: Response): void {
+  Object.defineProperties(target, {
+    redirected: { value: source.redirected },
+    type: { value: source.type },
+    url: { value: source.url },
+  });
+}

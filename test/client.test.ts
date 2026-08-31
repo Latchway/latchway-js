@@ -505,6 +505,7 @@ describe("Latchway fetch client", () => {
 
   it("revokes local installation state only after server confirmation", async () => {
     const gateway = new MockGateway();
+    gateway.exposeEmptyRevokeBody = true;
     const client = makeBrowserClient(gateway, { mode: "memory" });
     await client.fetch("/v1/responses", { method: "POST", body: "{}", latchwayFeature: "assistant" });
     await client.revokeCurrentInstallation();
@@ -585,6 +586,7 @@ class MockGateway {
   protectedCalls = 0;
   revokeCalls = 0;
   familyRevokeCalls = 0;
+  exposeEmptyRevokeBody = false;
   requireNonceOnce = false;
   nonceResponse = MockGateway.nonce;
   expireSessionOnce = false;
@@ -698,7 +700,15 @@ class MockGateway {
     }
     if (url.pathname === "/client/v1/installations/current") {
       this.revokeCalls += 1;
-      return new Response(null, { status: 204 });
+      const response = new Response(null, { status: 204 });
+      if (this.exposeEmptyRevokeBody) {
+        Object.defineProperty(response, "body", {
+          value: new ReadableStream<Uint8Array>({
+            start: (controller) => { controller.close(); },
+          }),
+        });
+      }
+      return response;
     }
     this.protectedCalls += 1;
     this.lastProtectedHeaders = new Headers(request.headers);

@@ -1,6 +1,7 @@
 import { createOpenAI, type OpenAIProvider } from "@ai-sdk/openai";
+import aiPackage from "ai/package.json" with { type: "json" };
 
-const frameworkVersion = "7.0.85";
+const frameworkVersion = aiPackage.version;
 const placeholder = "latchway-managed-not-a-provider-secret";
 
 export interface AuthenticatedTransport {
@@ -30,10 +31,10 @@ export function createLatchwayProvider(options: LatchwayVercelAIOptions): Latchw
     name: "latchway",
     baseURL: `${options.client.gatewayURL}/v1`,
     apiKey: placeholder,
-    fetch: options.client.fetchFor(feature, {
+    fetch: withProviderRequestID(options.client.fetchFor(feature, {
       id: "vercel-ai-sdk",
       version: frameworkVersion,
-    }),
+    })),
   });
   const responses = (feature: string) => providerFor(feature).responses("latchway");
   const provider = Object.assign(responses, {
@@ -47,3 +48,31 @@ export function createLatchwayProvider(options: LatchwayVercelAIOptions): Latchw
 }
 
 export const VERCEL_AI_SDK_VERSION = frameworkVersion;
+
+function withProviderRequestID(
+  fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+): (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
+  return async (input, init) => aliasRequestID(await fetch(input, init));
+}
+
+function aliasRequestID(response: Response): Response {
+  const requestID = response.headers.get("X-Latchway-Request-ID");
+  if (requestID === null || response.headers.has("X-Request-ID")) return response;
+  const headers = new Headers(response.headers);
+  headers.set("X-Request-ID", requestID);
+  const aliased = new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+  preserveResponseLocation(aliased, response);
+  return aliased;
+}
+
+function preserveResponseLocation(target: Response, source: Response): void {
+  Object.defineProperties(target, {
+    redirected: { value: source.redirected },
+    type: { value: source.type },
+    url: { value: source.url },
+  });
+}

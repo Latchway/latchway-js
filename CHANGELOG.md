@@ -11,8 +11,8 @@ Versioning once package publication begins.
 
 - Synchronize the SDK, runtime headers, release evidence, and all four canonical
   fixtures to draft Latchway contract 1.0.0 at core commit
-  `a62b0f6aa2328604101c1073c56f5ecb3bed3618` and deterministic bundle SHA-256
-  `36aa3c4786e60f2cdbbc3d0cd2f65bffe894a099479517b2e1faa01361c74b00`,
+  `72a52d7b42e6ea159e8222c5dd0346be286fb39a` and deterministic bundle SHA-256
+  `ad7afe992181553996eba39e44d4aeb498e8159e2b52671756b5c93ab68eb765`,
   emitting current wire protocol 2 while retaining legacy grant parsing.
 - Require exact-image JavaScript release evidence for both Firebase App Check
   and Cloudflare Turnstile, with separate protected tokens and a non-secret
@@ -29,9 +29,13 @@ Versioning once package publication begins.
   Installation Family revocation, and an explicit service-worker handler.
 - Workspace adapter packages for OpenAI JavaScript 7.8.0, Vercel AI SDK 7.0.85
   with `@ai-sdk/openai` 4.0.52, and LangChain OpenAI 1.5.10.
-- Real-framework tests, examples, integration guides, and capability-spike
-  records. Compatibility remains experimental until broader-version and live
-  common conformance evidence exists.
+- A reusable case-ID framework harness with 50 applicable OpenAI, Vercel AI,
+  and LangChain combinations covering requests, streams, cancellation, tools,
+  typed output, errors, retry/refresh, and the authenticated transport boundary.
+- Exact minimum/latest framework profiles plus a bounded scheduled
+  newest-compatible observation that can report one issue without widening a
+  support range. Compatibility remains experimental until hosted/exact-image,
+  broader-version, and live-provider evidence exists.
 
 ## [1.0.0] - 2026-08-30
 
