@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { errorFromResponse, LatchwayError } from "../src/errors.js";
+import {
+  errorFromResponse,
+  latchwayErrorDocumentationURL,
+  LatchwayError,
+} from "../src/errors.js";
 
 describe("stable error mapping", () => {
   it("maps safe RFC 9457 fields", async () => {
@@ -25,10 +29,32 @@ describe("stable error mapping", () => {
     expect(error).toBeInstanceOf(LatchwayError);
     expect(error).toMatchObject({
       code: "quota_exceeded",
+      documentationURL: "https://docs.latchway.dev/errors/quota_exceeded",
       status: 429,
       requestID: "req_12345678",
       retryable: true,
       feature: "assistant",
+    });
+  });
+
+  it("provides a stable documentation URL for server and client error codes", async () => {
+    const clientError = new LatchwayError("network_error", "The request failed.");
+    expect(clientError.documentationURL).toBe("https://docs.latchway.dev/errors/network_error");
+    expect(Object.keys(clientError)).not.toContain("documentationURL");
+    expect(() => {
+      Object.assign(clientError, { documentationURL: "https://malicious.invalid" });
+    }).toThrow(TypeError);
+    expect(latchwayErrorDocumentationURL("component_revoked"))
+      .toBe("https://docs.latchway.dev/errors/component_revoked");
+
+    const malformed = await errorFromResponse(new Response("not-json", {
+      status: 502,
+      headers: { "X-Latchway-Request-ID": "req_12345678" },
+    }));
+    expect(malformed).toMatchObject({
+      code: "protocol_response_invalid",
+      documentationURL: "https://docs.latchway.dev/errors/protocol_response_invalid",
+      requestID: "req_12345678",
     });
   });
 

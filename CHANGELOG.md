@@ -11,8 +11,8 @@ Versioning once package publication begins.
 
 - Synchronize the SDK, runtime headers, release evidence, and all four canonical
   fixtures to draft Latchway contract 1.0.0 at core commit
-  `6e44d1aacd85535d005db7d1df2f0e470f3dcffb` and deterministic bundle SHA-256
-  `695811e0601b7d393137fb7021d43b5c70638ef43fb4b41ad83ac5dd12085d5c`,
+  `1fa6b2bf67906390e7af9be81fc946dedae71741` and deterministic bundle SHA-256
+  `33c57d9dfeb227ca2472a4a4a964e6df37f4932699cacb423dee11ce15e8824e`,
   emitting current wire protocol 2 while retaining legacy grant parsing.
 - Require exact-image JavaScript release evidence for both Firebase App Check
   and Cloudflare Turnstile, with separate protected tokens and a non-secret
@@ -25,6 +25,12 @@ Versioning once package publication begins.
 
 ### Added
 
+- Stable `LatchwayError.documentationURL` values and a typed URL helper for
+  `https://docs.latchway.dev/errors/<code>`, plus request-correlated safe
+  failure fields in the runnable Web golden journey.
+- A pinned Chromium, Firefox, and WebKit source-conformance matrix and exact
+  Vite, React, Next.js client-component, and plain-ESM consumer gates wired
+  into CI and release verification.
 - Feature-bound `fetchFor`, root-managed component provisioning/revocation,
   Installation Family revocation, and an explicit service-worker handler.
 - Workspace adapter packages for OpenAI JavaScript 7.8.0, Vercel AI SDK 7.0.85

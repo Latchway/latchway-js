@@ -33,10 +33,11 @@ protocol work also requires shared-vector, browser, Node.js, and conformance
 coverage. Storage failure, clock skew, cancellation, streaming, redaction, and
 strict Content Security Policy behavior must be tested where relevant.
 
-Run `pnpm release:check` with the versions pinned in `mise.toml`. It includes
-contract, lint, type, test, build, export, reproducibility, package allowlist,
-and clean-consumer gates. A contribution is not ready while a documented check
-fails.
+Run `pnpm browser:install` once, then `pnpm release:check` with the versions
+pinned in `mise.toml`. It includes contract, lint, type, test, build, export,
+reproducibility, package allowlist, clean-consumer, Chromium, Firefox, WebKit,
+Vite, React, Next.js client-component, and plain-ESM gates. A contribution is
+not ready while a documented check fails.
 
 ## Pull requests
 

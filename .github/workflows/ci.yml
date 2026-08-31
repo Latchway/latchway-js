@@ -15,11 +15,15 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Scan the exact candidate dependency inventory offline
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: scripts/scan-dependencies.sh "$SOURCE_COMMIT"
       - uses: pnpm/action-setup@d15e628ca66d93ee5f352c71671a7bc6a97af5c9 # v6.0.8
         with:
           version: 10.15.0
@@ -31,4 +35,6 @@ jobs:
       - name: Install pinned actionlint
         run: node scripts/install-actionlint.mjs
       - run: pnpm install --frozen-lockfile
+      - name: Install pinned browser matrix
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
       - run: pnpm release:check

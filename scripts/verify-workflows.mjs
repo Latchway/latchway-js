@@ -70,6 +70,16 @@ for (const [name, source] of [["ci.yml", continuousIntegration], ["release.yml",
     throw new Error(`${name} must install the pinned workflow-schema validator before release verification.`);
   }
 }
+for (const [name, source] of [["ci.yml", continuousIntegration], ["release.yml", release]]) {
+  for (const required of [
+    "pnpm exec playwright install --with-deps chromium firefox webkit",
+    "pnpm release:check",
+  ]) {
+    if (!source.includes(required)) {
+      throw new Error(`${name} is missing the browser release gate control: ${required}`);
+    }
+  }
+}
 for (const required of [
   "profile: [minimum, latest]",
   "pnpm framework:verify-profile ${{ matrix.profile }}",

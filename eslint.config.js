@@ -35,5 +35,9 @@ export default tseslint.config(
         URL: "readonly"
       }
     }
+  },
+  {
+    files: ["test/browser/plain-esm/**/*.js"],
+    languageOptions: { globals: { window: "readonly" } }
   }
 );

@@ -48,6 +48,7 @@ class DocumentationBundleTests(unittest.TestCase):
             }, True)
             self.assertTrue({
                 "quickstart/firebase-app-check.ts",
+                "quickstart/vanilla-development-helper.ts",
                 "quickstart/vanilla-development-client.ts",
                 "quickstart/vanilla-streaming-fetch.ts",
             }.issubset(payloads))
@@ -75,6 +76,12 @@ class DocumentationBundleTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(payloads[name]).hexdigest(), digest)
             for name, key in (("supported-versions.json", "versions"), ("public-symbols.json", "symbols"), ("errors.json", "errors"), ("examples.json", "examples")):
                 self.assertTrue(json.loads(payloads[name])[key])
+            supported = {
+                item["name"]: item for item in json.loads(payloads["supported-versions.json"])["versions"]
+            }
+            self.assertEqual(supported["Node.js"]["version"], "24.19.0")
+            self.assertEqual(supported["Web browser matrix"]["version"], "1.56.0")
+            self.assertEqual(supported["Web browser matrix"]["source"]["file"], "package.json")
 
     def test_path_validation_and_archive_verifier_reject_traversal(self) -> None:
         for value in ("/absolute", "../escape", "a/../escape", "a\\b"):

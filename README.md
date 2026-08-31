@@ -77,6 +77,13 @@ opaque `/proxy/{feature}/...` route. Authenticated fetches use
 `redirect: "error"`; a custom fetch that nevertheless returns a redirected or
 cross-origin response fails closed.
 
+Every `LatchwayError` has a closed `code`, optional safe `requestID`, and a
+stable `documentationURL` at
+`https://docs.latchway.dev/errors/<code>`. The URL is derived locally from the
+typed code rather than trusted from a response. Error reports should include
+only `code`, `requestID`, `retryable`, and `documentationURL`; do not attach
+response bodies, tokens, browser storage, or the error cause.
+
 ## Browser persistence
 
 The default browser policy is `persistence: { mode: "required" }`. It stores a
@@ -278,6 +285,7 @@ Use the pinned Node 24.19.0 and pnpm 10.15.0 toolchain from `mise.toml`.
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm browser:install
 pnpm verify:contracts
 pnpm check
 pnpm verify:reproducible
@@ -286,9 +294,11 @@ pnpm release:check
 ```
 
 The checks cover strict TypeScript, lint, canonical DPoP and attestation
-vectors, storage failure, refresh races, multiple tabs, cancellation,
-streaming, strict CSP, subpath exports, deterministic output, and package
-contents. Framework tests execute the pinned real OpenAI, Vercel AI, and
+vectors, storage failure, refresh races, cancellation, streaming, strict CSP,
+subpath exports, deterministic output, and package contents. The source-side
+Web gate runs Chromium, Firefox, and WebKit against a loopback conformance
+server and compiles pinned Vite, React, Next.js client-component, and plain-ESM
+consumers. Framework tests execute the pinned real OpenAI, Vercel AI, and
 LangChain packages through their documented injection seams.
 
 See [examples](examples/README.md), [architecture](docs/architecture.md),

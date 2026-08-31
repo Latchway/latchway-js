@@ -10,6 +10,29 @@ strict CSP, contract route/method enforcement, redirect failure, non-replayable
 bodies, component/family grant validation, public-key-only child provisioning,
 and scoped component/family revocation.
 
+The source-side Web release gate is a real-browser matrix, not a Node Fetch
+simulation. Playwright runs the same loopback-only conformance server under
+Chromium, Firefox, and WebKit. The server verifies each ES256 proof and access
+token hash, enforces an exact origin and CORS preflight allowlist, never calls
+an AI provider, and never retains credentials in test output. Each engine must
+pass first bootstrap, non-exportable WebCrypto persistence, IndexedDB document
+restoration, streaming, cancellation, explicit and automatic refresh,
+two-tab refresh leasing, origin rejection, preflight, redirect failure,
+storage-cleared recovery, strict CSP, revoked-component rejection, expired
+trust re-attestation, installation revocation, and published-shape plain ESM.
+
+The bundler gate typechecks and produces optimized consumers with exact pinned
+Vite, React, and Next.js versions. Its Next.js fixture is a real `"use client"`
+component. Plain browser ESM imports the built package graph directly and
+completes a streamed request in every browser. The Firebase App Check,
+Turnstile, loopback, diagnostics, and streaming quickstart sources are compiled
+into the harness; provider factories are constructed without acquiring tokens,
+while loopback diagnostics and streaming execute against the conformance
+server and expose only their documented safe fields.
+The documentation bundle records the Web browser matrix independently from
+the Node.js runtime coordinate, so downstream docs do not imply that Node-only
+conformance is evidence for browser support.
+
 The framework suite executes the real `openai`, `ai`, `@ai-sdk/openai`, and
 `@langchain/openai` packages through their documented
 fetch/provider/underlying-client seams. The reusable catalog in
@@ -37,7 +60,7 @@ the gateway supplies a mock OIDC issuer and explicitly enabled debug
 attestation. It does not embed a mock verifier or hard-code a successful
 verdict.
 
-Live browser provider conformance remains environment-owned because it needs a
+Live browser-provider verification remains environment-owned because it needs a
 real Firebase App Check project or Turnstile site key, an allowed HTTPS origin,
 and a running server verifier.
 

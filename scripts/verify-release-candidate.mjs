@@ -27,6 +27,7 @@ for (const [name, script] of [
   ["unit-tests", "test"],
   ["examples", "examples:check"],
   ["exports", "exports:check"],
+  ["web-browser-and-bundler-conformance", "web:verify"],
   ["build-reproducibility", "verify:reproducible"],
   ["package-conformance", "pack:check"],
 ]) {

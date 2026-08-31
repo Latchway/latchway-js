@@ -87,8 +87,13 @@ localized.
    thumbprint.
 6. For each protected request, reject credential-like query names, strip
    credential placeholders, compute `ath`, create a unique proof for the exact
-   method and URI, and add protocol, SDK, feature, and optional framework
-   headers.
+method and URI, and add protocol, SDK, feature, and optional framework
+headers.
+
+Every `LatchwayError` derives its public `documentationURL` from the closed
+error-code union (`https://docs.latchway.dev/errors/<code>`); a server cannot
+substitute the link. Safe support output is limited to code, correlated request
+ID, retryability, and that documentation URL.
 
 Server Date headers adjust DPoP issued-at time within a bounded 24-hour local
 clock discrepancy. A DPoP nonce is accepted only from a canonical, correlated

@@ -72,6 +72,16 @@ export type LatchwayClientErrorCode =
 
 export type LatchwayErrorCode = LatchwayServerErrorCode | LatchwayClientErrorCode;
 
+export type LatchwayErrorDocumentationURL =
+  `https://docs.latchway.dev/errors/${LatchwayErrorCode}`;
+
+/** Stable public troubleshooting page for a typed SDK or gateway error. */
+export function latchwayErrorDocumentationURL(
+  code: LatchwayErrorCode,
+): LatchwayErrorDocumentationURL {
+  return `https://docs.latchway.dev/errors/${code}`;
+}
+
 export interface LatchwayErrorOptions {
   status?: number | undefined;
   requestID?: string | undefined;
@@ -85,6 +95,7 @@ export interface LatchwayErrorOptions {
 
 export class LatchwayError extends Error {
   readonly code: LatchwayErrorCode;
+  readonly documentationURL: LatchwayErrorDocumentationURL;
   readonly status: number | undefined;
   readonly requestID: string | undefined;
   readonly retryable: boolean;
@@ -97,6 +108,13 @@ export class LatchwayError extends Error {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = "LatchwayError";
     this.code = code;
+    this.documentationURL = latchwayErrorDocumentationURL(code);
+    Object.defineProperty(this, "documentationURL", {
+      configurable: false,
+      enumerable: false,
+      value: this.documentationURL,
+      writable: false,
+    });
     this.status = options.status;
     this.requestID = options.requestID;
     this.retryable = options.retryable ?? false;

@@ -2,7 +2,11 @@ import { createBrowserLatchwayClient } from "./browser.js";
 
 export const createLatchwayClient = createBrowserLatchwayClient;
 
-export { LatchwayError, errorFromResponse } from "./errors.js";
+export {
+  LatchwayError,
+  errorFromResponse,
+  latchwayErrorDocumentationURL,
+} from "./errors.js";
 export { createCustomAttestationProvider } from "./attestation/custom.js";
 export {
   CONTRACT_VERSION,
@@ -36,4 +40,8 @@ export type {
   QuotaSnapshot,
   ServerDiagnostics,
 } from "./types.js";
-export type { LatchwayErrorCode, LatchwayServerErrorCode } from "./errors.js";
+export type {
+  LatchwayErrorCode,
+  LatchwayErrorDocumentationURL,
+  LatchwayServerErrorCode,
+} from "./errors.js";

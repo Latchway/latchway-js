@@ -9,6 +9,8 @@ export interface LoopbackDevelopmentDeployment {
   baseURL: string;
   applicationID: string;
   appVersion: string;
+  /** Use a unique name when isolating local browser-conformance runs. */
+  databaseName?: string;
 }
 
 export interface LoopbackDevelopmentDependencies {
@@ -41,7 +43,10 @@ export function createLoopbackDevelopmentBrowserClient(
       provider: "debug",
       getEvidence: dependencies.getDevelopmentEvidence,
     })],
-    persistence: { mode: "required" },
+    persistence: {
+      mode: "required",
+      ...(deployment.databaseName === undefined ? {} : { databaseName: deployment.databaseName }),
+    },
     installation: { appVersion: deployment.appVersion },
   });
 }

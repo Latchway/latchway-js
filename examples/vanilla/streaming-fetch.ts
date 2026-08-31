@@ -1,13 +1,27 @@
 import {
   errorFromResponse,
+  LatchwayError,
   type AuthenticatedTransport,
   type FetchImplementation,
+  type LatchwayErrorCode,
+  type LatchwayErrorDocumentationURL,
 } from "@latchway/client";
 
 export interface HabitAssistantResult {
   output: string;
   requestID: string | null;
 }
+
+export interface SafeHabitAssistantFailure {
+  code: LatchwayErrorCode | null;
+  requestID: string | null;
+  retryable: boolean;
+  documentationURL: LatchwayErrorDocumentationURL | null;
+}
+
+export type HabitAssistantOutcome =
+  | { ok: true; result: HabitAssistantResult }
+  | { ok: false; error: SafeHabitAssistantFailure };
 
 export function createHabitAssistantFetch(
   latchway: AuthenticatedTransport,
@@ -48,3 +62,32 @@ export async function streamHabitAssistant(
   };
 }
 
+/** A docs-safe journey result that never includes response bodies or causes. */
+export async function runHabitAssistantSafely(
+  latchway: AuthenticatedTransport,
+  input: string,
+  signal?: AbortSignal,
+): Promise<HabitAssistantOutcome> {
+  try {
+    return { ok: true, result: await streamHabitAssistant(latchway, input, signal) };
+  } catch (error) {
+    return { ok: false, error: safeHabitAssistantFailure(error) };
+  }
+}
+
+export function safeHabitAssistantFailure(error: unknown): SafeHabitAssistantFailure {
+  if (error instanceof LatchwayError) {
+    return {
+      code: error.code,
+      requestID: error.requestID ?? null,
+      retryable: error.retryable,
+      documentationURL: error.documentationURL,
+    };
+  }
+  return {
+    code: null,
+    requestID: null,
+    retryable: false,
+    documentationURL: null,
+  };
+}

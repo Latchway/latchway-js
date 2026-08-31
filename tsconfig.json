@@ -28,5 +28,5 @@
     },
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "conformance/**/*.ts", "test/**/*.ts", "examples/**/*.ts", "scripts/**/*.mjs", "eslint.config.js", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "conformance/**/*.ts", "test/**/*.ts", "examples/**/*.ts", "scripts/**/*.mjs", "eslint.config.js", "playwright.config.ts", "vitest.config.ts"]
 }

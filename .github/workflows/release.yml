@@ -229,7 +229,7 @@ jobs:
     if: github.repository == 'Latchway/latchway-js'
     needs: promote
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     outputs:
       artifact_name: ${{ steps.package.outputs.artifact_name }}
       integrity: ${{ steps.package.outputs.integrity }}
@@ -242,6 +242,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ needs.promote.outputs.commit }}
+      - name: Scan the exact promoted dependency inventory offline
+        env:
+          LATCHWAY_OSV_EVIDENCE_PATH: .artifacts/dependency-vulnerability-scan.json
+          SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
+        run: scripts/scan-dependencies.sh "$SOURCE_COMMIT"
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: 24.19.0
@@ -259,6 +264,8 @@ jobs:
           run_install: false
       - name: Install locked development dependencies without lifecycle scripts
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install pinned browser matrix
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
       - name: Run complete release-candidate gate
         run: pnpm release:check
       - name: Build deterministic source-provenanced documentation bundle
@@ -291,6 +298,7 @@ jobs:
             .artifacts/SHA256SUMS
             .artifacts/build-reproducibility.json
             .artifacts/contract-evidence.json
+            .artifacts/dependency-vulnerability-scan.json
             .artifacts/package-evidence.json
             .artifacts/release-candidate-evidence.json
             .artifacts/tag-evidence.json
