@@ -11,8 +11,8 @@ Versioning once package publication begins.
 
 - Synchronize the SDK, runtime headers, release evidence, and all four canonical
   fixtures to draft Latchway contract 1.0.0 at core commit
-  `1fa6b2bf67906390e7af9be81fc946dedae71741` and deterministic bundle SHA-256
-  `33c57d9dfeb227ca2472a4a4a964e6df37f4932699cacb423dee11ce15e8824e`,
+  `b07a4762f08e6b68d5829cda500bae9d79e5f16c` and deterministic bundle SHA-256
+  `397a3920aaa2ed0438a96156cd8a51f0fa85ac2e3fb9266b4fe79618812a3d9a`,
   emitting current wire protocol 2 while retaining legacy grant parsing.
 - Require exact-image JavaScript release evidence for both Firebase App Check
   and Cloudflare Turnstile, with separate protected tokens and a non-secret
