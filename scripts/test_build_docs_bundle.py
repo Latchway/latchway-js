@@ -46,6 +46,11 @@ class DocumentationBundleTests(unittest.TestCase):
                 "quickstart", "framework", "release_notes", "supported_versions",
                 "public_symbols", "errors", "examples",
             }, True)
+            self.assertTrue({
+                "quickstart/firebase-app-check.ts",
+                "quickstart/vanilla-development-client.ts",
+                "quickstart/vanilla-streaming-fetch.ts",
+            }.issubset(payloads))
             for item in manifest["files"]:
                 self.assertEqual(hashlib.sha256(payloads[item["path"]]).hexdigest(), item["sha256"])
                 self.assertTrue(item["provenance"])

@@ -1,0 +1,77 @@
+import {
+  createCustomAttestationProvider,
+  createLatchwayClient,
+  type AttestationContext,
+  type LatchwayClient,
+} from "@latchway/client";
+
+export interface LoopbackDevelopmentDeployment {
+  baseURL: string;
+  applicationID: string;
+  appVersion: string;
+}
+
+export interface LoopbackDevelopmentDependencies {
+  getIdentityToken(): Promise<string>;
+  /**
+   * Call an operator-owned development helper that signs only this active
+   * challenge. Never put its debug-signing key in browser code or storage.
+   */
+  getDevelopmentEvidence(
+    context: Readonly<AttestationContext>,
+  ): Promise<Readonly<Record<string, unknown>>>;
+}
+
+export function createLoopbackDevelopmentBrowserClient(
+  deployment: Readonly<LoopbackDevelopmentDeployment>,
+  dependencies: Readonly<LoopbackDevelopmentDependencies>,
+): LatchwayClient {
+  const gateway = new URL(deployment.baseURL);
+  if (gateway.protocol !== "http:" || !new Set(["127.0.0.1", "localhost", "[::1]"]).has(gateway.hostname)) {
+    throw new TypeError("The development browser example requires a loopback HTTP gateway.");
+  }
+  return createLatchwayClient({
+    baseURL: gateway.href,
+    allowInsecureHTTP: true,
+    applicationID: deployment.applicationID,
+    environment: "development",
+    identityProvider: "custom_jwt",
+    identityTokenProvider: { getIdentityToken: dependencies.getIdentityToken },
+    attestationProviders: [createCustomAttestationProvider({
+      provider: "debug",
+      getEvidence: dependencies.getDevelopmentEvidence,
+    })],
+    persistence: { mode: "required" },
+    installation: { appVersion: deployment.appVersion },
+  });
+}
+
+export interface SafeBrowserDiagnostics {
+  requestID: string;
+  serverVersion: string;
+  contractVersion: string;
+  protocolVersion: number;
+  sdkVersion: string;
+  platform: string;
+  keyPersistence: "indexeddb" | "memory";
+  sessionPersistence: "indexeddb" | "memory";
+  clockOffsetMilliseconds: number;
+}
+
+/** Return only the allowlisted fields suitable for a development bug report. */
+export async function safeBrowserDiagnostics(
+  client: Pick<LatchwayClient, "diagnostics">,
+): Promise<SafeBrowserDiagnostics> {
+  const diagnostics = await client.diagnostics();
+  return {
+    requestID: diagnostics.server.request_id,
+    serverVersion: diagnostics.server.server_version,
+    contractVersion: diagnostics.server.contract_version,
+    protocolVersion: diagnostics.server.protocol_version,
+    sdkVersion: diagnostics.client.sdkVersion,
+    platform: diagnostics.client.platform,
+    keyPersistence: diagnostics.client.keyPersistence,
+    sessionPersistence: diagnostics.client.sessionPersistence,
+    clockOffsetMilliseconds: diagnostics.client.clockOffsetMilliseconds,
+  };
+}
