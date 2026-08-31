@@ -25,6 +25,7 @@ for (const [name, script] of [
   ["typecheck", "typecheck"],
   ["clean-build", "build"],
   ["unit-tests", "test"],
+  ["offline-release-tests", "test:offline-release"],
   ["examples", "examples:check"],
   ["exports", "exports:check"],
   ["web-browser-and-bundler-conformance", "web:verify"],
