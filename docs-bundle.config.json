@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/Latchway/latchway-js",
+  "release": "v1.0.0",
+  "version": "1.0.0",
+  "package": "@latchway/client",
+  "documents": [
+    {"path": "quickstart/firebase-app-check.ts", "kind": "quickstart", "source": {"file": "examples/firebase/client.ts", "start_line": 1, "end_line": 23}},
+    {"path": "frameworks/openai.ts", "kind": "framework", "source": {"file": "packages/openai/src/index.ts", "start_line": 1, "end_line": 71}},
+    {"path": "frameworks/vercel-ai.ts", "kind": "framework", "source": {"file": "packages/vercel-ai/src/index.ts", "start_line": 1, "end_line": 78}},
+    {"path": "frameworks/langchain.ts", "kind": "framework", "source": {"file": "packages/langchain/src/index.ts", "start_line": 1, "end_line": 103}},
+    {"path": "release-notes.md", "kind": "release_notes", "source": {"file": "CHANGELOG.md", "start_line": 1, "end_line": 70}}
+  ],
+  "supported_versions": [
+    {"name": "@latchway/client", "version": "1.0.0", "source": {"file": "package.json", "start_line": 1, "end_line": 13}},
+    {"name": "Node.js", "version": "24.19.0", "source": {"file": "package.json", "start_line": 10, "end_line": 14}},
+    {"name": "openai minimum", "version": "7.8.0", "source": {"file": "conformance/framework-versions.json", "start_line": 5, "end_line": 11}},
+    {"name": "openai latest", "version": "7.8.0", "source": {"file": "conformance/framework-versions.json", "start_line": 12, "end_line": 18}},
+    {"name": "ai minimum", "version": "7.0.85", "source": {"file": "conformance/framework-versions.json", "start_line": 5, "end_line": 11}},
+    {"name": "ai latest", "version": "7.0.85", "source": {"file": "conformance/framework-versions.json", "start_line": 12, "end_line": 18}},
+    {"name": "@ai-sdk/openai minimum", "version": "4.0.52", "source": {"file": "conformance/framework-versions.json", "start_line": 5, "end_line": 11}},
+    {"name": "@ai-sdk/openai latest", "version": "4.0.52", "source": {"file": "conformance/framework-versions.json", "start_line": 12, "end_line": 18}},
+    {"name": "@langchain/openai minimum", "version": "1.5.10", "source": {"file": "conformance/framework-versions.json", "start_line": 5, "end_line": 11}},
+    {"name": "@langchain/openai latest", "version": "1.5.10", "source": {"file": "conformance/framework-versions.json", "start_line": 12, "end_line": 18}}
+  ],
+  "public_symbols": [
+    {"file": "src/index.ts", "pattern": "(?m)^export (?:const|function|class|interface|type|enum) (?P<name>[A-Za-z][A-Za-z0-9_]*)"},
+    {"file": "src/index.ts", "pattern": "(?m)^\\s{2}(?P<name>[A-Za-z][A-Za-z0-9_]*),?$"},
+    {"file": "src/index.ts", "pattern": "(?m)^export (?:type )?\\{ (?P<name>[A-Za-z][A-Za-z0-9_]*)"},
+    {"file": "src/index.ts", "pattern": "(?m)^export (?:type )?\\{ [A-Za-z][A-Za-z0-9_]*, (?P<name>[A-Za-z][A-Za-z0-9_]*)"},
+    {"glob": "src/*.ts", "pattern": "(?m)^export (?:const|function|class|interface|type|enum) (?P<name>[A-Za-z][A-Za-z0-9_]*)"}
+  ],
+  "errors": [
+    {"file": "src/errors.ts", "start_line": 3, "end_line": 71, "pattern": "(?m)^\\s*\\| \\\"(?P<name>[a-z][a-z0-9_]*)\\\""}
+  ],
+  "examples": [
+    {"name": "Firebase App Check quickstart", "kind": "quickstart", "source": {"file": "examples/firebase/client.ts", "start_line": 1, "end_line": 23}},
+    {"name": "Turnstile browser quickstart", "kind": "quickstart", "source": {"file": "examples/vanilla/client.ts", "start_line": 1, "end_line": 23}},
+    {"name": "OpenAI framework adapter", "kind": "framework", "source": {"file": "packages/openai/src/index.ts", "start_line": 1, "end_line": 71}},
+    {"name": "Vercel AI framework adapter", "kind": "framework", "source": {"file": "packages/vercel-ai/src/index.ts", "start_line": 1, "end_line": 78}},
+    {"name": "LangChain framework adapter", "kind": "framework", "source": {"file": "packages/langchain/src/index.ts", "start_line": 1, "end_line": 103}}
+  ]
+}

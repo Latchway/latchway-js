@@ -261,6 +261,16 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Run complete release-candidate gate
         run: pnpm release:check
+      - name: Build deterministic source-provenanced documentation bundle
+        env:
+          RELEASE_COMMIT: ${{ needs.promote.outputs.commit }}
+          RELEASE_VERSION: ${{ needs.promote.outputs.version }}
+        run: |
+          python3 scripts/build_docs_bundle.py \
+            --output-dir .artifacts \
+            --version "$RELEASE_VERSION" \
+            --commit "$RELEASE_COMMIT" \
+            --require-clean
       - name: Re-verify tag and capture evidence
         env:
           EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
@@ -277,6 +287,7 @@ jobs:
           name: ${{ steps.package.outputs.artifact_name }}
           path: |
             .artifacts/${{ steps.package.outputs.tarball }}
+            .artifacts/docs-bundle-${{ steps.package.outputs.version }}.tar.gz
             .artifacts/SHA256SUMS
             .artifacts/build-reproducibility.json
             .artifacts/contract-evidence.json
@@ -437,13 +448,14 @@ jobs:
               --verify-tag --draft --generate-notes --title "$title"
             gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
           fi
-          jq --exit-status --arg tag "$RELEASE_TAG" --arg title "$title" --arg tarball "$RELEASE_TARBALL" '
+          jq --exit-status --arg tag "$RELEASE_TAG" --arg title "$title" --arg tarball "$RELEASE_TARBALL" \
+            --arg docs "docs-bundle-$RELEASE_VERSION.tar.gz" '
             .tag_name == $tag and .name == $title and .prerelease == false and
             (.draft | type) == "boolean" and (.immutable | type) == "boolean" and
             ((.draft == true and .immutable == false) or (.draft == false and .immutable == true)) and
             ([.assets[].name] | length) == ([.assets[].name] | unique | length) and
             all(.assets[].name;
-              . == $tarball or . == "SHA256SUMS" or . == "build-reproducibility.json" or
+              . == $tarball or . == $docs or . == "SHA256SUMS" or . == "build-reproducibility.json" or
               . == "contract-evidence.json" or . == "package-evidence.json" or
               . == "post-publish-evidence.json" or . == "publish-input-evidence.json" or
               . == "release-candidate-evidence.json" or . == "tag-evidence.json" or
@@ -683,6 +695,7 @@ jobs:
           mkdir -m 700 "$destination"
           install -m 600 -- \
             "$RELEASE_TARBALL" \
+            ".artifacts/docs-bundle-${{ needs.verify.outputs.version }}.tar.gz" \
             .artifacts/SHA256SUMS \
             .artifacts/build-reproducibility.json \
             .artifacts/contract-evidence.json \
@@ -772,6 +785,7 @@ jobs:
           [[ "$adoption_name" =~ ^npm-release-adoption-[1-9][0-9]*-[1-9][0-9]*\.json$ ]]
           expected=(
             "$RELEASE_TARBALL"
+            "docs-bundle-$RELEASE_VERSION.tar.gz"
             SHA256SUMS
             build-reproducibility.json
             contract-evidence.json
@@ -832,6 +846,7 @@ jobs:
           [[ "${adoption_assets[0]##*/}" =~ ^npm-release-adoption-[1-9][0-9]*-[1-9][0-9]*\.json$ ]]
           fixed_assets=(
             "$asset_root/$RELEASE_TARBALL"
+            "$asset_root/docs-bundle-$RELEASE_VERSION.tar.gz"
             "$asset_root/SHA256SUMS"
             "$asset_root/build-reproducibility.json"
             "$asset_root/contract-evidence.json"
@@ -853,7 +868,7 @@ jobs:
             test -s "$asset"
           done
           for asset in "${fixed_assets[@]}"; do printf '%s\n' "${asset##*/}" >> "$RUNNER_TEMP/fixed-assets.txt"; done
-          test "$(sort -u "$RUNNER_TEMP/fixed-assets.txt" | wc -l | tr -d ' ')" = 14
+          test "$(sort -u "$RUNNER_TEMP/fixed-assets.txt" | wc -l | tr -d ' ')" = 15
           fixed_names=$(sort "$RUNNER_TEMP/fixed-assets.txt" | jq --raw-input --slurp 'split("\n")[:-1]')
 
           gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > "$RUNNER_TEMP/tag-ref.json"

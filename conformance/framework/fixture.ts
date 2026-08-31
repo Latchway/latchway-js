@@ -178,9 +178,11 @@ export function responsesResponse(body: Readonly<Record<string, unknown>> = {}):
   });
 }
 
-export function chatResponse(body: Readonly<Record<string, unknown>> = {}): Response {
-  const content = hasStructuredOutput(body) ? JSON.stringify({ summary: "hello from Latchway" })
-    : "hello from Latchway";
+export function chatResponse(
+  body: Readonly<Record<string, unknown>> = {},
+  text = "hello from Latchway",
+): Response {
+  const content = hasStructuredOutput(body) ? JSON.stringify({ summary: text }) : text;
   return jsonResponse({
     id: "chatcmpl_latchway",
     object: "chat.completion",
@@ -205,7 +207,7 @@ export function embeddingResponse(): Response {
   });
 }
 
-export function streamingChatResponse(): Response {
+export function streamingChatResponse(beforeSecondChunk?: Promise<void>): Response {
   const encoder = new TextEncoder();
   const events = [
     { choices: [{ index: 0, delta: { role: "assistant", content: "hello " }, finish_reason: null }] },
@@ -216,8 +218,9 @@ export function streamingChatResponse(): Response {
     },
   ];
   return new Response(new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const event of events) {
+    async start(controller) {
+      for (const [index, event] of events.entries()) {
+        if (index === 1) await beforeSecondChunk;
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({
           id: "chatcmpl_latchway",
           object: "chat.completion.chunk",

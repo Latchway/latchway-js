@@ -26,9 +26,11 @@ remains the application API. Its required model and API-key values are
 non-secret compatibility placeholders, while physical model selection and
 provider credentials remain server-owned.
 
-## Remaining conformance
+## Follow-up conformance
 
-Minimum/latest package bounds, tools, structured output, embeddings through
-this adapter, provider errors, framework retry after session rotation, quota
-denial, live streaming cancellation, and scheduled newest-compatible testing
-remain required before the core registry can move beyond `experimental`.
+The exact-version suite now covers minimum/latest profiles, Responses and Chat
+tools/schema preservation, embeddings, provider and quota errors, request-ID
+correlation, SDK timeouts and AbortSignal cancellation, retries with fresh
+proofs, and scheduled bounded newest-compatible observation. Hosted common
+conformance, live-provider behavior, and exact release-image evidence remain
+required before the core registry can move beyond `experimental`.

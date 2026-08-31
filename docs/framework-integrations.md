@@ -16,9 +16,9 @@ range automatically.
 
 | Package | Framework package tested | Injection seam | Local evidence |
 | --- | --- | --- | --- |
-| `@latchway/openai` | `openai` 7.8.0 | official custom `fetch` and `baseURL` | Responses, Chat, embeddings, SSE usage, tools/schema preservation, cancellation and error/retry mapping |
-| `@latchway/vercel-ai` | `ai` 7.0.85 and `@ai-sdk/openai` 4.0.52 | custom provider backed by a custom `fetch` | Responses/Chat `generateText`, embeddings, `streamText`, tools/typed output, cancellation and error/retry mapping |
-| `@latchway/langchain` | `@langchain/openai` 1.5.10 | underlying OpenAI client `configuration.fetch` | Chat, embeddings, streaming usage, tools/structured output, cancellation and error/retry mapping |
+| `@latchway/openai` | `openai` 7.8.0 | official custom `fetch` and `baseURL` | Responses, Chat, embeddings, SSE usage, Chat/Responses tools and schemas, timeout/cancellation, request IDs, and error/retry mapping |
+| `@latchway/vercel-ai` | `ai` 7.0.85 and `@ai-sdk/openai` 4.0.52 | custom provider backed by a custom `fetch` | Responses/Chat `generateText`, embeddings, incremental `streamText`, middleware, telemetry lifecycle/recording options, timeout/cancellation, tools/typed output, and error/retry mapping |
+| `@latchway/langchain` | `@langchain/openai` 1.5.10 | underlying OpenAI client `configuration.fetch` | Chat, embeddings, streaming usage, bounded batches, isolated batch errors, batch cancellation, timeout/cancellation, tools/structured output, and error/retry mapping |
 
 ## OpenAI JavaScript SDK
 
@@ -72,6 +72,11 @@ The provider exposes feature selectors, not physical provider/model selectors.
 `responses`, `chat`, and `embedding` choose the corresponding OpenAI-compatible
 wire surface while preserving AI SDK request/response objects.
 
+AI SDK telemetry integrations are application-owned observers. Latchway
+preserves `recordInputs` and `recordOutputs`, but those flags do not redact the
+event objects delivered to a custom integration; treat every custom telemetry
+integration as trusted code with access to prompts and generated content.
+
 ## LangChain.js
 
 ```ts
@@ -120,11 +125,14 @@ OpenAI-compatible response returns numeric vectors.
 ## Current limitations
 
 The case-ID local harness proves the applicable authentication boundary,
-Responses/Chat/embeddings surfaces, streaming usage, cancellation, safe
-headers, tools, structured output, quota/provider errors, session refresh,
-framework retries with fresh proofs, placeholder stripping, origin rejection,
-redaction, and lack of global-fetch mutation. It uses a protocol-valid in-memory
-gateway and debug attestation, so it is not hosted or exact-image evidence.
+Responses/Chat/embeddings surfaces, incremental streaming and usage,
+AbortSignal and timeout propagation, safe headers, tools, structured output,
+success correlation, Vercel AI middleware and telemetry option behavior, LangChain
+batch concurrency/error/cancellation semantics, quota/provider errors, session
+refresh, framework retries with fresh proofs, placeholder stripping, origin
+rejection, redaction, and lack of global-fetch mutation. It uses a
+protocol-valid in-memory gateway and debug attestation, so it is not hosted or
+exact-image evidence.
 Revocation, real identity reauthentication, live providers, audio, image, and
 remote-file surfaces still require server/environment evidence before a
 support claim.

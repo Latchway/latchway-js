@@ -63,6 +63,7 @@
   "scripts": {
     "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json && pnpm --recursive --filter './packages/**' run build",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm examples:check && pnpm exports:check",
+    "docs:bundle": "python3 scripts/build_docs_bundle.py",
     "examples:check": "tsc -p tsconfig.examples.json --noEmit",
     "exports:check": "node scripts/verify-exports.mjs",
     "framework:install-profile": "node scripts/framework-matrix.mjs install",
@@ -70,7 +71,7 @@
     "lint": "eslint . --max-warnings=0",
     "pack:check": "node scripts/verify-pack.mjs",
     "release:check": "node scripts/verify-release-candidate.mjs",
-    "test": "vitest run && node --test scripts/test-live-conformance.mjs scripts/test-npm-release-evidence.mjs scripts/test-verification-runtime.mjs",
+    "test": "vitest run && node --test scripts/test-live-conformance.mjs scripts/test-npm-release-evidence.mjs scripts/test-verification-runtime.mjs && python3 -m unittest scripts/test_build_docs_bundle.py",
     "test:framework": "vitest run test/framework-adapters.test.ts",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --recursive --filter './packages/**' run typecheck",

@@ -21,11 +21,10 @@ prompt, message, tool, or stream abstraction?
 The official provider's custom-fetch seam is sufficient for the current thin
 adapter. The adapter remains a provider factory, not an AI framework.
 
-## Remaining conformance
+## Follow-up conformance
 
-Responses-mode fixtures, embeddings, tools, structured output, live in-flight
-cancellation, error translation, session-rotation retries, minimum/latest versions, and the
-shared live core suite remain required. The canonical registry currently names
-`@latchway/ai-sdk`; this implementation uses the requested
-`@latchway/vercel-ai`, so the core registry needs an owner-reviewed correction
-before publication.
+The exact-version suite now covers Responses and Chat modes, embeddings, tools,
+structured output, incremental stream callbacks, middleware wrapping,
+telemetry lifecycle/recording options, in-flight cancellation, framework timeouts,
+error translation, session-rotation retries, and minimum/latest profiles. The
+shared hosted core suite and exact release-image evidence remain required.

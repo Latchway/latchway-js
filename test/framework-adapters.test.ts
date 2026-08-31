@@ -4,7 +4,9 @@ import {
   jsonSchema,
   Output,
   streamText,
+  type Telemetry,
   tool,
+  wrapLanguageModel,
 } from "ai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
@@ -18,12 +20,14 @@ import {
 } from "../conformance/framework/cases.js";
 import {
   createFrameworkClient,
+  chatResponse,
   defaultFrameworkReply,
   FrameworkGatewayFixture,
   latchwayProblem,
   pendingUntilAborted,
   providerError,
   serializedError,
+  streamingChatResponse,
 } from "../conformance/framework/fixture.js";
 import {
   createLatchwayChatOpenAI,
@@ -153,6 +157,19 @@ describe("OpenAI JavaScript conformance", () => {
     expect(requiredRequest(gateway).signal.aborted).toBe(true);
   });
 
+  frameworkTest(framework, "FW-REQ-007", async () => {
+    const gateway = new FrameworkGatewayFixture(pendingUntilAborted);
+    const errorPromise = captureError(() => createLatchwayOpenAI({
+      latchway: createFrameworkClient(gateway),
+      feature: "assistant",
+      clientOptions: { maxRetries: 0, timeout: 25 },
+    }).responses.create({ model: "latchway", input: "hello" }));
+    await gateway.waitForDataRequests(1);
+    const error = await errorPromise;
+    expect(requiredRequest(gateway).signal.aborted).toBe(true);
+    expect(serializedError(error)).toMatch(/timed? ?out|timeout/iu);
+  });
+
   frameworkTest(framework, "FW-BEH-001", async () => {
     const gateway = new FrameworkGatewayFixture();
     await createLatchwayOpenAI({
@@ -265,6 +282,52 @@ describe("OpenAI JavaScript conformance", () => {
     expect(globalFetch).not.toHaveBeenCalled();
   });
 
+  frameworkTest(framework, "FW-OAI-001", async () => {
+    const gateway = new FrameworkGatewayFixture();
+    const response = await createLatchwayOpenAI({
+      latchway: createFrameworkClient(gateway),
+      feature: "assistant",
+    }).chat.completions.create({
+      model: "latchway",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "lookup_habit",
+          description: "Looks up a habit.",
+          parameters: objectSchema("habit"),
+          strict: true,
+        },
+      }],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "summary",
+          schema: objectSchema("summary"),
+          strict: true,
+        },
+      },
+    });
+    expect(response.choices[0]?.message.content).toBe('{"summary":"hello from Latchway"}');
+    expect(findTool(requiredRequest(gateway).body, "lookup_habit")).toMatchObject({
+      type: "function",
+      function: { name: "lookup_habit", strict: true },
+    });
+    expect(nestedValue(requiredRequest(gateway).body, "response_format", "type")).toBe("json_schema");
+  });
+
+  frameworkTest(framework, "FW-OAI-002", async () => {
+    const gateway = new FrameworkGatewayFixture();
+    const result = await createLatchwayOpenAI({
+      latchway: createFrameworkClient(gateway),
+      feature: "assistant",
+    }).responses.create({ model: "latchway", input: "hello" }).withResponse();
+    expect(result.request_id).toBe("req_framework_case_123");
+    expect(result.response.headers.get("X-Request-ID")).toBe("req_framework_case_123");
+    expect(asRecord(result.data)._request_id).toBe("req_framework_case_123");
+    expect(result.response.status).toBe(200);
+  });
+
   afterAll(() => {
     assertFrameworkCaseCoverage(framework, requiredRegistration(framework));
   });
@@ -361,6 +424,20 @@ describe("Vercel AI SDK conformance", () => {
     controller.abort(new DOMException("conformance cancellation", "AbortError"));
     await expect(pending).rejects.toBeDefined();
     expect(requiredRequest(gateway).signal.aborted).toBe(true);
+  });
+
+  frameworkTest(framework, "FW-REQ-007", async () => {
+    const gateway = new FrameworkGatewayFixture(pendingUntilAborted);
+    const errorPromise = captureError(() => generateText({
+      model: createLatchwayProvider({ client: createFrameworkClient(gateway) }).responses("assistant"),
+      prompt: "hello",
+      timeout: 25,
+      maxRetries: 0,
+    }));
+    await gateway.waitForDataRequests(1);
+    const error = await errorPromise;
+    expect(requiredRequest(gateway).signal.aborted).toBe(true);
+    expect(serializedError(error)).toMatch(/timed? ?out|timeout/iu);
   });
 
   frameworkTest(framework, "FW-BEH-001", async () => {
@@ -482,6 +559,148 @@ describe("Vercel AI SDK conformance", () => {
     expect(globalFetch).not.toHaveBeenCalled();
   });
 
+  frameworkTest(framework, "FW-VAI-001", async () => {
+    const gateway = new FrameworkGatewayFixture();
+    const phases: string[] = [];
+    const model = wrapLanguageModel({
+      model: createLatchwayProvider({ client: createFrameworkClient(gateway) }).responses("assistant"),
+      middleware: {
+        specificationVersion: "v4",
+        async transformParams({ params, type }) {
+          phases.push(`transform-${type}`);
+          return {
+            ...params,
+            headers: { ...params.headers, "X-Conformance-Middleware": type },
+          };
+        },
+        async wrapGenerate({ doGenerate }) {
+          phases.push("wrap-generate");
+          return doGenerate();
+        },
+        async wrapStream({ doStream }) {
+          phases.push("wrap-stream");
+          return doStream();
+        },
+      },
+    });
+    await generateText({ model, prompt: "hello", maxRetries: 0 });
+    const streamed = streamText({ model, prompt: "hello", maxRetries: 0 });
+    await expect(streamed.text).resolves.toBe("hello from Latchway");
+    expect(phases).toEqual([
+      "transform-generate",
+      "wrap-generate",
+      "transform-stream",
+      "wrap-stream",
+    ]);
+    expect(requiredRequest(gateway, 0).headers.get("X-Conformance-Middleware")).toBe("generate");
+    expect(requiredRequest(gateway, 1).headers.get("X-Conformance-Middleware")).toBe("stream");
+    expectFreshProofs(gateway, 2);
+  });
+
+  frameworkTest(framework, "FW-VAI-002", async () => {
+    let releaseSecondChunk: (() => void) | undefined;
+    const secondChunkGate = new Promise<void>((resolve) => {
+      releaseSecondChunk = resolve;
+    });
+    const gateway = new FrameworkGatewayFixture(() => streamingChatResponse(secondChunkGate));
+    const callbackChunks: string[] = [];
+    let finishedText: string | undefined;
+    const result = streamText({
+      model: createLatchwayProvider({ client: createFrameworkClient(gateway) }).chat("assistant"),
+      prompt: "hello",
+      maxRetries: 0,
+      onChunk({ chunk }) {
+        if (chunk.type === "text-delta") callbackChunks.push(chunk.text);
+      },
+      onFinish(event) {
+        finishedText = event.text;
+      },
+    });
+    const iterator = result.fullStream[Symbol.asyncIterator]();
+    let firstChunk;
+    try {
+      firstChunk = await beforeDeadline(nextTextDelta(iterator));
+    } finally {
+      releaseSecondChunk?.();
+    }
+    expect(firstChunk.text).toBe("hello ");
+    expect(callbackChunks).toEqual(["hello "]);
+    await drain(iterator);
+    await expect(result.text).resolves.toBe("hello from Latchway");
+    expect(callbackChunks).toEqual(["hello ", "from Latchway"]);
+    expect(finishedText).toBe("hello from Latchway");
+  });
+
+  frameworkTest(framework, "FW-VAI-003", async () => {
+    const gateway = new FrameworkGatewayFixture((request) =>
+      streamingChatResponse(rejectWhenAborted(request.signal)));
+    const controller = new AbortController();
+    let abortCalls = 0;
+    const result = streamText({
+      model: createLatchwayProvider({ client: createFrameworkClient(gateway) }).chat("assistant"),
+      prompt: "hello",
+      abortSignal: controller.signal,
+      maxRetries: 0,
+      onAbort() {
+        abortCalls += 1;
+      },
+    });
+    const iterator = result.fullStream[Symbol.asyncIterator]();
+    const firstChunk = await beforeDeadline(nextTextDelta(iterator));
+    expect(firstChunk.text).toBe("hello ");
+    controller.abort(new DOMException("stream cancelled", "AbortError"));
+    const terminalParts = await collect(iterator);
+    expect(requiredRequest(gateway).signal.aborted).toBe(true);
+    expect(terminalParts.some((part) => part.type === "abort" || part.type === "error")).toBe(true);
+    expect(abortCalls).toBe(1);
+  });
+
+  frameworkTest(framework, "FW-VAI-004", async () => {
+    const gateway = new FrameworkGatewayFixture();
+    const lifecycle: string[] = [];
+    const privacyFlags: Array<Readonly<Record<string, unknown>>> = [];
+    const observe = (phase: string, event: object): void => {
+      lifecycle.push(phase);
+      privacyFlags.push(asRecord(event));
+    };
+    const integration: Telemetry = {
+      onStart: (event) => {
+        observe("start", event);
+      },
+      onLanguageModelCallStart: (event) => {
+        observe("model-start", event);
+      },
+      onLanguageModelCallEnd: (event) => {
+        observe("model-end", event);
+      },
+      onEnd: (event) => {
+        observe("end", event);
+      },
+    };
+    const result = streamText({
+      model: createLatchwayProvider({ client: createFrameworkClient(gateway) }).responses("assistant"),
+      prompt: "telemetry-private-prompt",
+      maxRetries: 0,
+      telemetry: {
+        isEnabled: true,
+        recordInputs: false,
+        recordOutputs: false,
+        functionId: "latchway-framework-conformance",
+        integrations: [integration],
+      },
+    });
+    await expect(result.text).resolves.toBe("hello from Latchway");
+    expect(lifecycle).toEqual(["start", "model-start", "model-end", "end"]);
+    for (const event of privacyFlags) {
+      expect(event).toMatchObject({
+        functionId: "latchway-framework-conformance",
+        recordInputs: false,
+        recordOutputs: false,
+      });
+    }
+    expectBinding(gateway, "assistant", framework, VERCEL_AI_SDK_VERSION);
+  });
+
   afterAll(() => {
     assertFrameworkCaseCoverage(framework, requiredRegistration(framework));
   });
@@ -550,6 +769,19 @@ describe("LangChain JavaScript conformance", () => {
     controller.abort(new DOMException("conformance cancellation", "AbortError"));
     await expect(pending).rejects.toBeDefined();
     expect(requiredRequest(gateway).signal.aborted).toBe(true);
+  });
+
+  frameworkTest(framework, "FW-REQ-007", async () => {
+    const gateway = new FrameworkGatewayFixture(pendingUntilAborted);
+    const errorPromise = captureError(() => createLatchwayChatOpenAI({
+      latchway: createFrameworkClient(gateway),
+      feature: "assistant",
+      chatOptions: { maxRetries: 0, timeout: 25 },
+    }).invoke("hello"));
+    await gateway.waitForDataRequests(1);
+    const error = await errorPromise;
+    expect(requiredRequest(gateway).signal.aborted).toBe(true);
+    expect(serializedError(error)).toMatch(/timed? ?out|timeout/iu);
   });
 
   frameworkTest(framework, "FW-BEH-001", async () => {
@@ -660,6 +892,79 @@ describe("LangChain JavaScript conformance", () => {
     }).invoke("hello");
     expect(globalThis.fetch).toBe(globalFetch);
     expect(globalFetch).not.toHaveBeenCalled();
+  });
+
+  frameworkTest(framework, "FW-LC-001", async () => {
+    let active = 0;
+    let maximumActive = 0;
+    const gateway = new FrameworkGatewayFixture(async (request) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      try {
+        await delay(15);
+        const prompt = chatPrompt(request.body);
+        return chatResponse(request.body, `result:${prompt}`);
+      } finally {
+        active -= 1;
+      }
+    });
+    const chat = createLatchwayChatOpenAI({
+      latchway: createFrameworkClient(gateway),
+      feature: "assistant",
+      chatOptions: { maxRetries: 0 },
+    });
+    const results = await chat.batch(
+      ["first", "second", "third", "fourth"],
+      { maxConcurrency: 2 },
+    );
+    expect(results.map((result) => result.content)).toEqual([
+      "result:first",
+      "result:second",
+      "result:third",
+      "result:fourth",
+    ]);
+    expect(maximumActive).toBe(2);
+    expectFreshProofs(gateway, 4);
+  });
+
+  frameworkTest(framework, "FW-LC-002", async () => {
+    const gateway = new FrameworkGatewayFixture((request) => {
+      const prompt = chatPrompt(request.body);
+      return prompt === "quota" ? latchwayProblem("quota_exceeded")
+        : chatResponse(request.body, `result:${prompt}`);
+    });
+    const results = await createLatchwayChatOpenAI({
+      latchway: createFrameworkClient(gateway),
+      feature: "assistant",
+      chatOptions: { maxRetries: 0 },
+    }).batch(
+      ["first", "quota", "last"],
+      { maxConcurrency: 2 },
+      { returnExceptions: true },
+    );
+    expect(asRecord(results[0]).content).toBe("result:first");
+    expectFrameworkError(results[1], 429, "quota_exceeded");
+    expect(asRecord(results[2]).content).toBe("result:last");
+    expect(gateway.dataRequests).toHaveLength(3);
+  });
+
+  frameworkTest(framework, "FW-LC-003", async () => {
+    const gateway = new FrameworkGatewayFixture(pendingUntilAborted);
+    const controller = new AbortController();
+    const errorPromise = captureError(() => createLatchwayChatOpenAI({
+      latchway: createFrameworkClient(gateway),
+      feature: "assistant",
+      chatOptions: { maxRetries: 0 },
+    }).batch(
+      ["first", "second", "third", "fourth"],
+      { maxConcurrency: 2, signal: controller.signal },
+    ));
+    await gateway.waitForDataRequests(2);
+    controller.abort(new DOMException("batch cancelled", "AbortError"));
+    const error = await errorPromise;
+    expect(serializedError(error)).toMatch(/abort|cancel/iu);
+    expect(gateway.dataRequests).toHaveLength(2);
+    expect(gateway.dataRequests.every(({ signal }) => signal.aborted)).toBe(true);
   });
 
   afterAll(() => {
@@ -788,6 +1093,74 @@ function nestedValue(value: unknown, ...path: string[]): unknown {
   let current: unknown = value;
   for (const key of path) current = asRecord(current)[key];
   return current;
+}
+
+async function beforeDeadline<T>(promise: Promise<T>, timeoutMilliseconds = 1_000): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error("Framework stream did not produce incrementally."));
+    }, timeoutMilliseconds);
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+async function nextTextDelta(
+  iterator: AsyncIterator<Readonly<{ type: string; text?: string }>>,
+): Promise<Readonly<{ type: "text-delta"; text: string }>> {
+  for (;;) {
+    const part = await iterator.next();
+    if (part.done === true) throw new Error("Framework stream ended before a text delta.");
+    if (part.value.type === "text-delta" && typeof part.value.text === "string") {
+      return { type: "text-delta", text: part.value.text };
+    }
+  }
+}
+
+async function drain<T>(iterator: AsyncIterator<T>): Promise<void> {
+  for (;;) {
+    if ((await iterator.next()).done === true) return;
+  }
+}
+
+async function collect<T>(iterator: AsyncIterator<T>): Promise<T[]> {
+  const values: T[] = [];
+  for (;;) {
+    const part = await iterator.next();
+    if (part.done === true) return values;
+    values.push(part.value);
+  }
+}
+
+function rejectWhenAborted(signal: AbortSignal): Promise<void> {
+  return new Promise((_resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    signal.addEventListener("abort", () => {
+      reject(signal.reason);
+    }, { once: true });
+  });
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function chatPrompt(body: Readonly<Record<string, unknown>>): string {
+  if (!Array.isArray(body.messages)) throw new Error("Chat request omitted messages.");
+  const content = asRecord(body.messages.at(-1)).content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const text = content.map(asRecord).find((part) => part.type === "text")?.text;
+    if (typeof text === "string") return text;
+  }
+  throw new Error("Chat request omitted a text prompt.");
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

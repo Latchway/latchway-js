@@ -14,11 +14,13 @@ The framework suite executes the real `openai`, `ai`, `@ai-sdk/openai`, and
 `@langchain/openai` packages through their documented
 fetch/provider/underlying-client seams. The reusable catalog in
 `conformance/framework/cases.ts` requires every applicable case ID to be
-registered. Fifty framework/case combinations currently cover feature and
+registered. Sixty-two framework/case combinations currently cover feature and
 version binding, Responses, Chat, embeddings, safe headers, SSE plus final
-usage, cancellation, tools, structured output, quota/provider errors, fresh
-proofs across framework retries, safe session refresh, placeholder stripping,
-origin rejection, error redaction, and no global-fetch mutation.
+usage, cancellation, timeouts, tools, structured output, quota/provider errors,
+fresh proofs across framework retries, safe session refresh, placeholder
+stripping, origin rejection, error redaction, OpenAI response correlation,
+Vercel middleware and telemetry recording options, LangChain bounded batch execution
+and error isolation, and no global-fetch mutation.
 
 The minimum/latest workflow runs the exact experimental versions recorded in
 `conformance/framework-versions.json`; the two profiles are currently equal.

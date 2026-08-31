@@ -56,6 +56,7 @@ for (const required of [
   "npm-attestations.json",
   "npm-audit-signatures.json",
   "npm-registry-evidence-manifest.json",
+  "docs-bundle-$RELEASE_VERSION.tar.gz",
   "actions/attest-build-provenance@",
   "RELEASE_STATE",
   "NPM_CONFIG_CACHE=$RUNNER_TEMP/latchway-npm-cache",

@@ -23,8 +23,11 @@ Underlying-client injection is viable for the chat and embedding surfaces. It
 preserves LangChain messages and outputs and obtains authorization when the
 underlying client dispatches each request.
 
-## Remaining conformance
+## Follow-up conformance
 
-Streaming, live in-flight cancellation, batches, tools, structured output, provider errors,
-framework retries after rotation, minimum/latest versions, and live common
-conformance remain required before a support claim.
+The exact-version suite now covers streaming usage, in-flight and timeout
+cancellation, bounded-concurrency batches, ordered results, per-item error
+isolation, shared batch cancellation, tools, structured output, provider and
+quota errors, retries after rotation, and minimum/latest profiles. Hosted
+common conformance and exact release-image evidence remain required before a
+stronger support claim.

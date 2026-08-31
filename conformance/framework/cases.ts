@@ -8,6 +8,9 @@ export interface FrameworkCaseDescriptor {
 
 const allFrameworks = ["openai-js", "vercel-ai-sdk", "langchain-js"] as const;
 const responsesFrameworks = ["openai-js", "vercel-ai-sdk"] as const;
+const openAIFramework = ["openai-js"] as const;
+const vercelAIFramework = ["vercel-ai-sdk"] as const;
+const langChainFramework = ["langchain-js"] as const;
 
 /**
  * Stable IDs for the local framework contract. The IDs are intentionally
@@ -22,6 +25,7 @@ export const FRAMEWORK_CASES = [
   frameworkCase("FW-REQ-004", "preserves safe caller headers and request metadata", allFrameworks),
   frameworkCase("FW-REQ-005", "delivers streaming bytes and final usage", allFrameworks),
   frameworkCase("FW-REQ-006", "propagates cancellation to the authenticated request", allFrameworks),
+  frameworkCase("FW-REQ-007", "propagates framework timeouts to the authenticated request", allFrameworks),
   frameworkCase("FW-BEH-001", "preserves tool definitions", allFrameworks),
   frameworkCase("FW-BEH-002", "preserves and parses structured output", allFrameworks),
   frameworkCase("FW-BEH-003", "maps quota denial with the Latchway request ID", allFrameworks),
@@ -32,6 +36,15 @@ export const FRAMEWORK_CASES = [
   frameworkCase("FW-SEC-002", "rejects a mismatched origin and undeclared path before session work", allFrameworks),
   frameworkCase("FW-SEC-003", "does not expose credentials in framework errors", allFrameworks),
   frameworkCase("FW-SEC-004", "does not mutate or fall back to global fetch", allFrameworks),
+  frameworkCase("FW-OAI-001", "preserves Chat Completions tools and JSON schema output", openAIFramework),
+  frameworkCase("FW-OAI-002", "exposes Latchway success correlation through the official client", openAIFramework),
+  frameworkCase("FW-VAI-001", "composes AI SDK middleware around generate and stream calls", vercelAIFramework),
+  frameworkCase("FW-VAI-002", "delivers AI SDK stream chunks before completion", vercelAIFramework),
+  frameworkCase("FW-VAI-003", "propagates in-flight AI SDK stream cancellation", vercelAIFramework),
+  frameworkCase("FW-VAI-004", "preserves AI SDK telemetry lifecycle and recording flags", vercelAIFramework),
+  frameworkCase("FW-LC-001", "bounds LangChain batch concurrency and preserves result order", langChainFramework),
+  frameworkCase("FW-LC-002", "isolates LangChain batch errors when requested", langChainFramework),
+  frameworkCase("FW-LC-003", "cancels active LangChain batch requests", langChainFramework),
 ] as const satisfies readonly FrameworkCaseDescriptor[];
 
 export type FrameworkCaseID =
@@ -42,6 +55,7 @@ export type FrameworkCaseID =
   | "FW-REQ-004"
   | "FW-REQ-005"
   | "FW-REQ-006"
+  | "FW-REQ-007"
   | "FW-BEH-001"
   | "FW-BEH-002"
   | "FW-BEH-003"
@@ -51,7 +65,16 @@ export type FrameworkCaseID =
   | "FW-SEC-001"
   | "FW-SEC-002"
   | "FW-SEC-003"
-  | "FW-SEC-004";
+  | "FW-SEC-004"
+  | "FW-OAI-001"
+  | "FW-OAI-002"
+  | "FW-VAI-001"
+  | "FW-VAI-002"
+  | "FW-VAI-003"
+  | "FW-VAI-004"
+  | "FW-LC-001"
+  | "FW-LC-002"
+  | "FW-LC-003";
 
 export function expectedFrameworkCases(framework: JavaScriptFrameworkID): readonly FrameworkCaseDescriptor[] {
   return FRAMEWORK_CASES.filter((candidate) => candidate.appliesTo.includes(framework));
