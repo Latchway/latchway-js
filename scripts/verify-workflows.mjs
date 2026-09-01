@@ -38,6 +38,8 @@ for (const required of [
   "python3 scripts/verify-release-promotion.py",
   "id-token: write",
   "environment: npm",
+  "environment: release-administration",
+  "environment: github-release",
   "persist-credentials: false",
   "\"$LATCHWAY_NPM_CLI\" publish \"$archive\" --provenance --access public",
   "Prepare exact trusted-publishing npm CLI without credentials",
@@ -49,7 +51,8 @@ for (const required of [
   "NPM_CLI_SHA512: ee22b335fcbc95662cdf3ab8a053daf045d9cf9c6df6040d28965abb707512b2c16fa6c5eec049d34c74f78f390cebd14f697919eadb97756564d4f9eccc4954",
   "node scripts/verify-release-tag.mjs",
   "node scripts/verify-published.mjs",
-  "Preflight immutable release and create draft with fixed API calls",
+  "Verify immutable-release administration policy with the narrow token",
+  "Create or verify GitHub draft with fixed API calls",
   "Reconcile, publish, and verify the immutable release with the fixed handoff",
   "npm-release-adoption-",
   "npm-$package_id-registry-version.json",
@@ -146,13 +149,84 @@ for (const forbidden of [
   if (release.includes(forbidden)) throw new Error(`release.yml must not contain ${forbidden}.`);
 }
 const jobHeaders = [...release.matchAll(/^ {2}([a-z0-9_-]+):$/gmu)];
+const expectedReleaseEnvironments = new Map([
+  ["authorize-release", "release-administration"],
+  ["github-draft", "github-release"],
+  ["npm-publish", "npm"],
+  ["publish", "npm"],
+  ["github-release-policy", "release-administration"],
+  ["github-release", "github-release"],
+]);
+const releaseJobs = new Map();
 const oidcJobs = [];
 for (const [index, header] of jobHeaders.entries()) {
   const end = jobHeaders[index + 1]?.index ?? release.length;
   const block = release.slice(header.index, end);
+  releaseJobs.set(header[1], block);
+  const environmentMatches = [...block.matchAll(/^ {4}environment: ([a-z0-9-]+)$/gmu)];
+  const expectedEnvironment = expectedReleaseEnvironments.get(header[1]);
+  if (expectedEnvironment === undefined) {
+    if (environmentMatches.length !== 0) {
+      throw new Error(`${header[1]} must not receive protected release-environment authority.`);
+    }
+  } else if (environmentMatches.length !== 1 || environmentMatches[0]?.[1] !== expectedEnvironment) {
+    throw new Error(`${header[1]} must use only the ${expectedEnvironment} environment.`);
+  }
   if (block.includes("id-token: write") || block.includes("attestations: write")) {
     oidcJobs.push([header[1], block]);
   }
+}
+const expectedPolicySentinels = new Map([
+  ["authorize-release", "latchway-release-controls-v1:latchway-js:release-administration"],
+  ["github-draft", "latchway-release-controls-v1:latchway-js:github-release"],
+  ["npm-publish", "latchway-release-controls-v1:latchway-js:npm"],
+  ["publish", "latchway-release-controls-v1:latchway-js:npm"],
+  ["github-release-policy", "latchway-release-controls-v1:latchway-js:release-administration"],
+  ["github-release", "latchway-release-controls-v1:latchway-js:github-release"],
+]);
+for (const [jobName, policyId] of expectedPolicySentinels) {
+  const block = releaseJobs.get(jobName);
+  if (block === undefined) throw new Error(`release.yml omitted protected job ${jobName}.`);
+  const environment = expectedReleaseEnvironments.get(jobName);
+  const sentinelPrefix = `    steps:\n      - name: Require exact ${environment} environment policy sentinel\n`
+    + "        shell: bash\n"
+    + "        env:\n"
+    + `          EXPECTED_POLICY_ID: ${policyId}\n`
+    + "          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}\n"
+    + "        run: |\n"
+    + "          set -Eeuo pipefail\n"
+    + '          test "$OBSERVED_POLICY_ID" = "$EXPECTED_POLICY_ID"\n';
+  if (!block.includes(sentinelPrefix)) {
+    throw new Error(`${jobName} must begin with its exact environment-scoped release-control sentinel.`);
+  }
+  const stepsStart = block.indexOf("    steps:\n");
+  if (stepsStart < 0 || block.indexOf(sentinelPrefix) !== stepsStart) {
+    throw new Error(`${jobName} must run its release-control sentinel as the first step.`);
+  }
+  const sentinelEnd = stepsStart + sentinelPrefix.length;
+  for (const authority of ["secrets.", "secrets[", "github.token",
+    "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"]) {
+    const authorityIndex = block.indexOf(authority);
+    if (authorityIndex >= 0 && authorityIndex < sentinelEnd) {
+      throw new Error(`${jobName} must not resolve ${authority} before its policy sentinel.`);
+    }
+  }
+  if (/^ {4}(?:container|services):/mu.test(block)) {
+    throw new Error(`${jobName} must not start a job container or service before its policy sentinel.`);
+  }
+  const nextStep = block.indexOf("      - ", stepsStart + sentinelPrefix.length);
+  const sentinelBlock = block.slice(stepsStart, nextStep < 0 ? block.length : nextStep);
+  for (const forbidden of ["uses:", "secrets.", "secrets[", "github.token", "id-token:", "GH_TOKEN"] ) {
+    if (sentinelBlock.includes(forbidden)) {
+      throw new Error(`${jobName} sentinel must not access authority through ${forbidden}.`);
+    }
+  }
+}
+if ((release.match(/\$\{\{\s*vars\.LATCHWAY_RELEASE_CONTROL_POLICY_ID\s*\}\}/gu) ?? []).length
+    !== expectedPolicySentinels.size
+  || /vars\s*\[\s*["']LATCHWAY_RELEASE_CONTROL_POLICY_ID["']\s*\]/u.test(release)
+  || /(?:env|github|secrets)\.LATCHWAY_RELEASE_CONTROL_POLICY_ID/u.test(release)) {
+  throw new Error("Protected jobs must consume only the exact environment policy variable expression.");
 }
 if (oidcJobs.length === 0) throw new Error("release.yml must retain fixed OIDC publication jobs.");
 for (const [name, block] of oidcJobs) {
@@ -183,14 +257,18 @@ for (const [name, block] of oidcJobs) {
   }
 }
 const trustedNpmStart = release.indexOf("\n  trusted-npm-cli:\n");
+const authorizeReleaseStart = release.indexOf("\n  authorize-release:\n");
 const draftStart = release.indexOf("\n  github-draft:\n");
 const npmPublishStart = release.indexOf("\n  npm-publish:\n");
 const publishStart = release.indexOf("\n  publish:\n");
-if (trustedNpmStart < 0 || draftStart <= trustedNpmStart || npmPublishStart <= draftStart
+if (trustedNpmStart < 0 || authorizeReleaseStart <= trustedNpmStart
+  || draftStart <= authorizeReleaseStart || npmPublishStart <= draftStart
   || publishStart <= npmPublishStart) {
   throw new Error("release.yml must prepare the trusted npm CLI before the OIDC publication job.");
 }
-const trustedNpmJob = release.slice(trustedNpmStart, draftStart);
+const trustedNpmJob = release.slice(trustedNpmStart, authorizeReleaseStart);
+const authorizeReleaseJob = release.slice(authorizeReleaseStart, draftStart);
+const draftJob = release.slice(draftStart, npmPublishStart);
 const npmPublishJob = release.slice(npmPublishStart, publishStart);
 for (const marker of [
   "permissions: {}",
@@ -213,6 +291,75 @@ for (const forbidden of [
 if (/(?:^|\n)\s*npx\s/u.test(trustedNpmJob)) {
   throw new Error("trusted-npm-cli must not execute npx.");
 }
+for (const marker of [
+  "environment: release-administration",
+  "permissions: {}",
+  "needs: [promote, verify, trusted-npm-cli]",
+  "LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN",
+  ".enforced_by_owner == true",
+  "latchway_github_immutable_release_policy_lease",
+  '--arg phase "draft-and-npm-publication"',
+  "prepublication-policy-%s-%s",
+  "evidence_sha256: ${{ steps.policy.outputs.evidence_sha256 }}",
+]) {
+  if (!authorizeReleaseJob.includes(marker)) {
+    throw new Error(`authorize-release is missing the isolated administration control: ${marker}`);
+  }
+}
+for (const forbidden of [
+  "actions/checkout", "scripts/", "github.token", "contents: write", "id-token:",
+  "attestations:", "RELEASE_TOKEN",
+]) {
+  if (authorizeReleaseJob.includes(forbidden)) {
+    throw new Error(`authorize-release must not contain ${forbidden}.`);
+  }
+}
+for (const marker of [
+  "environment: github-release",
+  "needs: [promote, verify, authorize-release]",
+  "actions: read",
+  "contents: write",
+  "RELEASE_TOKEN: ${{ github.token }}",
+  "Create or verify GitHub draft with fixed API calls",
+  "Download attempt-bound pre-publication policy lease",
+  "Validate exact pre-publication policy lease before release inspection",
+]) {
+  if (!draftJob.includes(marker)) throw new Error(`github-draft is missing ${marker}.`);
+}
+if (draftJob.includes("LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN")
+  || draftJob.includes("environment: npm")
+  || draftJob.includes("environment: release-administration")) {
+  throw new Error("github-draft must receive only GitHub release authority after administration approval.");
+}
+const draftLeaseDownload = draftJob.indexOf("Download attempt-bound pre-publication policy lease");
+const draftLeaseValidation = draftJob.indexOf(
+  "Validate exact pre-publication policy lease before release inspection",
+);
+const draftInspection = draftJob.indexOf("Create or verify GitHub draft with fixed API calls");
+const draftMutation = draftJob.indexOf('gh release create "$RELEASE_TAG"');
+const draftPolicyRecheck = draftJob.lastIndexOf(
+  'policy_root="$RUNNER_TEMP/prepublication-policy"',
+  draftMutation,
+);
+if (draftLeaseDownload < 0 || draftLeaseValidation <= draftLeaseDownload
+  || draftInspection <= draftLeaseValidation || draftMutation <= draftInspection
+  || draftPolicyRecheck <= draftInspection || draftPolicyRecheck >= draftMutation) {
+  throw new Error("github-draft must validate and freshly recheck its lease before draft mutation.");
+}
+for (const marker of [
+  '(keys | sort) == ["expires_at", "issued_at", "kind", "phase", "repository",',
+  '.kind == "latchway_github_immutable_release_policy_lease"',
+  '.repository == $repository and .phase == $phase',
+  '.run_id == $run_id and .run_attempt == $run_attempt',
+  '(.expires_at - .issued_at) == 600',
+  '.issued_at <= $now and $now < .expires_at',
+  '.settings.enabled == true and .settings.enforced_by_owner == true',
+  'printf \'%s  %s\\n\' "$POLICY_EVIDENCE_SHA256" "$policy" | sha256sum --check --strict',
+]) {
+  if ((draftJob.split(marker).length - 1) < 2 || (npmPublishJob.split(marker).length - 1) < 2) {
+    throw new Error(`Draft and npm publication must each validate and recheck lease control ${marker}.`);
+  }
+}
 const publishJob = release.slice(publishStart, release.indexOf("\n  github-release-policy:\n"));
 for (const marker of [
   "name: Generate and stage npm registry evidence without OIDC",
@@ -230,7 +377,10 @@ for (const forbidden of [
   }
 }
 for (const marker of [
-  "needs: [promote, verify, trusted-npm-cli, github-draft]",
+  "needs: [promote, verify, trusted-npm-cli, authorize-release, github-draft]",
+  "environment: npm",
+  "Download attempt-bound pre-publication policy lease",
+  "Validate exact pre-publication policy lease before publication setup",
   "Verify exact npm CLI closure before extraction or execution",
   "closure=(\"$root\"/*)",
   "sha512sum --check --strict",
@@ -245,6 +395,9 @@ for (const marker of [
 ]) {
   if (!npmPublishJob.includes(marker)) throw new Error(`npm-publish is missing ${marker}.`);
 }
+if (!publishJob.includes("environment: npm")) {
+  throw new Error("tokenless registry-evidence generation must remain protected by the npm environment.");
+}
 const cliClosure = npmPublishJob.indexOf("Verify exact npm CLI closure before extraction or execution");
 const cliExtraction = npmPublishJob.indexOf("tar --extract --gzip --file \"$archive\"");
 const cliExecution = npmPublishJob.indexOf("test \"$(\"$cli\" --version)\"");
@@ -258,10 +411,26 @@ if (npmPublishJob.includes("npm install") || npmPublishJob.includes("npm exec")
 const registryPreflight = npmPublishJob.indexOf("publish_required=()");
 const preflightCompletion = npmPublishJob.indexOf("publish_state='{}'", registryPreflight);
 const registryMutation = npmPublishJob.indexOf('"$LATCHWAY_NPM_CLI" publish "$archive"');
+const registryPolicyRecheck = npmPublishJob.lastIndexOf(
+  'policy_root="$RUNNER_TEMP/prepublication-policy"',
+  registryMutation,
+);
+const npmAttestationPolicy = npmPublishJob.indexOf(
+  "Recheck fresh pre-publication policy before npm provenance attestation",
+);
+const npmAttestation = npmPublishJob.indexOf(
+  "Attest reviewed npm package set and reproducibility inputs without candidate checkout",
+);
+const npmPolicyNextStep = npmPublishJob.indexOf("\n      - ", npmAttestationPolicy + 1);
 if (
   registryPreflight < 0
   || preflightCompletion <= registryPreflight
   || registryMutation <= preflightCompletion
+  || registryPolicyRecheck <= preflightCompletion
+  || registryPolicyRecheck >= registryMutation
+  || npmAttestationPolicy < 0
+  || npmAttestation <= npmAttestationPolicy
+  || npmPolicyNextStep + "\n      - name: ".length !== npmAttestation
   || (npmPublishJob.slice(registryPreflight).match(
     /for index in "\$\{!package_names\[@\]\}"; do/gu,
   ) ?? []).length !== 2
@@ -279,7 +448,9 @@ if (releasePolicyStart < 0 || releaseStart <= releasePolicyStart) {
   throw new Error("release.yml must isolate the final immutable-release policy check.");
 }
 const releasePolicyJob = release.slice(releasePolicyStart, releaseStart);
-if (!releasePolicyJob.includes("LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN")
+if (!releasePolicyJob.includes("environment: release-administration")
+  || !releasePolicyJob.includes("permissions: {}")
+  || !releasePolicyJob.includes("LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN")
   || releasePolicyJob.includes("id-token: write")
   || releasePolicyJob.includes("attestations: write")
   || releasePolicyJob.includes("actions/checkout")
@@ -300,10 +471,33 @@ for (const marker of [
   }
 }
 const releaseJob = release.slice(releaseStart);
+if (!releaseJob.includes("environment: github-release")
+  || releaseJob.includes("environment: npm")
+  || releaseJob.includes("environment: release-administration")) {
+  throw new Error("The final GitHub release must use only the github-release environment.");
+}
 const closureValidation = releaseJob.indexOf("Validate exact JavaScript asset closure before OIDC attestation");
+const finalPolicyValidation = releaseJob.indexOf("Validate fresh final policy before OIDC attestation");
 const releaseAttestation = releaseJob.indexOf("Attest exact retained registry and release evidence without candidate checkout");
-if (closureValidation < 0 || releaseAttestation <= closureValidation) {
-  throw new Error("The exact JavaScript release asset closure must be validated before attestation.");
+const finalPolicyNextStep = releaseJob.indexOf("\n      - ", finalPolicyValidation + 1);
+if (closureValidation < 0 || finalPolicyValidation <= closureValidation
+  || releaseAttestation <= finalPolicyValidation
+  || finalPolicyNextStep + "\n      - name: ".length !== releaseAttestation) {
+  throw new Error("The exact asset closure and fresh final policy must be validated immediately before attestation.");
+}
+for (const marker of [
+  'test -z "$(find "$policy_root" -mindepth 1 ! -path "$policy" -print -quit)"',
+  '(keys | sort) == ["expires_at", "issued_at", "kind", "repository",',
+  '.kind == "latchway_github_immutable_release_policy"',
+  '.repository == $repository and',
+  '.run_id == $run_id and .run_attempt == $run_attempt',
+  '(.expires_at - .issued_at) == 600',
+  '.issued_at <= $now and $now < .expires_at',
+  '.settings.enabled == true and .settings.enforced_by_owner == true',
+]) {
+  if (!releaseJob.slice(finalPolicyValidation, releaseAttestation).includes(marker)) {
+    throw new Error(`The pre-attestation final-policy check is missing ${marker}.`);
+  }
 }
 for (const marker of [
   "test \"${#expected[@]}\" = 35",
@@ -353,16 +547,45 @@ if (releaseJob.includes(
 )) {
   throw new Error("github-release must not reinterpret producer adoption evidence as the consumer retry attempt.");
 }
-const secretReferences = [...release.matchAll(/\$\{\{\s*secrets\.([A-Z0-9_]+)\s*\}\}/gu)]
-  .map((match) => match[1]);
-if (secretReferences.length !== 2 || secretReferences.some((name) =>
-  name !== "LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN")) {
-  throw new Error("release.yml may use only the protected immutable-release settings credential.");
+if (/secrets\s*\[/u.test(release)) {
+  throw new Error("release.yml must not use bracket syntax for secret references.");
+}
+const expectedSecretReferences = new Map([
+  ["authorize-release", ["LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN"]],
+  ["github-release-policy", ["LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN"]],
+]);
+const expectedSecretExpressions = new Map([
+  ["authorize-release", ["${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}"]],
+  ["github-release-policy", ["${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}"]],
+]);
+for (const [jobName, block] of releaseJobs) {
+  const observed = [...block.matchAll(/secrets\.([A-Z][A-Z0-9_]*)/gu)]
+    .map((match) => match[1]);
+  const expected = expectedSecretReferences.get(jobName) ?? [];
+  if (JSON.stringify(observed) !== JSON.stringify(expected)) {
+    throw new Error(`${jobName} has an unexpected secret reference allowlist: ${observed.join(", ")}.`);
+  }
+  const observedExpressions = [...block.matchAll(/\$\{\{[^}\n]*secrets[^}\n]*\}\}/gu)]
+    .map((match) => match[0]);
+  const expectedExpressions = expectedSecretExpressions.get(jobName) ?? [];
+  if (JSON.stringify(observedExpressions) !== JSON.stringify(expectedExpressions)) {
+    throw new Error(`${jobName} has an unexpected secret expression or credential fallback.`);
+  }
 }
 if (!releaseDocumentation.includes("repository_dispatch")
   || !releaseDocumentation.includes("exclusive writer")
   || !releaseDocumentation.includes("pre-publish draft gate can validate only")
   || !releaseDocumentation.includes("enforced_by_owner: true")
+  || !releaseDocumentation.includes("`release-administration`")
+  || !releaseDocumentation.includes("`github-release`")
+  || !releaseDocumentation.includes("Do not duplicate")
+  || !releaseDocumentation.includes("`prevent_self_review: true`")
+  || !releaseDocumentation.includes("administrator bypass")
+  || !releaseDocumentation.includes("Do not define that variable at repository or organization scope")
+  || !releaseDocumentation.includes("latchway-release-controls-v1:latchway-js:release-administration")
+  || !releaseDocumentation.includes("latchway-release-controls-v1:latchway-js:github-release")
+  || !releaseDocumentation.includes("latchway-release-controls-v1:latchway-js:npm")
+  || !releaseDocumentation.includes("exactly 600 seconds")
   || !releaseDocumentation.includes("Re-run all jobs")
   || !releaseDocumentation.toLowerCase().includes("tag manually")
   || /\n(?:git tag|git push)\s/u.test(releaseDocumentation)) {

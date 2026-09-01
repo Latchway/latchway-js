@@ -15,37 +15,69 @@ Before the first automated release, configure these external controls:
 1. Install an active ruleset for `refs/tags/v*` that allows tag creation only
    through the GitHub Actions integration used by `release.yml` and denies tag
    updates, deletion, and non-fast-forward changes. Operators and administrators
-   must not create, move, or delete release tags manually. Protect the `npm`
-   GitHub environment and require an independent reviewer. Enforce immutable
-   releases for this repository from the owning organization so the response is
-   exactly
-   `enabled: true` and `enforced_by_owner: true`.
-   Store a fine-grained `LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN` in that protected
-   environment with read-only repository Administration permission. The workflow
-   uses it only to require GitHub's exact immutable-release setting response
-   before any draft or asset mutation. The final policy handoff is bound to the
-   exact workflow run and attempt and expires after at most 10 minutes.
-2. In each of the four npm package settings, configure the GitHub Actions
+   must not create, move, or delete release tags manually.
+2. Create three protected GitHub environments, restrict deployments to `main`
+   only, require an independent reviewer for each one, set
+   `prevent_self_review: true`, and
+   disallow administrator bypass wherever the repository plan exposes that
+   control. Each environment must define its own environment-scoped variable
+   named `LATCHWAY_RELEASE_CONTROL_POLICY_ID` with the exact value below:
+   - `release-administration`:
+     `latchway-release-controls-v1:latchway-js:release-administration`
+   - `npm`: `latchway-release-controls-v1:latchway-js:npm`
+   - `github-release`:
+     `latchway-release-controls-v1:latchway-js:github-release`
+
+   Do not define that variable at repository or organization scope. GitHub
+   variable precedence can otherwise make an accidentally missing environment
+   variable fall back to a broader value. The release-control reconciler must
+   verify the variable through each environment's variables endpoint before a
+   release is dispatched. Every protected job checks its unique literal value
+   as its first step, before any step uses an action, resolves a credential or
+   token, requests an OIDC token, or performs a mutation.
+
+   The environment authority inventories are exact:
+   - `release-administration` contains only a fine-grained
+     `LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN` with read-only repository
+     Administration permission. Two fresh no-checkout jobs use it only to require
+     GitHub's exact immutable-release response, `enabled: true` and
+     `enforced_by_owner: true`, before the draft and again before final release.
+     The pre-publication and final policy handoffs are bound to the exact
+     workflow run and attempt and expire after exactly 600 seconds.
+   - `npm` contains no registry token. It protects only trusted npm publication
+     and the resulting registry-evidence job; it has no environment secrets.
+   - `github-release` contains no custom credential. It protects draft mutation
+     and the final GitHub-token/OIDC release publication jobs; it has no
+     environment secrets.
+
+   Do not duplicate an environment secret into another environment. In
+   particular, the administration token must never enter the `npm` or
+   `github-release` jobs, and GitHub release authority must never enter an npm
+   job. The same privileged secret name must not exist at repository or
+   organization scope: GitHub would otherwise fall back to that broader value if
+   the intended environment secret were removed. The release-control reconciler
+   checks secret names and visibility only; it never reads or writes secret
+   values.
+3. In each of the four npm package settings, configure the GitHub Actions
    trusted publisher for organization `Latchway`, repository `latchway-js`,
    workflow file `release.yml`, environment `npm`, and the `npm publish` action.
-3. Disallow package-token publication after trusted publishing is working.
+4. Disallow package-token publication after trusted publishing is working.
    Never add `NPM_TOKEN`, `NODE_AUTH_TOKEN`, or an npm auth token to this
    repository or workflow.
-4. Make `Latchway/latchway-js` public before publication and confirm the public
+5. Make `Latchway/latchway-js` public before publication and confirm the public
    package repository URL is exactly
    `https://github.com/Latchway/latchway-js`. Required npm provenance is not
    generated from a private source repository, so private visibility is not a
    supported stable-publication state.
-5. If the core repository remains private, configure
-   `LATCHWAY_SIBLING_REPOSITORIES_READ_TOKEN` as a fine-grained Contents: read
-   credential scoped to `Latchway/latchway`. It authenticates only the pinned
-   promotion asset download and attestation verification. Public core
-   repositories need no secret and fall back to the job token.
-6. Make `release.yml` the exclusive writer for generated SDK tags and GitHub
+6. Keep `Latchway/latchway` public. The promotion-authentication job uses only
+   the current repository's built-in job token to download and verify the public
+   core release evidence; no sibling-repository credential is supported.
+7. Make `release.yml` the exclusive writer for generated SDK tags and GitHub
    release drafts; do not upload, replace, or remove draft assets manually. The
    per-commit workflow concurrency group prevents overlapping dispatches for the
-   same promoted commit, and the protected `npm` environment limits who may
-   write. The pre-publish draft gate can validate only release
+   same promoted commit. The protected `github-release` environment limits who
+   may mutate the draft, while `npm` separately limits registry publication. The
+   pre-publish draft gate can validate only release
    metadata and allowed asset-name shape because registry evidence does not exist
    until publication verification completes. The final no-checkout reconciler
    subsequently downloads, bounds, parses, byte-binds, and attests every retained
@@ -178,10 +210,11 @@ npm trust list @latchway/react-native --json
 npm logout --registry=https://registry.npmjs.org/
 ```
 
-Retain the protected GitHub `npm` environments and required reviewers, require
-two-factor authentication for package settings, and disallow token publication
-after the trusted publishers work. Neither `NPM_TOKEN` nor `NODE_AUTH_TOKEN`
-belongs in a repository, workflow, artifact, or release environment.
+Retain all three protected GitHub environments, their `main` deployment
+restriction, and their required reviewers. Require two-factor authentication for
+package settings and disallow token publication after the trusted publishers
+work. Neither `NPM_TOKEN` nor `NODE_AUTH_TOKEN` belongs in a repository,
+workflow, artifact, or release environment.
 
 ## Candidate preparation
 
@@ -232,15 +265,25 @@ installation or publication. The release workflow then:
    and npm integrity
    `sha512-7iKzNfy8lWYs3zq4oFPa8EXZz5xt9gQNKJZau3B1ErLBb6bF7sBJ00x09485DOvRT2l5Gerbl3VlZNT57MxJVA==`
    before handing that tarball to the protected job as inert data.
-3. Re-verifies the package artifact and local tag, requires the installed GitHub CLI to
-   support JSON release and asset attestation verification, and resolves the
-   remote annotated tag object to the exact promoted commit immediately before
-   draft creation. Before extraction or execution, the OIDC job independently
-   rechecks the exact npm CLI handoff name-only closure, byte size, SHA-256,
-   SHA-512, integrity, entry paths and types, and unpacked size. It invokes the
-   verified CLI directly for `publish --provenance --access public`; it never
-   runs `npm install`, `npm exec`, or `npx`. It has `id-token: write` and no
-   long-lived npm credential. Before the first mutation it preflights all four
+3. After both the reviewed candidate and fixed npm CLI are ready, runs a fresh,
+   no-checkout, no-OIDC `release-administration` job that verifies immutable
+   releases with the narrow administration token. It emits a strict JSON policy
+   lease and SHA-256 bound to this repository, phase, workflow run, and attempt,
+   with a 600-second lifetime. A separately
+   protected `github-release` job receives no administration credential, requires
+   the installed GitHub CLI to support JSON release and asset attestation
+   verification, validates the lease's exact one-file closure and hash, resolves
+   the remote annotated tag object to the exact promoted commit, and rechecks the
+   lease immediately before creating a draft. The npm job validates the same
+   lease before setup, rechecks it immediately before the npm provenance
+   attestation, and rechecks it again immediately before each registry mutation,
+   then re-verifies the
+   package artifact and local tag. Before extraction or execution, that OIDC job
+   independently rechecks the exact npm CLI handoff name-only closure, byte size,
+   SHA-256, SHA-512, integrity, entry paths and types, and unpacked size. It
+   invokes the verified CLI directly for `publish --provenance --access public`;
+   it never runs `npm install`, `npm exec`, or `npx`. It has `id-token: write` and
+   no long-lived npm credential. Before the first mutation it preflights all four
    coordinates and rejects any conflicting existing metadata or bytes.
    Publication is then fixed in dependency order: client, OpenAI, Vercel AI,
    then LangChain. A rerun adopts an existing coordinate only
@@ -256,10 +299,12 @@ installation or publication. The release workflow then:
    responses, views, Sigstore bundles, and signature audits are retained and
    bound by the aggregate `npm-registry-evidence-manifest.json`.
 5. Creates or resumes a draft only after the protected administration read proves
-   immutable releases are enabled. A second fresh no-checkout job rechecks that
-   policy with the administration credential but has no OIDC permission; the
-   final OIDC job receives no administration credential and validates the exact
-   local asset closure before asking GitHub to attest it. It then reconciles the
+   immutable releases are enabled. A second fresh no-checkout
+   `release-administration` job rechecks that policy with the administration
+   credential but has no OIDC permission; the final `github-release` OIDC job
+   receives no administration credential, validates the exact local asset
+   closure, and performs a complete fresh lease validation immediately before
+   asking GitHub to attest it. It then reconciles the
    draft after all registry checks pass. Existing
    assets are downloaded and compared byte for byte, only missing assets may be
    attached, and no asset is ever overwritten. A final release must already

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -312,8 +313,10 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
   const artifactVerifier = await readFile(new URL("./verify-release-artifact.mjs", import.meta.url), "utf8");
   const registryPreflightScript = await readFile(new URL("./check-registry-state.mjs", import.meta.url), "utf8");
   const releaseUtilities = await readFile(new URL("./release-utils.mjs", import.meta.url), "utf8");
-  const draft = workflow.indexOf("Preflight immutable release and create draft with fixed API calls");
-  const cliCapability = workflow.indexOf("version_line=$(gh version | head -n 1)");
+  const authorizeRelease = workflow.indexOf(
+    "Verify immutable-release administration policy with the narrow token",
+  );
+  const draft = workflow.indexOf("Create or verify GitHub draft with fixed API calls");
   const npmPublish = workflow.indexOf('"$LATCHWAY_NPM_CLI" publish "$archive"');
   const registryVerify = workflow.indexOf("node scripts/verify-published.mjs");
   const assetClosure = workflow.indexOf(
@@ -322,12 +325,16 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
   const evidenceAttestation = workflow.indexOf(
     "Attest exact retained registry and release evidence without candidate checkout",
   );
+  const finalPolicyValidation = workflow.indexOf(
+    "Validate fresh final policy before OIDC attestation",
+  );
   const githubPublish = workflow.indexOf(
     "Reconcile, publish, and verify the immutable release with the fixed handoff",
   );
-  assert.ok(cliCapability >= 0 && cliCapability < draft && draft < npmPublish);
+  assert.ok(authorizeRelease >= 0 && authorizeRelease < draft && draft < npmPublish);
   assert.ok(npmPublish < registryVerify && registryVerify < assetClosure
-    && assetClosure < evidenceAttestation && evidenceAttestation < githubPublish);
+    && assetClosure < finalPolicyValidation && finalPolicyValidation < evidenceAttestation
+    && evidenceAttestation < githubPublish);
   for (const asset of [
     "docs-bundle-$RELEASE_VERSION.tar.gz",
     "dependency-vulnerability-scan.json",
@@ -373,7 +380,15 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
     /NPM_CLI_INTEGRITY: sha512-7iKzNfy8lWYs3zq4oFPa8EXZz5xt9gQNKJZau3B1ErLBb6bF7sBJ00x09485DOvRT2l5Gerbl3VlZNT57MxJVA==/u);
   const trustedNpmJob = workflow.slice(
     workflow.indexOf("\n  trusted-npm-cli:\n"),
+    workflow.indexOf("\n  authorize-release:\n"),
+  );
+  const authorizeReleaseJob = workflow.slice(
+    workflow.indexOf("\n  authorize-release:\n"),
     workflow.indexOf("\n  github-draft:\n"),
+  );
+  const draftJob = workflow.slice(
+    workflow.indexOf("\n  github-draft:\n"),
+    workflow.indexOf("\n  npm-publish:\n"),
   );
   const npmPublishJob = workflow.slice(
     workflow.indexOf("\n  npm-publish:\n"),
@@ -385,7 +400,8 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
   assert.doesNotMatch(trustedNpmJob,
     /actions\/checkout|secrets\.|github\.token|id-token:|attestations:|npm install|npm exec/u);
   assert.doesNotMatch(trustedNpmJob, /(?:^|\n)\s*npx\s/u);
-  assert.match(npmPublishJob, /needs: \[promote, verify, trusted-npm-cli, github-draft\]/u);
+  assert.match(npmPublishJob,
+    /needs: \[promote, verify, trusted-npm-cli, authorize-release, github-draft\]/u);
   assert.match(npmPublishJob, /Verify exact npm CLI closure before extraction or execution/u);
   assert.match(npmPublishJob,
     /package_names=\('@latchway\/client' '@latchway\/openai' '@latchway\/vercel-ai' '@latchway\/langchain'\)/u);
@@ -417,7 +433,51 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
     workflow.indexOf("\n  github-release:\n"),
   );
   const releaseJob = workflow.slice(workflow.indexOf("\n  github-release:\n"));
+  assert.match(authorizeReleaseJob, /environment: release-administration/u);
+  assert.match(authorizeReleaseJob, /permissions: \{\}/u);
+  assert.match(authorizeReleaseJob, /needs: \[promote, verify, trusted-npm-cli\]/u);
+  assert.match(authorizeReleaseJob, /LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN/u);
+  assert.match(authorizeReleaseJob, /\.enforced_by_owner == true/u);
+  assert.match(authorizeReleaseJob, /latchway_github_immutable_release_policy_lease/u);
+  assert.match(authorizeReleaseJob, /prepublication-policy-%s-%s/u);
+  assert.doesNotMatch(authorizeReleaseJob,
+    /actions\/checkout|scripts\/|github\.token|contents: write|id-token:|attestations:|RELEASE_TOKEN/u);
+  assert.match(draftJob, /environment: github-release/u);
+  assert.match(draftJob, /needs: \[promote, verify, authorize-release\]/u);
+  assert.match(draftJob, /RELEASE_TOKEN: \$\{\{ github\.token \}\}/u);
+  assert.match(draftJob, /Validate exact pre-publication policy lease before release inspection/u);
+  assert.doesNotMatch(draftJob,
+    /LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN|environment: npm|environment: release-administration/u);
+  assert.match(npmPublishJob, /environment: npm/u);
+  assert.match(npmPublishJob, /Validate exact pre-publication policy lease before publication setup/u);
+  const draftLeaseValidation = draftJob.indexOf(
+    "Validate exact pre-publication policy lease before release inspection",
+  );
+  const draftMutation = draftJob.indexOf('gh release create "$RELEASE_TAG"');
+  const draftLeaseRecheck = draftJob.lastIndexOf(
+    'policy_root="$RUNNER_TEMP/prepublication-policy"',
+    draftMutation,
+  );
+  assert.ok(draftLeaseValidation >= 0 && draftLeaseRecheck > draftLeaseValidation
+    && draftLeaseRecheck < draftMutation);
+  const npmMutation = npmPublishJob.indexOf('"$LATCHWAY_NPM_CLI" publish "$archive"');
+  const npmLeaseRecheck = npmPublishJob.lastIndexOf(
+    'policy_root="$RUNNER_TEMP/prepublication-policy"',
+    npmMutation,
+  );
+  assert.ok(npmLeaseRecheck > preflightCompletion && npmLeaseRecheck < npmMutation);
+  const npmAttestationPolicy = npmPublishJob.indexOf(
+    "Recheck fresh pre-publication policy before npm provenance attestation",
+  );
+  const npmAttestation = npmPublishJob.indexOf(
+    "Attest reviewed npm package set and reproducibility inputs without candidate checkout",
+  );
+  const npmPolicyNextStep = npmPublishJob.indexOf("\n      - ", npmAttestationPolicy + 1);
+  assert.ok(npmAttestationPolicy >= 0 && npmAttestation > npmAttestationPolicy);
+  assert.equal(npmPolicyNextStep + "\n      - name: ".length, npmAttestation);
   assert.match(policyJob, /LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN/u);
+  assert.match(policyJob, /environment: release-administration/u);
+  assert.match(policyJob, /permissions: \{\}/u);
   assert.doesNotMatch(policyJob, /id-token: write|attestations: write|actions\/checkout|scripts\//u);
   for (const control of [
     '.enforced_by_owner == true',
@@ -429,9 +489,29 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
     'expires_at: $expires_at',
   ]) assert.ok(policyJob.includes(control), `immutable-policy handoff omits ${control}`);
   assert.doesNotMatch(releaseJob, /LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN/u);
+  assert.match(releaseJob, /environment: github-release/u);
+  assert.doesNotMatch(releaseJob, /environment: npm|environment: release-administration/u);
   assert.match(releaseJob, /cmp --silent "\$RUNNER_TEMP\/expected-assets\.txt"/u);
   assert.match(releaseJob, /test "\$\{#expected\[@\]\}" = 35/u);
   assert.match(releaseJob, /package_ids=\(client openai vercel-ai langchain\)/u);
+  const releasePolicyValidation = releaseJob.indexOf(
+    "Validate fresh final policy before OIDC attestation",
+  );
+  const releaseAttestation = releaseJob.indexOf(
+    "Attest exact retained registry and release evidence without candidate checkout",
+  );
+  const releasePolicyNextStep = releaseJob.indexOf("\n      - ", releasePolicyValidation + 1);
+  assert.ok(releasePolicyValidation >= 0 && releaseAttestation > releasePolicyValidation);
+  assert.equal(releasePolicyNextStep + "\n      - name: ".length, releaseAttestation);
+  const preAttestationPolicy = releaseJob.slice(releasePolicyValidation, releaseAttestation);
+  for (const control of [
+    'test -z "$(find "$policy_root" -mindepth 1 ! -path "$policy" -print -quit)"',
+    '.kind == "latchway_github_immutable_release_policy"',
+    '.run_id == $run_id and .run_attempt == $run_attempt',
+    '(.expires_at - .issued_at) == 600',
+    '.issued_at <= $now and $now < .expires_at',
+    '.settings.enabled == true and .settings.enforced_by_owner == true',
+  ]) assert.ok(preAttestationPolicy.includes(control), `fresh final-policy check omits ${control}`);
   assert.match(releaseJob, /python3 "\$reconciler"/u);
   assert.match(releaseJob, /--verified-immutable-policy-run-id "\$GITHUB_RUN_ID"/u);
   assert.match(releaseJob, /--verified-immutable-policy-run-attempt "\$GITHUB_RUN_ATTEMPT"/u);
@@ -469,6 +549,173 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
   assert.match(reconciler, /target\.get\("sha"\) != expected_commit/u);
 });
 
+test("protected release jobs fail closed on missing, wrong, late, or fallback sentinels", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+  const policies = new Map([
+    ["authorize-release", ["release-administration",
+      "latchway-release-controls-v1:latchway-js:release-administration"]],
+    ["github-draft", ["github-release",
+      "latchway-release-controls-v1:latchway-js:github-release"]],
+    ["npm-publish", ["npm", "latchway-release-controls-v1:latchway-js:npm"]],
+    ["publish", ["npm", "latchway-release-controls-v1:latchway-js:npm"]],
+    ["github-release-policy", ["release-administration",
+      "latchway-release-controls-v1:latchway-js:release-administration"]],
+    ["github-release", ["github-release",
+      "latchway-release-controls-v1:latchway-js:github-release"]],
+  ]);
+  const job = (source, name) => {
+    const start = source.indexOf(`\n  ${name}:\n`);
+    assert.notEqual(start, -1, name);
+    const header = /\n {2}[a-z0-9_-]+:\n/gu;
+    header.lastIndex = start + 1;
+    const next = header.exec(source)?.index ?? source.length;
+    return source.slice(start, next);
+  };
+  const sentinelFor = (environment, policy) =>
+    `    steps:\n      - name: Require exact ${environment} environment policy sentinel\n`
+    + "        shell: bash\n"
+    + "        env:\n"
+    + `          EXPECTED_POLICY_ID: ${policy}\n`
+    + "          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}\n"
+    + "        run: |\n"
+    + "          set -Eeuo pipefail\n"
+    + '          test "$OBSERVED_POLICY_ID" = "$EXPECTED_POLICY_ID"\n';
+  const assertSentinels = (source) => {
+    for (const [name, [environment, policy]] of policies) {
+      const block = job(source, name);
+      const sentinel = sentinelFor(environment, policy);
+      assert.equal(block.indexOf(sentinel), block.indexOf("    steps:\n"), name);
+      const sentinelEnd = block.indexOf(sentinel) + sentinel.length;
+      for (const authority of ["secrets.", "secrets[", "github.token",
+        "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"]) {
+        const authorityIndex = block.indexOf(authority);
+        assert.ok(authorityIndex < 0 || authorityIndex >= sentinelEnd, `${name}: ${authority}`);
+      }
+      assert.doesNotMatch(block, /^ {4}(?:container|services):/mu);
+    }
+    assert.equal((source.match(
+      /\$\{\{\s*vars\.LATCHWAY_RELEASE_CONTROL_POLICY_ID\s*\}\}/gu,
+    ) ?? []).length, policies.size);
+    assert.doesNotMatch(source,
+      /(?:env|github|secrets)\.LATCHWAY_RELEASE_CONTROL_POLICY_ID|vars\s*\[/u);
+  };
+
+  assert.doesNotThrow(() => assertSentinels(workflow));
+  const [environment, policy] = policies.get("github-draft");
+  const sentinel = sentinelFor(environment, policy);
+  assert.throws(() => assertSentinels(workflow.replace(sentinel, "    steps:\n")));
+  assert.throws(() => assertSentinels(workflow.replace(
+    policy,
+    `${policy}-wrong`,
+  )));
+  const late = workflow.replace(sentinel,
+    "    steps:\n      - uses: example/action@0000000000000000000000000000000000000000\n"
+      + sentinel.slice("    steps:\n".length));
+  assert.throws(() => assertSentinels(late));
+  assert.throws(() => assertSentinels(workflow.replace(
+    "${{ vars.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}",
+    "${{ env.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}",
+  )));
+  assert.throws(() => assertSentinels(workflow.replace(
+    "${{ vars.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}",
+    "${{ vars['LATCHWAY_RELEASE_CONTROL_POLICY_ID'] }}",
+  )));
+  assert.throws(() => assertSentinels(workflow.replace(
+    "    environment: release-administration\n    permissions: {}\n    outputs:",
+    "    environment: release-administration\n    permissions: {}\n"
+      + "    env:\n      PREMATURE_TOKEN: ${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}\n"
+      + "    outputs:",
+  )));
+});
+
+test("pre-publication policy lease rejects stale or wrong attempt-bound evidence", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+  const stepStart = workflow.indexOf(
+    "Validate exact pre-publication policy lease before release inspection",
+  );
+  assert.notEqual(stepStart, -1);
+  const stepEnd = workflow.indexOf("      - name: Create or verify GitHub draft", stepStart);
+  const step = workflow.slice(stepStart, stepEnd);
+  const filterMatch = /--argjson run_attempt "\$GITHUB_RUN_ATTEMPT" --argjson now "\$now" '\n([\s\S]*?)\n\s+' "\$policy"/u.exec(step);
+  assert.notEqual(filterMatch, null);
+  const filter = filterMatch[1];
+  const base = {
+    schema_version: 1,
+    kind: "latchway_github_immutable_release_policy_lease",
+    repository: "Latchway/latchway-js",
+    phase: "draft-and-npm-publication",
+    run_id: 123,
+    run_attempt: 4,
+    issued_at: 900,
+    expires_at: 1500,
+    settings: { enabled: true, enforced_by_owner: true },
+  };
+  const accepted = (value) => spawnSync("jq", [
+    "--exit-status",
+    "--arg", "repository", "Latchway/latchway-js",
+    "--arg", "phase", "draft-and-npm-publication",
+    "--argjson", "run_id", "123",
+    "--argjson", "run_attempt", "4",
+    "--argjson", "now", "1000",
+    filter,
+  ], { encoding: "utf8", input: JSON.stringify(value) }).status === 0;
+
+  assert.equal(accepted(base), true);
+  for (const rejected of [
+    { ...base, repository: "Latchway/other" },
+    { ...base, phase: "final-release" },
+    { ...base, run_id: 124 },
+    { ...base, run_attempt: 5 },
+    { ...base, issued_at: 399, expires_at: 999 },
+    { ...base, issued_at: 400, expires_at: 1000 },
+    { ...base, issued_at: 1001, expires_at: 1601 },
+    { ...base, expires_at: 1501 },
+    { ...base, settings: { enabled: false, enforced_by_owner: true } },
+    { ...base, settings: { enabled: true, enforced_by_owner: false } },
+    { ...base, unexpected: true },
+  ]) assert.equal(accepted(rejected), false, JSON.stringify(rejected));
+});
+
+test("release secret allowlists reject hidden fallback and bracket references", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+  const expected = new Map([
+    ["authorize-release", ["LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN"]],
+    ["github-release-policy", ["LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN"]],
+  ]);
+  const expectedExpressions = new Map([
+    ["authorize-release", ["${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}"]],
+    ["github-release-policy", ["${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}"]],
+  ]);
+  const assertAllowlists = (source) => {
+    assert.doesNotMatch(source, /secrets\s*\[/u);
+    const headers = [...source.matchAll(/^ {2}([a-z0-9_-]+):$/gmu)];
+    for (const [index, header] of headers.entries()) {
+      const end = headers[index + 1]?.index ?? source.length;
+      const block = source.slice(header.index, end);
+      const names = [...block.matchAll(/secrets\.([A-Z][A-Z0-9_]*)/gu)]
+        .map((match) => match[1]);
+      assert.deepEqual(names, expected.get(header[1]) ?? [], header[1]);
+      const expressions = [...block.matchAll(/\$\{\{[^}\n]*secrets[^}\n]*\}\}/gu)]
+        .map((match) => match[0]);
+      assert.deepEqual(expressions, expectedExpressions.get(header[1]) ?? [], header[1]);
+    }
+  };
+
+  assert.doesNotThrow(() => assertAllowlists(workflow));
+  assert.throws(() => assertAllowlists(workflow.replace(
+    "${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}",
+    "${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN || secrets.UNAUTHORIZED_FALLBACK }}",
+  )));
+  assert.throws(() => assertAllowlists(workflow.replace(
+    "${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}",
+    "${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN || github.token }}",
+  )));
+  assert.throws(() => assertAllowlists(workflow.replace(
+    "${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}",
+    "${{ secrets['LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN'] }}",
+  )));
+});
+
 test("release handoffs survive failed-job reruns by consuming producer outputs", async () => {
   const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
   const artifactOutput = await readFile(new URL("./release-artifact-output.mjs", import.meta.url), "utf8");
@@ -479,7 +726,9 @@ test("release handoffs survive failed-job reruns by consuming producer outputs",
   const authorize = job("authorize-promotion", "verify-promotion");
   const verifyPromotion = job("verify-promotion", "promote");
   const verifyJob = job("verify", "trusted-npm-cli");
-  const trustedNpm = job("trusted-npm-cli", "github-draft");
+  const trustedNpm = job("trusted-npm-cli", "authorize-release");
+  const authorizeRelease = job("authorize-release", "github-draft");
+  const draftJob = job("github-draft", "npm-publish");
   const npmPublishJob = job("npm-publish", "publish");
   const publishJob = job("publish", "github-release-policy");
   const policyJob = job("github-release-policy", "github-release");
@@ -496,7 +745,19 @@ test("release handoffs survive failed-job reruns by consuming producer outputs",
   assert.doesNotMatch(artifactOutput,
     /artifact_name=npm-release-set-\$\{evidence\.version\}`/u);
   assert.match(trustedNpm, /artifact_name: \$\{\{ steps\.handoff\.outputs\.artifact_name \}\}/u);
+  assert.match(authorizeRelease, /environment: release-administration/u);
+  assert.match(authorizeRelease,
+    /artifact_name: \$\{\{ steps\.policy\.outputs\.artifact_name \}\}/u);
+  assert.match(authorizeRelease,
+    /evidence_sha256: \$\{\{ steps\.policy\.outputs\.evidence_sha256 \}\}/u);
+  assert.match(draftJob, /environment: github-release/u);
+  assert.match(draftJob, /needs: \[promote, verify, authorize-release\]/u);
+  assert.match(draftJob, /name: \$\{\{ needs\.authorize-release\.outputs\.artifact_name \}\}/u);
+  assert.match(draftJob,
+    /POLICY_EVIDENCE_SHA256: \$\{\{ needs\.authorize-release\.outputs\.evidence_sha256 \}\}/u);
   assert.match(npmPublishJob, /name: \$\{\{ needs\.trusted-npm-cli\.outputs\.artifact_name \}\}/u);
+  assert.match(npmPublishJob,
+    /name: \$\{\{ needs\.authorize-release\.outputs\.artifact_name \}\}/u);
   assert.doesNotMatch(npmPublishJob, /trusted-npm-cli-\$\{\{ github\.run_attempt \}\}/u);
   assert.match(npmPublishJob,
     /producer_run_attempt: \$\{\{ steps\.registry\.outputs\.producer_run_attempt \}\}/u);
@@ -530,6 +791,10 @@ test("release documentation forbids maintainer-created tags", async () => {
   assert.match(documentation, /exclusive writer/u);
   assert.match(documentation, /pre-publish draft gate can validate only/u);
   assert.match(documentation, /enforced_by_owner: true/u);
+  assert.match(documentation, /`prevent_self_review: true`/u);
+  assert.match(documentation, /repository or organization scope/u);
+  assert.match(documentation, /administrator bypass/u);
+  assert.match(documentation, /latchway-release-controls-v1:latchway-js:npm/u);
   assert.match(documentation, /Re-run all jobs/u);
   assert.match(documentation, /tag manually/iu);
   assert.doesNotMatch(documentation, /\n(?:git tag|git push)\s/u);

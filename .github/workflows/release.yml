@@ -79,7 +79,7 @@ jobs:
           CORE_TAG: ${{ github.event.client_payload.core_tag }}
           REPORT_URL: ${{ github.event.client_payload.promotion_evidence_url }}
           REPORT_SHA256: ${{ github.event.client_payload.promotion_evidence_sha256 }}
-          CORE_READ_TOKEN: ${{ secrets.LATCHWAY_SIBLING_REPOSITORIES_READ_TOKEN || github.token }}
+          CORE_READ_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           report="$RUNNER_TEMP/latchway-cross-repository-promotion.json"
@@ -98,7 +98,7 @@ jobs:
       - name: Verify the core workflow artifact attestation with read-only credentials
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.LATCHWAY_SIBLING_REPOSITORIES_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           gh attestation verify "$RUNNER_TEMP/latchway-cross-repository-promotion.json" \
@@ -432,30 +432,166 @@ jobs:
           compression-level: 0
           retention-days: 1
 
+  authorize-release:
+    name: Require immutable GitHub releases without candidate source or OIDC
+    if: github.repository == 'Latchway/latchway-js'
+    needs: [promote, verify, trusted-npm-cli]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: release-administration
+    permissions: {}
+    outputs:
+      artifact_name: ${{ steps.policy.outputs.artifact_name }}
+      evidence_sha256: ${{ steps.policy.outputs.evidence_sha256 }}
+    steps:
+      - name: Require exact release-administration environment policy sentinel
+        shell: bash
+        env:
+          EXPECTED_POLICY_ID: latchway-release-controls-v1:latchway-js:release-administration
+          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}
+        run: |
+          set -Eeuo pipefail
+          test "$OBSERVED_POLICY_ID" = "$EXPECTED_POLICY_ID"
+      - name: Verify immutable-release administration policy with the narrow token
+        id: policy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$GH_TOKEN"
+          settings=$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/immutable-releases")
+          unset GH_TOKEN
+          jq --exit-status '
+            type == "object" and
+            (keys | sort) == ["enabled", "enforced_by_owner"] and
+            .enabled == true and
+            .enforced_by_owner == true
+          ' <<<"$settings" >/dev/null
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,15}$ ]]
+          (( GITHUB_RUN_ID <= 9007199254740991 ))
+          (( GITHUB_RUN_ATTEMPT <= 9007199254740991 ))
+          test "$GITHUB_RELEASE_POLICY_TTL_SECONDS" = 600
+          issued_at=$(date --utc +%s)
+          [[ "$issued_at" =~ ^[1-9][0-9]{0,15}$ ]]
+          expires_at=$((issued_at + GITHUB_RELEASE_POLICY_TTL_SECONDS))
+          (( expires_at > issued_at ))
+          policy_root="$RUNNER_TEMP/prepublication-policy"
+          mkdir -m 700 "$policy_root"
+          evidence="$policy_root/immutable-release-policy-lease.json"
+          jq --sort-keys --null-input --arg repository "$GITHUB_REPOSITORY" \
+            --arg phase "draft-and-npm-publication" \
+            --argjson run_id "$GITHUB_RUN_ID" --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson issued_at "$issued_at" --argjson expires_at "$expires_at" \
+            --argjson settings "$settings" '{
+            schema_version: 1,
+            kind: "latchway_github_immutable_release_policy_lease",
+            repository: $repository,
+            phase: $phase,
+            run_id: $run_id,
+            run_attempt: $run_attempt,
+            issued_at: $issued_at,
+            expires_at: $expires_at,
+            settings: $settings
+          }' > "$evidence"
+          evidence_sha256=$(sha256sum "$evidence" | cut -d ' ' -f 1)
+          [[ "$evidence_sha256" =~ ^[0-9a-f]{64}$ ]]
+          printf 'artifact_name=prepublication-policy-%s-%s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          printf 'evidence_sha256=%s\n' "$evidence_sha256" >> "$GITHUB_OUTPUT"
+      - name: Transfer attempt-bound pre-publication policy lease
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.policy.outputs.artifact_name }}
+          path: ${{ runner.temp }}/prepublication-policy/immutable-release-policy-lease.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
   github-draft:
     name: Create or verify GitHub draft without candidate checkout
     if: github.repository == 'Latchway/latchway-js'
-    needs: [promote, verify]
+    needs: [promote, verify, authorize-release]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    environment: npm
+    environment: github-release
     permissions:
+      actions: read
       contents: write
     outputs:
       release_state: ${{ steps.draft.outputs.release_state }}
     steps:
-      - name: Preflight immutable release and create draft with fixed API calls
+      - name: Require exact github-release environment policy sentinel
+        shell: bash
+        env:
+          EXPECTED_POLICY_ID: latchway-release-controls-v1:latchway-js:github-release
+          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}
+        run: |
+          set -Eeuo pipefail
+          test "$OBSERVED_POLICY_ID" = "$EXPECTED_POLICY_ID"
+      - name: Download attempt-bound pre-publication policy lease
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.authorize-release.outputs.artifact_name }}
+          path: ${{ runner.temp }}/prepublication-policy
+      - name: Validate exact pre-publication policy lease before release inspection
+        shell: bash
+        env:
+          POLICY_EVIDENCE_SHA256: ${{ needs.authorize-release.outputs.evidence_sha256 }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$POLICY_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,15}$ ]]
+          (( GITHUB_RUN_ID <= 9007199254740991 ))
+          (( GITHUB_RUN_ATTEMPT <= 9007199254740991 ))
+          policy_root="$RUNNER_TEMP/prepublication-policy"
+          policy="$policy_root/immutable-release-policy-lease.json"
+          shopt -s nullglob dotglob
+          policy_closure=("$policy_root"/*)
+          test "${#policy_closure[@]}" = 1
+          test "${policy_closure[0]}" = "$policy"
+          test -f "$policy"
+          test ! -L "$policy"
+          test -s "$policy"
+          test "$(wc -c < "$policy" | tr -d ' ')" -le 4096
+          printf '%s  %s\n' "$POLICY_EVIDENCE_SHA256" "$policy" | sha256sum --check --strict
+          now=$(date --utc +%s)
+          [[ "$now" =~ ^[1-9][0-9]{0,15}$ ]]
+          jq --exit-status --arg repository "$GITHUB_REPOSITORY" \
+            --arg phase "draft-and-npm-publication" --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" --argjson now "$now" '
+            type == "object" and
+            (keys | sort) == ["expires_at", "issued_at", "kind", "phase", "repository",
+              "run_attempt", "run_id", "schema_version", "settings"] and
+            .schema_version == 1 and
+            .kind == "latchway_github_immutable_release_policy_lease" and
+            .repository == $repository and .phase == $phase and
+            .run_id == $run_id and .run_attempt == $run_attempt and
+            (.issued_at | type) == "number" and (.issued_at | floor) == .issued_at and
+            (.expires_at | type) == "number" and (.expires_at | floor) == .expires_at and
+            .issued_at >= 1 and .expires_at <= 9007199254740991 and
+            (.expires_at - .issued_at) == 600 and
+            .issued_at <= $now and $now < .expires_at and
+            (.settings | type) == "object" and
+            (.settings | keys | sort) == ["enabled", "enforced_by_owner"] and
+            .settings.enabled == true and .settings.enforced_by_owner == true
+          ' "$policy" >/dev/null
+      - name: Create or verify GitHub draft with fixed API calls
         id: draft
         shell: bash
         env:
-          ADMIN_TOKEN: ${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}
+          POLICY_EVIDENCE_SHA256: ${{ needs.authorize-release.outputs.evidence_sha256 }}
           RELEASE_TOKEN: ${{ github.token }}
           RELEASE_COMMIT: ${{ needs.promote.outputs.commit }}
           RELEASE_TAG: ${{ needs.promote.outputs.tag }}
           RELEASE_VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -Eeuo pipefail
-          test -n "$ADMIN_TOKEN"
           test -n "$RELEASE_TOKEN"
           [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
@@ -464,18 +600,6 @@ jobs:
           [[ "$version_line" =~ ^gh[[:space:]]version[[:space:]]([0-9]+)\.([0-9]+)\.([0-9]+)([[:space:]]\([^()]+\))?$ ]]
           major=${BASH_REMATCH[1]}; minor=${BASH_REMATCH[2]}; patch=${BASH_REMATCH[3]}
           (( major > 2 || (major == 2 && (minor > 97 || (minor == 97 && patch >= 0))) ))
-          GH_TOKEN="$ADMIN_TOKEN" gh api \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/immutable-releases" \
-            > "$RUNNER_TEMP/immutable-release-settings.json"
-          jq --exit-status '
-            type == "object" and
-            (keys | sort) == ["enabled", "enforced_by_owner"] and
-            .enabled == true and
-            .enforced_by_owner == true
-          ' "$RUNNER_TEMP/immutable-release-settings.json" >/dev/null
-          unset ADMIN_TOKEN
           export GH_TOKEN="$RELEASE_TOKEN"
           unset RELEASE_TOKEN
 
@@ -496,6 +620,43 @@ jobs:
           if [[ "$status" -ne 0 ]]; then
             test "$status" -eq 1
             grep --fixed-strings --quiet 'HTTP 404' "$RUNNER_TEMP/release-error.txt"
+            policy_root="$RUNNER_TEMP/prepublication-policy"
+            policy="$policy_root/immutable-release-policy-lease.json"
+            shopt -s nullglob dotglob
+            policy_closure=("$policy_root"/*)
+            test "${#policy_closure[@]}" = 1
+            test "${policy_closure[0]}" = "$policy"
+            test -f "$policy"
+            test ! -L "$policy"
+            test -s "$policy"
+            test "$(wc -c < "$policy" | tr -d ' ')" -le 4096
+            [[ "$POLICY_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+            [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+            [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,15}$ ]]
+            (( GITHUB_RUN_ID <= 9007199254740991 ))
+            (( GITHUB_RUN_ATTEMPT <= 9007199254740991 ))
+            printf '%s  %s\n' "$POLICY_EVIDENCE_SHA256" "$policy" | sha256sum --check --strict
+            now=$(date --utc +%s)
+            [[ "$now" =~ ^[1-9][0-9]{0,15}$ ]]
+            jq --exit-status --arg repository "$GITHUB_REPOSITORY" \
+              --arg phase "draft-and-npm-publication" --argjson run_id "$GITHUB_RUN_ID" \
+              --argjson run_attempt "$GITHUB_RUN_ATTEMPT" --argjson now "$now" '
+              type == "object" and
+              (keys | sort) == ["expires_at", "issued_at", "kind", "phase", "repository",
+                "run_attempt", "run_id", "schema_version", "settings"] and
+              .schema_version == 1 and
+              .kind == "latchway_github_immutable_release_policy_lease" and
+              .repository == $repository and .phase == $phase and
+              .run_id == $run_id and .run_attempt == $run_attempt and
+              (.issued_at | type) == "number" and (.issued_at | floor) == .issued_at and
+              (.expires_at | type) == "number" and (.expires_at | floor) == .expires_at and
+              .issued_at >= 1 and .expires_at <= 9007199254740991 and
+              (.expires_at - .issued_at) == 600 and
+              .issued_at <= $now and $now < .expires_at and
+              (.settings | type) == "object" and
+              (.settings | keys | sort) == ["enabled", "enforced_by_owner"] and
+              .settings.enabled == true and .settings.enforced_by_owner == true
+            ' "$policy" >/dev/null
             gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
               --verify-tag --draft --generate-notes --title "$title"
             gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
@@ -527,7 +688,7 @@ jobs:
   npm-publish:
     name: Publish or adopt npm archive without candidate checkout
     if: github.repository == 'Latchway/latchway-js'
-    needs: [promote, verify, trusted-npm-cli, github-draft]
+    needs: [promote, verify, trusted-npm-cli, authorize-release, github-draft]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: npm
@@ -543,6 +704,62 @@ jobs:
       producer_run_attempt: ${{ steps.registry.outputs.producer_run_attempt }}
       producer_run_id: ${{ steps.registry.outputs.producer_run_id }}
     steps:
+      - name: Require exact npm environment policy sentinel
+        shell: bash
+        env:
+          EXPECTED_POLICY_ID: latchway-release-controls-v1:latchway-js:npm
+          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}
+        run: |
+          set -Eeuo pipefail
+          test "$OBSERVED_POLICY_ID" = "$EXPECTED_POLICY_ID"
+      - name: Download attempt-bound pre-publication policy lease
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.authorize-release.outputs.artifact_name }}
+          path: ${{ runner.temp }}/prepublication-policy
+      - name: Validate exact pre-publication policy lease before publication setup
+        shell: bash
+        env:
+          POLICY_EVIDENCE_SHA256: ${{ needs.authorize-release.outputs.evidence_sha256 }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$POLICY_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,15}$ ]]
+          (( GITHUB_RUN_ID <= 9007199254740991 ))
+          (( GITHUB_RUN_ATTEMPT <= 9007199254740991 ))
+          policy_root="$RUNNER_TEMP/prepublication-policy"
+          policy="$policy_root/immutable-release-policy-lease.json"
+          shopt -s nullglob dotglob
+          policy_closure=("$policy_root"/*)
+          test "${#policy_closure[@]}" = 1
+          test "${policy_closure[0]}" = "$policy"
+          test -f "$policy"
+          test ! -L "$policy"
+          test -s "$policy"
+          test "$(wc -c < "$policy" | tr -d ' ')" -le 4096
+          printf '%s  %s\n' "$POLICY_EVIDENCE_SHA256" "$policy" | sha256sum --check --strict
+          now=$(date --utc +%s)
+          [[ "$now" =~ ^[1-9][0-9]{0,15}$ ]]
+          jq --exit-status --arg repository "$GITHUB_REPOSITORY" \
+            --arg phase "draft-and-npm-publication" --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" --argjson now "$now" '
+            type == "object" and
+            (keys | sort) == ["expires_at", "issued_at", "kind", "phase", "repository",
+              "run_attempt", "run_id", "schema_version", "settings"] and
+            .schema_version == 1 and
+            .kind == "latchway_github_immutable_release_policy_lease" and
+            .repository == $repository and .phase == $phase and
+            .run_id == $run_id and .run_attempt == $run_attempt and
+            (.issued_at | type) == "number" and (.issued_at | floor) == .issued_at and
+            (.expires_at | type) == "number" and (.expires_at | floor) == .expires_at and
+            .issued_at >= 1 and .expires_at <= 9007199254740991 and
+            (.expires_at - .issued_at) == 600 and
+            .issued_at <= $now and $now < .expires_at and
+            (.settings | type) == "object" and
+            (.settings | keys | sort) == ["enabled", "enforced_by_owner"] and
+            .settings.enabled == true and .settings.enforced_by_owner == true
+          ' "$policy" >/dev/null
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: 24.19.0
@@ -712,6 +929,50 @@ jobs:
             test "$(tar -xOzf "$archive" package/package.json | jq --raw-output .name)" = "${package_names[$index]}"
             test "$(tar -xOzf "$archive" package/package.json | jq --raw-output .version)" = "$RELEASE_VERSION"
           done
+      - name: Recheck fresh pre-publication policy before npm provenance attestation
+        shell: bash
+        env:
+          POLICY_EVIDENCE_SHA256: ${{ needs.authorize-release.outputs.evidence_sha256 }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$POLICY_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,15}$ ]]
+          (( GITHUB_RUN_ID <= 9007199254740991 ))
+          (( GITHUB_RUN_ATTEMPT <= 9007199254740991 ))
+          policy_root="$RUNNER_TEMP/prepublication-policy"
+          policy="$policy_root/immutable-release-policy-lease.json"
+          shopt -s nullglob dotglob
+          policy_closure=("$policy_root"/*)
+          test "${#policy_closure[@]}" = 1
+          test "${policy_closure[0]}" = "$policy"
+          test -z "$(find "$policy_root" -mindepth 1 ! -path "$policy" -print -quit)"
+          test -f "$policy"
+          test ! -L "$policy"
+          test -s "$policy"
+          test "$(wc -c < "$policy" | tr -d ' ')" -le 4096
+          printf '%s  %s\n' "$POLICY_EVIDENCE_SHA256" "$policy" | sha256sum --check --strict
+          now=$(date --utc +%s)
+          [[ "$now" =~ ^[1-9][0-9]{0,15}$ ]]
+          jq --exit-status --arg repository "$GITHUB_REPOSITORY" \
+            --arg phase "draft-and-npm-publication" --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" --argjson now "$now" '
+            type == "object" and
+            (keys | sort) == ["expires_at", "issued_at", "kind", "phase", "repository",
+              "run_attempt", "run_id", "schema_version", "settings"] and
+            .schema_version == 1 and
+            .kind == "latchway_github_immutable_release_policy_lease" and
+            .repository == $repository and .phase == $phase and
+            .run_id == $run_id and .run_attempt == $run_attempt and
+            (.issued_at | type) == "number" and (.issued_at | floor) == .issued_at and
+            (.expires_at | type) == "number" and (.expires_at | floor) == .expires_at and
+            .issued_at >= 1 and .expires_at <= 9007199254740991 and
+            (.expires_at - .issued_at) == 600 and
+            .issued_at <= $now and $now < .expires_at and
+            (.settings | type) == "object" and
+            (.settings | keys | sort) == ["enabled", "enforced_by_owner"] and
+            .settings.enabled == true and .settings.enforced_by_owner == true
+          ' "$policy" >/dev/null
       - name: Attest reviewed npm package set and reproducibility inputs without candidate checkout
         if: needs.github-draft.outputs.release_state == 'draft'
         uses: actions/attest-build-provenance@e4d4f7c39adfa4c260fb5c147f0622000aa14b99 # v4.0.0
@@ -727,6 +988,7 @@ jobs:
         id: registry
         shell: bash
         env:
+          POLICY_EVIDENCE_SHA256: ${{ needs.authorize-release.outputs.evidence_sha256 }}
           RELEASE_STATE: ${{ needs.github-draft.outputs.release_state }}
           RELEASE_VERSION: ${{ needs.verify.outputs.version }}
         run: |
@@ -786,6 +1048,43 @@ jobs:
             archive="$root/${tarballs[$index]}"
             publish_performed=false
             if [[ "${publish_required[$index]}" == true ]]; then
+              policy_root="$RUNNER_TEMP/prepublication-policy"
+              policy="$policy_root/immutable-release-policy-lease.json"
+              shopt -s nullglob dotglob
+              policy_closure=("$policy_root"/*)
+              test "${#policy_closure[@]}" = 1
+              test "${policy_closure[0]}" = "$policy"
+              test -f "$policy"
+              test ! -L "$policy"
+              test -s "$policy"
+              test "$(wc -c < "$policy" | tr -d ' ')" -le 4096
+              [[ "$POLICY_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+              [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+              [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,15}$ ]]
+              (( GITHUB_RUN_ID <= 9007199254740991 ))
+              (( GITHUB_RUN_ATTEMPT <= 9007199254740991 ))
+              printf '%s  %s\n' "$POLICY_EVIDENCE_SHA256" "$policy" | sha256sum --check --strict
+              now=$(date --utc +%s)
+              [[ "$now" =~ ^[1-9][0-9]{0,15}$ ]]
+              jq --exit-status --arg repository "$GITHUB_REPOSITORY" \
+                --arg phase "draft-and-npm-publication" --argjson run_id "$GITHUB_RUN_ID" \
+                --argjson run_attempt "$GITHUB_RUN_ATTEMPT" --argjson now "$now" '
+                type == "object" and
+                (keys | sort) == ["expires_at", "issued_at", "kind", "phase", "repository",
+                  "run_attempt", "run_id", "schema_version", "settings"] and
+                .schema_version == 1 and
+                .kind == "latchway_github_immutable_release_policy_lease" and
+                .repository == $repository and .phase == $phase and
+                .run_id == $run_id and .run_attempt == $run_attempt and
+                (.issued_at | type) == "number" and (.issued_at | floor) == .issued_at and
+                (.expires_at | type) == "number" and (.expires_at | floor) == .expires_at and
+                .issued_at >= 1 and .expires_at <= 9007199254740991 and
+                (.expires_at - .issued_at) == 600 and
+                .issued_at <= $now and $now < .expires_at and
+                (.settings | type) == "object" and
+                (.settings | keys | sort) == ["enabled", "enforced_by_owner"] and
+                .settings.enabled == true and .settings.enforced_by_owner == true
+              ' "$policy" >/dev/null
               "$LATCHWAY_NPM_CLI" publish "$archive" --provenance --access public \
                 --registry=https://registry.npmjs.org/
               publish_performed=true
@@ -818,6 +1117,14 @@ jobs:
       RELEASE_COMMIT: ${{ needs.promote.outputs.commit }}
       RELEASE_TAG: ${{ needs.promote.outputs.tag }}
     steps:
+      - name: Require exact npm environment policy sentinel
+        shell: bash
+        env:
+          EXPECTED_POLICY_ID: latchway-release-controls-v1:latchway-js:npm
+          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}
+        run: |
+          set -Eeuo pipefail
+          test "$OBSERVED_POLICY_ID" = "$EXPECTED_POLICY_ID"
       - name: Configure isolated npm runtime paths
         shell: bash
         run: |
@@ -934,13 +1241,20 @@ jobs:
     needs: [promote, publish]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    environment: npm
-    permissions:
-      contents: read
+    environment: release-administration
+    permissions: {}
     outputs:
       artifact_name: ${{ steps.policy.outputs.artifact_name }}
       evidence_sha256: ${{ steps.policy.outputs.evidence_sha256 }}
     steps:
+      - name: Require exact release-administration environment policy sentinel
+        shell: bash
+        env:
+          EXPECTED_POLICY_ID: latchway-release-controls-v1:latchway-js:release-administration
+          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}
+        run: |
+          set -Eeuo pipefail
+          test "$OBSERVED_POLICY_ID" = "$EXPECTED_POLICY_ID"
       - name: Verify immutable releases remain enforced with the protected admin credential
         id: policy
         shell: bash
@@ -1003,13 +1317,21 @@ jobs:
     needs: [promote, verify, publish, github-release-policy, github-draft]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    environment: npm
+    environment: github-release
     permissions:
       actions: read
       attestations: write
       contents: write
       id-token: write
     steps:
+      - name: Require exact github-release environment policy sentinel
+        shell: bash
+        env:
+          EXPECTED_POLICY_ID: latchway-release-controls-v1:latchway-js:github-release
+          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}
+        run: |
+          set -Eeuo pipefail
+          test "$OBSERVED_POLICY_ID" = "$EXPECTED_POLICY_ID"
       - name: Download exact JavaScript release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1180,6 +1502,50 @@ jobs:
           printf '%s\n' "${expected[@]}" | LC_ALL=C sort > "$RUNNER_TEMP/expected-assets.txt"
           printf '%s\n' "${actual[@]##*/}" | LC_ALL=C sort > "$RUNNER_TEMP/actual-assets.txt"
           cmp --silent "$RUNNER_TEMP/expected-assets.txt" "$RUNNER_TEMP/actual-assets.txt"
+      - name: Validate fresh final policy before OIDC attestation
+        shell: bash
+        env:
+          POLICY_EVIDENCE_SHA256: ${{ needs.github-release-policy.outputs.evidence_sha256 }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$POLICY_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,15}$ ]]
+          (( GITHUB_RUN_ID <= 9007199254740991 ))
+          (( GITHUB_RUN_ATTEMPT <= 9007199254740991 ))
+          policy_root="$RUNNER_TEMP/immutable-release-policy"
+          policy="$policy_root/immutable-release-policy.json"
+          shopt -s nullglob dotglob
+          policy_closure=("$policy_root"/*)
+          test "${#policy_closure[@]}" = 1
+          test "${policy_closure[0]}" = "$policy"
+          test -z "$(find "$policy_root" -mindepth 1 ! -path "$policy" -print -quit)"
+          test -f "$policy"
+          test ! -L "$policy"
+          test -s "$policy"
+          test "$(wc -c < "$policy" | tr -d ' ')" -le 4096
+          printf '%s  %s\n' "$POLICY_EVIDENCE_SHA256" "$policy" | sha256sum --check --strict
+          now=$(date --utc +%s)
+          [[ "$now" =~ ^[1-9][0-9]{0,15}$ ]]
+          jq --exit-status --arg repository "$GITHUB_REPOSITORY" \
+            --argjson run_id "$GITHUB_RUN_ID" --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson now "$now" '
+            type == "object" and
+            (keys | sort) == ["expires_at", "issued_at", "kind", "repository",
+              "run_attempt", "run_id", "schema_version", "settings"] and
+            .schema_version == 2 and
+            .kind == "latchway_github_immutable_release_policy" and
+            .repository == $repository and
+            .run_id == $run_id and .run_attempt == $run_attempt and
+            (.issued_at | type) == "number" and (.issued_at | floor) == .issued_at and
+            (.expires_at | type) == "number" and (.expires_at | floor) == .expires_at and
+            .issued_at >= 1 and .expires_at <= 9007199254740991 and
+            (.expires_at - .issued_at) == 600 and
+            .issued_at <= $now and $now < .expires_at and
+            (.settings | type) == "object" and
+            (.settings | keys | sort) == ["enabled", "enforced_by_owner"] and
+            .settings.enabled == true and .settings.enforced_by_owner == true
+          ' "$policy" >/dev/null
       - name: Attest exact retained registry and release evidence without candidate checkout
         if: needs.github-draft.outputs.release_state == 'draft'
         uses: actions/attest-build-provenance@e4d4f7c39adfa4c260fb5c147f0622000aa14b99 # v4.0.0

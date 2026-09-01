@@ -408,7 +408,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         self.assertIn("--proto-redir '=https'", workflow)
         self.assertIn("--max-filesize 2097152", workflow)
-        self.assertIn("LATCHWAY_SIBLING_REPOSITORIES_READ_TOKEN || github.token", workflow)
+        self.assertNotIn("LATCHWAY_SIBLING_REPOSITORIES_READ_TOKEN", workflow)
         self.assertIn("latchway-core-release-auth", workflow)
         self.assertIn("trap 'rm -f -- \"$auth_config\"' EXIT", workflow)
         self.assertIn("--config \"$auth_config\"", workflow)
@@ -447,7 +447,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertLess(tag, workflow.index(publication_markers[REPOSITORY_ID]))
         self.assertIn("persist-credentials: false", workflow)
         if REPOSITORY_ID == "javascript":
-            self.assertIn("needs: [promote, verify]", workflow)
+            self.assertIn("needs: [promote, verify, trusted-npm-cli]", workflow)
             self.assertNotIn("GITHUB_EVENT_NAME=push", workflow)
             self.assertIn("EXPECTED_RELEASE_TAG:", workflow)
             self.assertIn("EXPECTED_SOURCE_COMMIT:", workflow)
@@ -476,7 +476,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("scripts/", authorization)
         self.assertNotIn("python3 ", authorization)
         self.assertNotIn("node ", authorization)
-        self.assertIn("LATCHWAY_SIBLING_REPOSITORIES_READ_TOKEN", authorization)
+        self.assertIn("CORE_READ_TOKEN: ${{ github.token }}", authorization)
         self.assertIn("gh attestation verify", authorization)
 
         self.assertIn("actions/checkout", verification)
@@ -539,7 +539,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         if REPOSITORY_ID not in ("javascript", "react_native"):
             self.skipTest("npm publication repositories only")
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-        following = "github-draft"
+        following = "authorize-release" if REPOSITORY_ID == "javascript" else "github-draft"
         trusted = workflow.split("\n  trusted-npm-cli:\n", 1)[1].split(
             f"\n  {following}:\n", 1
         )[0]
@@ -585,6 +585,92 @@ class ReleaseWorkflowTests(unittest.TestCase):
         execution = publication.index('test "$("$cli" --version)"')
         self.assertLess(verification, extraction)
         self.assertLess(extraction, execution)
+
+    def test_javascript_protected_jobs_have_first_step_unique_sentinels(self) -> None:
+        if REPOSITORY_ID != "javascript":
+            self.skipTest("JavaScript release authority topology only")
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        headers = list(re.finditer(r"(?m)^  ([a-z0-9_-]+):\n", workflow))
+        jobs = {
+            match.group(1): workflow[match.start():(
+                headers[index + 1].start() if index + 1 < len(headers) else len(workflow)
+            )]
+            for index, match in enumerate(headers)
+        }
+        policies = {
+            "authorize-release": (
+                "release-administration",
+                "latchway-release-controls-v1:latchway-js:release-administration",
+            ),
+            "github-draft": (
+                "github-release",
+                "latchway-release-controls-v1:latchway-js:github-release",
+            ),
+            "npm-publish": ("npm", "latchway-release-controls-v1:latchway-js:npm"),
+            "publish": ("npm", "latchway-release-controls-v1:latchway-js:npm"),
+            "github-release-policy": (
+                "release-administration",
+                "latchway-release-controls-v1:latchway-js:release-administration",
+            ),
+            "github-release": (
+                "github-release",
+                "latchway-release-controls-v1:latchway-js:github-release",
+            ),
+        }
+        for job_name, (environment, policy) in policies.items():
+            prefix = (
+                "    steps:\n"
+                f"      - name: Require exact {environment} environment policy sentinel\n"
+                "        shell: bash\n"
+                "        env:\n"
+                f"          EXPECTED_POLICY_ID: {policy}\n"
+                "          OBSERVED_POLICY_ID: "
+                "${{ vars.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}\n"
+            )
+            self.assertEqual(jobs[job_name].index(prefix), jobs[job_name].index("    steps:\n"))
+        self.assertEqual(
+            len(re.findall(
+                r"\$\{\{\s*vars\.LATCHWAY_RELEASE_CONTROL_POLICY_ID\s*\}\}", workflow
+            )),
+            len(policies),
+        )
+        self.assertNotRegex(
+            workflow,
+            r"(?:env|github|secrets)\.LATCHWAY_RELEASE_CONTROL_POLICY_ID|vars\s*\[",
+        )
+
+    def test_javascript_prepublication_lease_is_fresh_at_mutations(self) -> None:
+        if REPOSITORY_ID != "javascript":
+            self.skipTest("JavaScript pre-publication lease only")
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        authorizer = workflow.split("\n  authorize-release:\n", 1)[1].split(
+            "\n  github-draft:\n", 1
+        )[0]
+        draft = workflow.split("\n  github-draft:\n", 1)[1].split(
+            "\n  npm-publish:\n", 1
+        )[0]
+        publication = workflow.split("\n  npm-publish:\n", 1)[1].split(
+            "\n  publish:\n", 1
+        )[0]
+        self.assertIn("needs: [promote, verify, trusted-npm-cli]", authorizer)
+        self.assertIn("latchway_github_immutable_release_policy_lease", authorizer)
+        self.assertIn('test "$GITHUB_RELEASE_POLICY_TTL_SECONDS" = 600', authorizer)
+        for consumer in (draft, publication):
+            self.assertGreaterEqual(consumer.count("immutable-release-policy-lease.json"), 2)
+            self.assertGreaterEqual(consumer.count("(.expires_at - .issued_at) == 600"), 2)
+            self.assertGreaterEqual(consumer.count(".run_attempt == $run_attempt"), 2)
+            self.assertGreaterEqual(consumer.count(".settings.enforced_by_owner == true"), 2)
+        draft_mutation = draft.index('gh release create "$RELEASE_TAG"')
+        self.assertLess(
+            draft.rindex('policy_root="$RUNNER_TEMP/prepublication-policy"', 0, draft_mutation),
+            draft_mutation,
+        )
+        npm_mutation = publication.index('"$LATCHWAY_NPM_CLI" publish "$archive"')
+        recheck = publication.rindex(
+            'policy_root="$RUNNER_TEMP/prepublication-policy"', 0, npm_mutation
+        )
+        self.assertGreater(recheck, publication.index("publish_state='{}'"))
+        self.assertLess(recheck, npm_mutation)
 
 if __name__ == "__main__":
     unittest.main()
