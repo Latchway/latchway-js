@@ -52,11 +52,129 @@ Before the first automated release, configure these external controls:
    before that later cryptographic check.
 
 npm currently requires a package to exist before its trusted publisher can be
-configured. If any package has no npm package record, its initial namespace
-bootstrap remains an external registry operation. Do not bypass that limitation
-by adding a long-lived token to `release.yml`; complete the reviewed npm
-bootstrap procedure for every missing package, then enable all four trusted
-publishers and the automated release path.
+configured. The following reviewed bootstrap is the only procedure for creating
+the five initially absent records. It is intentionally separate from both
+repositories' `release.yml`; it must never become part of an automated stable
+release.
+
+### One-time npm namespace bootstrap
+
+The fixed bootstrap set is `@latchway/client`, `@latchway/openai`,
+`@latchway/vercel-ai`, `@latchway/langchain`, and
+`@latchway/react-native`. Every archive has version
+`0.0.0-bootstrap.0`, Apache-2.0 licensing, and the exact owning repository
+metadata. It contains only `package.json`, `README.md`, and `LICENSE`: no source,
+entry point, dependency, lifecycle or install script, secret, or runtime
+implementation.
+
+Start from the exact reviewed commit in a clean tracked checkout. Review the
+commit before assigning it; do not substitute a moving branch or tag. Bootstrap
+archive generation and publication both require exactly npm 11.17.0 because npm
+pack format is part of the release input:
+
+```bash
+reviewed_commit="$(git rev-parse --verify HEAD)"
+git show --stat "$reviewed_commit"
+git status --porcelain=v1 --untracked-files=no
+npm --version # must print exactly 11.17.0
+pnpm run namespace:bootstrap --dry-run --reviewed-commit "$reviewed_commit"
+cat .artifacts/npm-namespace-bootstrap/inspection.json
+for archive in .artifacts/npm-namespace-bootstrap/*.tgz; do tar -tzf "$archive"; done
+```
+
+The status command must print nothing. The helper rejects a different HEAD,
+staged or unstaged tracked changes, an untracked helper or license, a nonexact
+npm version, or a missing `--reviewed-commit`. The inspection binds the exact
+source commit, SHA-256 of `scripts/npm-namespace-bootstrap.mjs`, SHA-256 of
+`LICENSE`, and npm version. Publication recomputes and compares all four bindings
+immediately before the first registry mutation.
+
+The default `.artifacts/npm-namespace-bootstrap` output is ignored by Git. A
+custom output is accepted only below that ignored directory or an
+operating-system temporary directory. The dry run fixes each archive's size,
+SHA-256, three-file closure, repository identity, and prospective command. Read
+all five manifests and hashes before authorizing registry mutation. Do not copy
+these inert archives into a stable release or use them as application
+dependencies.
+
+The authorized operator must keep the exact reviewed npm 11.17.0 toolchain and
+use an interactive terminal with a short-lived web-login session and
+organization access. The script rejects token environment variables. It has no
+implicit publish mode, and the exact confirmation phrase is deliberately
+cumbersome:
+
+```bash
+npm --version # must still print exactly 11.17.0
+pnpm run namespace:bootstrap --publish \
+  --reviewed-commit "$reviewed_commit" \
+  --confirm publish-five-latchway-bootstrap-packages
+```
+
+Do not run that command as part of ordinary release preparation. It always
+passes `--access=public`, `--tag=bootstrap`, the public npm registry, and
+`--ignore-scripts`; it never publishes under `latest`. Before any publish, it
+checks every package record. An absent name is created, while an existing name
+is adopted only if its sole version, sole `bootstrap` dist-tag, manifest,
+repository identity, integrity, shasum, and downloaded tarball bytes exactly
+match the reviewed local archive. This makes a partial prior run resumable: only
+missing names are published, and even a lost publish response is accepted only
+after the exact immutable bytes appear. Any foreign version, tag, manifest, or
+archive fails before another name is changed.
+
+After the last create, the script fetches and revalidates the complete
+five-package registry closure and writes
+`.artifacts/npm-namespace-bootstrap/completed.json`. Absence of that record means
+the bootstrap is not complete. Keep `bootstrap` on `0.0.0-bootstrap.0`; do not
+add or move `latest`. The completion record repeats the exact source commit,
+helper and license hashes, and npm version from the inspection. Inspect the
+public result independently, and keep the short-lived interactive session only
+through trusted-publisher setup and verification:
+
+```bash
+npm view @latchway/client dist-tags versions repository --json
+npm view @latchway/openai dist-tags versions repository --json
+npm view @latchway/vercel-ai dist-tags versions repository --json
+npm view @latchway/langchain dist-tags versions repository --json
+npm view @latchway/react-native dist-tags versions repository --json
+```
+
+Once all five records exist, use npm 11.15.0 or newer (the reviewed 11.17.0
+bootstrap toolchain already qualifies) to configure GitHub Actions trusted
+publishing. `--file release.yml` is the workflow filename, not a path.
+The four JavaScript packages trust `Latchway/latchway-js`; the React Native
+package trusts `Latchway/latchway-react-native-sdk`. Every publisher is limited
+to environment `npm` and the publish action:
+
+```bash
+npm trust github @latchway/client --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes
+npm trust github @latchway/openai --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes
+npm trust github @latchway/vercel-ai --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes
+npm trust github @latchway/langchain --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes
+npm trust github @latchway/react-native --repository Latchway/latchway-react-native-sdk --file release.yml --environment npm --allow-publish --yes
+```
+
+This setup requires each package record to exist and the configuring npm account
+to have two-factor authentication enabled. npm permits only one trusted-publisher
+configuration per package, so a pre-existing configuration must be reviewed and
+removed deliberately rather than overwritten by assumption. A granular access
+token that bypasses two-factor authentication cannot configure trusted
+publishing; use the authenticated npm 11.15.0-or-newer CLI session.
+
+Verify every exact configuration, then end the short-lived interactive session:
+
+```bash
+npm trust list @latchway/client --json
+npm trust list @latchway/openai --json
+npm trust list @latchway/vercel-ai --json
+npm trust list @latchway/langchain --json
+npm trust list @latchway/react-native --json
+npm logout --registry=https://registry.npmjs.org/
+```
+
+Retain the protected GitHub `npm` environments and required reviewers, require
+two-factor authentication for package settings, and disallow token publication
+after the trusted publishers work. Neither `NPM_TOKEN` nor `NODE_AUTH_TOKEN`
+belongs in a repository, workflow, artifact, or release environment.
 
 ## Candidate preparation
 
