@@ -17,7 +17,7 @@ Versioning once package publication begins.
 - Require exact-image JavaScript release evidence for both Firebase App Check
   and Cloudflare Turnstile, with separate protected tokens and a non-secret
   provider identity bound into each retained conformance report.
-- Release the client, OpenAI, Vercel AI, and LangChain packages as one
+- Prepare the client, OpenAI, Vercel AI, and LangChain packages for release as one
   deterministic evidence-bound set, with all-coordinate preflight, exact
   registry-byte verification, provenance, signatures, and retry-stable
   package-suffixed adoption history.
@@ -47,7 +47,7 @@ Versioning once package publication begins.
   support range. Compatibility remains experimental until hosted/exact-image,
   broader-version, and live-provider evidence exists.
 
-## [1.0.0] - 2026-08-30
+## Planned 1.0.0 candidate baseline (unreleased)
 
 ### Changed
 
