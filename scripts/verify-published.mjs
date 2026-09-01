@@ -1,6 +1,6 @@
 import { X509Certificate } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -13,6 +13,11 @@ import {
   assertSafeRetainedOutput,
   buildAdoptionRecord,
   buildRegistrySetManifest,
+  decodeBase64Strict,
+  normalizePublishStateForConsumerAttempt,
+  parseStrictJSONBytes,
+  readBoundedFileSync,
+  readBoundedStrictJSONFileSync,
   requireCurrentPublicationOrigin,
   sha256,
   verifyProvenanceStatement,
@@ -31,8 +36,20 @@ import {
   sleep,
 } from "./release-utils.mjs";
 
+const MAXIMUM_PACKAGE_EVIDENCE_BYTES = 2 * 1024 * 1024;
+const MAXIMUM_PACKAGE_LOCK_BYTES = 2 * 1024 * 1024;
+const MAXIMUM_PUBLISH_STATE_BYTES = 4 * 1024;
+const MAXIMUM_STATEMENT_BYTES = 256 * 1024;
+const MAXIMUM_CERTIFICATE_BYTES = 64 * 1024;
+const MAXIMUM_NPM_COMMAND_MILLISECONDS = 5 * 60 * 1000;
+const MAXIMUM_RUNTIME_COMMAND_MILLISECONDS = 60 * 1000;
+
 const packages = await readReleasePackages();
-const packageSetEvidence = JSON.parse(await readFile(join(ARTIFACTS_PATH, "package-evidence.json"), "utf8"));
+const packageSetEvidence = readBoundedStrictJSONFileSync(
+  join(ARTIFACTS_PATH, "package-evidence.json"),
+  "Package-set evidence",
+  MAXIMUM_PACKAGE_EVIDENCE_BYTES,
+);
 if (
   packageSetEvidence.schema_version !== 2
   || packageSetEvidence.package_count !== packages.length
@@ -54,7 +71,12 @@ const expectedRef = requiredEnvironment("GITHUB_REF", /^refs\/heads\/main$/u);
 const expectedEvent = requiredEnvironment("GITHUB_EVENT_NAME", /^repository_dispatch$/u);
 const currentRunID = Number(requiredEnvironment("GITHUB_RUN_ID", /^[1-9]\d*$/u));
 const currentRunAttempt = Number(requiredEnvironment("GITHUB_RUN_ATTEMPT", /^[1-9]\d*$/u));
-const publishState = parsePublishState(requiredEnvironment("PUBLISH_STATE_JSON", /^\{[^\r\n]+\}$/u));
+const producerRunID = Number(requiredEnvironment("PUBLISH_PRODUCER_RUN_ID", /^[1-9]\d*$/u));
+const producerRunAttempt = Number(requiredEnvironment("PUBLISH_PRODUCER_RUN_ATTEMPT", /^[1-9]\d*$/u));
+const publishState = normalizePublishStateForConsumerAttempt(
+  parsePublishState(requiredEnvironment("PUBLISH_STATE_JSON", /^\{[^\r\n]+\}$/u)),
+  { producerRunID, producerRunAttempt, currentRunID, currentRunAttempt },
+);
 if (workflowCommit !== expectedCommit || expectedRef !== SOURCE_REF) {
   throw new Error("The publication workflow commit does not match the promoted source commit.");
 }
@@ -67,7 +89,11 @@ for (const [index, package_] of packages.entries()) {
   const packageEvidence = packageSetEvidence.packages[index];
   assertPackageEvidence(package_, packageEvidence);
   const localArchive = join(ARTIFACTS_PATH, package_.archiveName);
-  const localBytes = await readFile(localArchive);
+  const localBytes = readBoundedFileSync(
+    localArchive,
+    `${package_.name} reviewed archive`,
+    10 * 1024 * 1024,
+  );
 
   const published = await waitForPublishedMetadata(package_, packageEvidence);
   const metadata = published.value;
@@ -183,7 +209,10 @@ for (const [index, package_] of packages.entries()) {
     id: package_.id,
     package: package_.name,
     version: package_.manifest.version,
-    publication_mode: publishState[package_.name] ? "published" : "adopted_existing",
+    // This fixed release asset describes the immutable registry fact. Whether
+    // the current workflow run performed or adopted that publication belongs
+    // only in the package-suffixed, retry-specific adoption record below.
+    publication_mode: "published",
     tarball: { ...tarball, registry_bytes_sha256: sha256(tarballResult.bytes) },
     trusted_publisher: {
       provider: "github",
@@ -258,7 +287,12 @@ for (const { package_, provenanceOrigin, tarball } of adoptionInputs) {
   adoptionNames.push(adoptionName);
 }
 if (typeof process.env.GITHUB_OUTPUT === "string") {
-  await appendFile(process.env.GITHUB_OUTPUT, `adoption_asset_count=${adoptionNames.length}\n`, { mode: 0o600 });
+  await appendFile(process.env.GITHUB_OUTPUT, [
+    `adoption_asset_count=${adoptionNames.length}`,
+    `adoption_run_id=${currentRunID}`,
+    `adoption_run_attempt=${currentRunAttempt}`,
+    "",
+  ].join("\n"), { mode: 0o600 });
 }
 process.stdout.write(`${JSON.stringify({
   ...postPublishEvidence,
@@ -268,9 +302,13 @@ process.stdout.write(`${JSON.stringify({
 function parsePublishState(source) {
   let value;
   try {
-    value = JSON.parse(source);
-  } catch {
-    throw new Error("PUBLISH_STATE_JSON must be valid JSON.");
+    value = parseStrictJSONBytes(
+      Buffer.from(source, "utf8"),
+      "PUBLISH_STATE_JSON",
+      MAXIMUM_PUBLISH_STATE_BYTES,
+    );
+  } catch (error) {
+    throw new Error("PUBLISH_STATE_JSON must be strict bounded JSON.", { cause: error });
   }
   const names = packages.map(({ name }) => name);
   if (
@@ -295,6 +333,9 @@ function assertPackageEvidence(package_, evidence) {
     || !/^[0-9a-f]{64}$/u.test(evidence.sha256 ?? "")
     || !/^[0-9a-f]{128}$/u.test(evidence.sha512 ?? "")
     || !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(evidence.integrity ?? "")
+    || !Number.isSafeInteger(evidence.bytes)
+    || evidence.bytes < 1
+    || evidence.bytes > 10 * 1024 * 1024
     || !Array.isArray(evidence.entries)
   ) {
     throw new Error(`Package-set evidence does not bind ${package_.name}.`);
@@ -383,21 +424,22 @@ function decodeStatement(attestation) {
   ) {
     throw new Error("The npm Sigstore DSSE envelope is malformed.");
   }
-  const bytes = Buffer.from(envelope.payload, "base64");
-  if (bytes.byteLength === 0 || bytes.byteLength > 256 * 1024) {
-    throw new Error("The npm attestation statement has an invalid size.");
-  }
-  try {
-    return JSON.parse(bytes.toString("utf8"));
-  } catch {
-    throw new Error("The npm attestation statement is not valid JSON.");
-  }
+  const bytes = decodeBase64Strict(
+    envelope.payload,
+    "The npm attestation statement",
+    MAXIMUM_STATEMENT_BYTES,
+  );
+  return parseStrictJSONBytes(bytes, "The npm attestation statement", MAXIMUM_STATEMENT_BYTES);
 }
 
 function verifyWorkflowCertificate(attestation, repositoryURL) {
   const certificateBytes = attestation?.bundle?.verificationMaterial?.certificate?.rawBytes;
   if (typeof certificateBytes !== "string") throw new Error("The provenance bundle is missing its signing certificate.");
-  const certificate = new X509Certificate(Buffer.from(certificateBytes, "base64"));
+  const certificate = new X509Certificate(decodeBase64Strict(
+    certificateBytes,
+    "The provenance signing certificate",
+    MAXIMUM_CERTIFICATE_BYTES,
+  ));
   const expectedIdentity = `URI:${repositoryURL}/${WORKFLOW_PATH}@${SOURCE_REF}`;
   if (certificate.subjectAltName !== expectedIdentity) {
     throw new Error("The provenance signing certificate has an unexpected workflow identity.");
@@ -431,7 +473,11 @@ async function verifyCleanRegistryConsumer(package_, evidence) {
       "--engine-strict=false",
       `--registry=${REGISTRY_URL}`,
     ], consumer, `${package_.name} clean registry install`, npmrc);
-    const lock = JSON.parse(await readFile(join(consumer, "package-lock.json"), "utf8"));
+    const lock = readBoundedStrictJSONFileSync(
+      join(consumer, "package-lock.json"),
+      `${package_.name} clean registry package lock`,
+      MAXIMUM_PACKAGE_LOCK_BYTES,
+    );
     const installed = lock.packages?.[`node_modules/${package_.name}`];
     if (installed?.version !== package_.manifest.version || installed.integrity !== evidence.integrity) {
       throw new Error(`${package_.name} clean registry consumer did not lock exact published integrity.`);
@@ -451,6 +497,7 @@ async function verifyCleanRegistryConsumer(package_, evidence) {
       encoding: "buffer",
       maxBuffer: 2 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: MAXIMUM_RUNTIME_COMMAND_MILLISECONDS,
     });
     if (runtime.error !== undefined || runtime.status !== 0) {
       throw new Error(`${package_.name} clean registry ESM consumer failed.`);
@@ -494,6 +541,7 @@ function runNpm(arguments_, cwd, operation, userconfig) {
     encoding: "buffer",
     maxBuffer: 4 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: MAXIMUM_NPM_COMMAND_MILLISECONDS,
   });
   if (result.error !== undefined || result.status !== 0) {
     throw new Error(`${operation} failed during published-package verification.`);
@@ -513,6 +561,7 @@ function runNpmCaptured(arguments_, cwd, maximumBytes, operation, userconfig) {
     encoding: "buffer",
     maxBuffer: maximumBytes,
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: MAXIMUM_NPM_COMMAND_MILLISECONDS,
   });
   if (result.error !== undefined || result.status !== 0 || !Buffer.isBuffer(result.stdout)) {
     throw new Error(`${operation} failed during published-package verification.`);

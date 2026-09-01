@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { assertReleaseCoordinates } from "./release-policy.mjs";
+import { readBoundedStrictJSONFileSync } from "./npm-release-evidence.mjs";
 import {
   ARTIFACTS_PATH,
   digestFile,
@@ -9,6 +10,12 @@ import {
   readReleasePackages,
   runReleaseSetConsumerSmoke,
 } from "./release-utils.mjs";
+
+const MAXIMUM_PACKAGE_EVIDENCE_BYTES = 2 * 1024 * 1024;
+const MAXIMUM_CANDIDATE_EVIDENCE_BYTES = 2 * 1024 * 1024;
+const MAXIMUM_TAG_EVIDENCE_BYTES = 64 * 1024;
+const MAXIMUM_REPRODUCIBILITY_EVIDENCE_BYTES = 2 * 1024 * 1024;
+const MAXIMUM_CONTRACT_EVIDENCE_BYTES = 256 * 1024;
 
 const expected = {
   version: requiredEnvironment("EXPECTED_VERSION", /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u),
@@ -21,8 +28,11 @@ if (packages.some(({ manifest }) => manifest.version !== expected.version)) {
   throw new Error("The checkout package versions differ from the verified artifact version.");
 }
 
-const packageEvidenceBytes = await readFile(join(ARTIFACTS_PATH, "package-evidence.json"));
-const packageEvidence = JSON.parse(packageEvidenceBytes.toString("utf8"));
+const packageEvidence = readBoundedStrictJSONFileSync(
+  join(ARTIFACTS_PATH, "package-evidence.json"),
+  "Downloaded package-set evidence",
+  MAXIMUM_PACKAGE_EVIDENCE_BYTES,
+);
 const expectedOrder = packages.map(({ name }) => name);
 if (
   packageEvidence.schema_version !== 2
@@ -96,7 +106,11 @@ if (checksumBytes.toString("utf8") !== `${checksumLines.sort().join("\n")}\n`) {
   throw new Error("SHA256SUMS does not exactly bind all four downloaded release archives.");
 }
 
-const candidate = JSON.parse(await readFile(join(ARTIFACTS_PATH, "release-candidate-evidence.json"), "utf8"));
+const candidate = readBoundedStrictJSONFileSync(
+  join(ARTIFACTS_PATH, "release-candidate-evidence.json"),
+  "Downloaded release-candidate evidence",
+  MAXIMUM_CANDIDATE_EVIDENCE_BYTES,
+);
 const requiredGates = [
   "workflow-policy",
   "contract-lock",
@@ -128,13 +142,25 @@ if (
   throw new Error("The release-candidate evidence is incomplete, dirty, or for a different commit.");
 }
 
-const tagEvidence = JSON.parse(await readFile(join(ARTIFACTS_PATH, "tag-evidence.json"), "utf8"));
+const tagEvidence = readBoundedStrictJSONFileSync(
+  join(ARTIFACTS_PATH, "tag-evidence.json"),
+  "Downloaded release-tag evidence",
+  MAXIMUM_TAG_EVIDENCE_BYTES,
+);
 if (tagEvidence.tag !== expected.tag || tagEvidence.commit !== expected.commit || tagEvidence.annotated !== true) {
   throw new Error("The annotated tag evidence does not bind this release artifact.");
 }
 
-const reproducibility = JSON.parse(await readFile(join(ARTIFACTS_PATH, "build-reproducibility.json"), "utf8"));
-const contract = JSON.parse(await readFile(join(ARTIFACTS_PATH, "contract-evidence.json"), "utf8"));
+const reproducibility = readBoundedStrictJSONFileSync(
+  join(ARTIFACTS_PATH, "build-reproducibility.json"),
+  "Downloaded build-reproducibility evidence",
+  MAXIMUM_REPRODUCIBILITY_EVIDENCE_BYTES,
+);
+const contract = readBoundedStrictJSONFileSync(
+  join(ARTIFACTS_PATH, "contract-evidence.json"),
+  "Downloaded contract evidence",
+  MAXIMUM_CONTRACT_EVIDENCE_BYTES,
+);
 if (
   reproducibility.identical !== true
   || reproducibility.package_count !== packages.length

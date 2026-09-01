@@ -12,6 +12,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  GITHUB_RELEASE_RECONCILER_SHA256: 89cfa4409c98fc5d7bc036f4bab804ce3626d37cc44d56c2e4b0def8431b4ab9
+  GITHUB_RELEASE_POLICY_TTL_SECONDS: "600"
+  GITHUB_RELEASE_VERSION_CHECK_SHA256: df32415ee70697c394349c22cee2164cbd9b49d8ca8b42ef1ab587eac586b77a
   NPM_CLI_ARCHIVE: npm-11.6.2.tgz
   NPM_CLI_BYTES: "2663834"
   NPM_CLI_ENTRY_COUNT: "2133"
@@ -33,6 +36,7 @@ jobs:
       contents: read
     outputs:
       commit: ${{ steps.coordinates.outputs.commit }}
+      report_artifact_name: ${{ steps.report_handoff.outputs.artifact_name }}
     steps:
       - name: Validate dispatch envelope before network access
         id: coordinates
@@ -102,10 +106,14 @@ jobs:
             --signer-workflow Latchway/latchway/.github/workflows/cross-repository-conformance.yml \
             --source-ref refs/heads/main \
             --deny-self-hosted-runners
+      - name: Bind promotion report handoff to this producer attempt
+        id: report_handoff
+        shell: bash
+        run: printf 'artifact_name=sdk-core-promotion-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       - name: Transfer authenticated promotion report to credential-free validation
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: sdk-core-promotion-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.report_handoff.outputs.artifact_name }}
           path: ${{ runner.temp }}/latchway-cross-repository-promotion.json
           if-no-files-found: error
           retention-days: 1
@@ -134,7 +142,7 @@ jobs:
       - name: Download authenticated core promotion report
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: sdk-core-promotion-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ needs.authorize-promotion.outputs.report_artifact_name }}
           path: ${{ runner.temp }}/sdk-core-promotion
       - name: Validate exact report, dispatch, and local source bindings without credentials
         id: promotion
@@ -232,6 +240,7 @@ jobs:
     timeout-minutes: 30
     outputs:
       artifact_name: ${{ steps.package.outputs.artifact_name }}
+      reconciler_artifact_name: ${{ steps.release_reconciler.outputs.artifact_name }}
       version: ${{ steps.package.outputs.version }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -306,6 +315,37 @@ jobs:
           include-hidden-files: true
           compression-level: 0
           retention-days: 14
+      - name: Stage the fixed GitHub release reconciler as inert data
+        id: release_reconciler
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_RELEASE_RECONCILER_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$GITHUB_RELEASE_VERSION_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          source_files=(scripts/reconcile-github-release.py scripts/require-gh-version.py)
+          for source in "${source_files[@]}"; do
+            test -f "$source"
+            test ! -L "$source"
+            test -s "$source"
+          done
+          printf '%s  %s\n' "$GITHUB_RELEASE_RECONCILER_SHA256" "${source_files[0]}" | sha256sum --check --strict
+          printf '%s  %s\n' "$GITHUB_RELEASE_VERSION_CHECK_SHA256" "${source_files[1]}" | sha256sum --check --strict
+          destination="$RUNNER_TEMP/trusted-github-release-reconciler"
+          mkdir -m 700 "$destination"
+          install -m 600 -- "${source_files[@]}" "$destination/"
+          shopt -s nullglob dotglob
+          closure=("$destination"/*)
+          test "${#closure[@]}" = 2
+          printf 'artifact_name=trusted-github-release-reconciler-%s-%s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - name: Transfer the authenticated release reconciler to the no-checkout job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.release_reconciler.outputs.artifact_name }}
+          path: ${{ runner.temp }}/trusted-github-release-reconciler
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
 
   trusted-npm-cli:
     name: Prepare exact trusted-publishing npm CLI without credentials
@@ -313,6 +353,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
+    outputs:
+      artifact_name: ${{ steps.handoff.outputs.artifact_name }}
     env:
       NPM_CONFIG_IGNORE_SCRIPTS: "true"
     steps:
@@ -377,10 +419,14 @@ jobs:
             .name == "npm" and .version == $version and
             .bin.npm == "bin/npm-cli.js" and .bin.npx == "bin/npx-cli.js"
           ' "$inspection/package/package.json" >/dev/null
+      - name: Bind npm CLI handoff to this producer attempt
+        id: handoff
+        shell: bash
+        run: printf 'artifact_name=trusted-npm-cli-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       - name: Transfer exact npm CLI tarball as inert data
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: trusted-npm-cli-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.handoff.outputs.artifact_name }}
           path: ${{ runner.temp }}/trusted-npm-cli/npm-11.6.2.tgz
           if-no-files-found: error
           compression-level: 0
@@ -427,7 +473,7 @@ jobs:
             type == "object" and
             (keys | sort) == ["enabled", "enforced_by_owner"] and
             .enabled == true and
-            (.enforced_by_owner | type) == "boolean"
+            .enforced_by_owner == true
           ' "$RUNNER_TEMP/immutable-release-settings.json" >/dev/null
           unset ADMIN_TOKEN
           export GH_TOKEN="$RELEASE_TOKEN"
@@ -494,6 +540,8 @@ jobs:
       id-token: write
     outputs:
       publish_state: ${{ steps.registry.outputs.publish_state }}
+      producer_run_attempt: ${{ steps.registry.outputs.producer_run_attempt }}
+      producer_run_id: ${{ steps.registry.outputs.producer_run_id }}
     steps:
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
@@ -503,7 +551,7 @@ jobs:
       - name: Download exact credential-free npm CLI handoff
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: trusted-npm-cli-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ needs.trusted-npm-cli.outputs.artifact_name }}
           path: ${{ runner.temp }}/trusted-npm-cli
       - name: Verify exact npm CLI closure before extraction or execution
         shell: bash
@@ -711,6 +759,7 @@ jobs:
             [[ "$expected_integrity" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]]
             [[ "$expected_shasum" =~ ^[0-9a-f]{40}$ ]]
             status=$(curl --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
+              --max-filesize 2097152 \
               --silent --show-error --output "$metadata" --write-out '%{http_code}' \
               "https://registry.npmjs.org/${registry_paths[$index]}/$RELEASE_VERSION")
             if [[ "$status" == 200 ]]; then
@@ -745,7 +794,11 @@ jobs:
               --arg name "$package_name" --argjson performed "$publish_performed" \
               '$current + {($name): $performed}')
           done
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           printf 'publish_state=%s\n' "$publish_state" >> "$GITHUB_OUTPUT"
+          printf 'producer_run_id=%s\n' "$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          printf 'producer_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
   publish:
     name: Generate and stage npm registry evidence without OIDC
@@ -757,6 +810,10 @@ jobs:
     permissions:
       actions: read
       contents: read
+    outputs:
+      adoption_run_attempt: ${{ steps.registry_evidence.outputs.adoption_run_attempt }}
+      adoption_run_id: ${{ steps.registry_evidence.outputs.adoption_run_id }}
+      artifact_name: ${{ steps.release_handoff.outputs.artifact_name }}
     env:
       RELEASE_COMMIT: ${{ needs.promote.outputs.commit }}
       RELEASE_TAG: ${{ needs.promote.outputs.tag }}
@@ -799,15 +856,22 @@ jobs:
         env:
           EXPECTED_RELEASE_TAG: ${{ needs.promote.outputs.tag }}
           EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
+          PUBLISH_PRODUCER_RUN_ATTEMPT: ${{ needs.npm-publish.outputs.producer_run_attempt }}
+          PUBLISH_PRODUCER_RUN_ID: ${{ needs.npm-publish.outputs.producer_run_id }}
           PUBLISH_STATE_JSON: ${{ needs.npm-publish.outputs.publish_state }}
         run: node scripts/verify-published.mjs
       - name: Stage exact JavaScript release assets for isolated GitHub publication
+        id: release_handoff
         env:
           ADOPTION_ASSET_COUNT: ${{ steps.registry_evidence.outputs.adoption_asset_count }}
+          ADOPTION_RUN_ATTEMPT: ${{ steps.registry_evidence.outputs.adoption_run_attempt }}
+          ADOPTION_RUN_ID: ${{ steps.registry_evidence.outputs.adoption_run_id }}
           RELEASE_VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -Eeuo pipefail
           test "$ADOPTION_ASSET_COUNT" = 4
+          test "$ADOPTION_RUN_ID" = "$GITHUB_RUN_ID"
+          test "$ADOPTION_RUN_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"
           [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           destination="$RUNNER_TEMP/javascript-release-assets"
           mkdir -m 700 "$destination"
@@ -844,6 +908,8 @@ jobs:
             matches=(.artifacts/npm-release-adoption-"$package_id"-*.json)
             test "${#matches[@]}" = 1
             [[ "${matches[0]##*/}" =~ ^npm-release-adoption-${package_id}-[1-9][0-9]*-[1-9][0-9]*\.json$ ]]
+            test "${matches[0]##*/}" = \
+              "npm-release-adoption-$package_id-$ADOPTION_RUN_ID-$ADOPTION_RUN_ATTEMPT.json"
           done
           for asset in "${fixed_assets[@]}" "${adoption_assets[@]}"; do
             test -f "$asset"
@@ -851,10 +917,12 @@ jobs:
             test -s "$asset"
           done
           install -m 600 -- "${fixed_assets[@]}" "${adoption_assets[@]}" "$destination/"
+          printf 'artifact_name=latchway-javascript-release-%s-%s-%s\n' \
+            "$RELEASE_VERSION" "$ADOPTION_RUN_ID" "$ADOPTION_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       - name: Transfer exact JavaScript assets to the no-checkout publication job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: latchway-javascript-release-${{ needs.verify.outputs.version }}
+          name: ${{ steps.release_handoff.outputs.artifact_name }}
           path: ${{ runner.temp }}/javascript-release-assets
           if-no-files-found: error
           compression-level: 0
@@ -869,8 +937,12 @@ jobs:
     environment: npm
     permissions:
       contents: read
+    outputs:
+      artifact_name: ${{ steps.policy.outputs.artifact_name }}
+      evidence_sha256: ${{ steps.policy.outputs.evidence_sha256 }}
     steps:
       - name: Verify immutable releases remain enforced with the protected admin credential
+        id: policy
         shell: bash
         env:
           ADMIN_TOKEN: ${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}
@@ -887,8 +959,43 @@ jobs:
             type == "object" and
             (keys | sort) == ["enabled", "enforced_by_owner"] and
             .enabled == true and
-            (.enforced_by_owner | type) == "boolean"
+            .enforced_by_owner == true
           ' "$RUNNER_TEMP/immutable-release-settings.json" >/dev/null
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,15}$ ]]
+          (( GITHUB_RUN_ID <= 9007199254740991 ))
+          (( GITHUB_RUN_ATTEMPT <= 9007199254740991 ))
+          test "$GITHUB_RELEASE_POLICY_TTL_SECONDS" = 600
+          issued_at=$(date --utc +%s)
+          [[ "$issued_at" =~ ^[1-9][0-9]{0,15}$ ]]
+          expires_at=$((issued_at + GITHUB_RELEASE_POLICY_TTL_SECONDS))
+          (( expires_at > issued_at ))
+          evidence="$RUNNER_TEMP/immutable-release-policy.json"
+          jq --sort-keys --arg repository "$GITHUB_REPOSITORY" \
+            --argjson run_id "$GITHUB_RUN_ID" --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson issued_at "$issued_at" --argjson expires_at "$expires_at" '{
+            schema_version: 2,
+            kind: "latchway_github_immutable_release_policy",
+            repository: $repository,
+            run_id: $run_id,
+            run_attempt: $run_attempt,
+            issued_at: $issued_at,
+            expires_at: $expires_at,
+            settings: .
+          }' "$RUNNER_TEMP/immutable-release-settings.json" > "$evidence"
+          evidence_sha256=$(sha256sum "$evidence" | cut -d ' ' -f 1)
+          [[ "$evidence_sha256" =~ ^[0-9a-f]{64}$ ]]
+          printf 'artifact_name=immutable-release-policy-%s-%s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          printf 'evidence_sha256=%s\n' "$evidence_sha256" >> "$GITHUB_OUTPUT"
+      - name: Transfer verified immutable-release policy without the admin credential
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.policy.outputs.artifact_name }}
+          path: ${{ runner.temp }}/immutable-release-policy.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
 
   github-release:
     name: Publish immutable GitHub release without candidate checkout
@@ -906,11 +1013,23 @@ jobs:
       - name: Download exact JavaScript release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: latchway-javascript-release-${{ needs.verify.outputs.version }}
+          name: ${{ needs.publish.outputs.artifact_name }}
           path: ${{ runner.temp }}/javascript-release-assets
+      - name: Download the fixed GitHub release reconciler
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.verify.outputs.reconciler_artifact_name }}
+          path: ${{ runner.temp }}/trusted-github-release-reconciler
+      - name: Download verified immutable-release policy evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.github-release-policy.outputs.artifact_name }}
+          path: ${{ runner.temp }}/immutable-release-policy
       - name: Validate exact JavaScript asset closure before OIDC attestation
         shell: bash
         env:
+          ADOPTION_RUN_ATTEMPT: ${{ needs.publish.outputs.adoption_run_attempt }}
+          ADOPTION_RUN_ID: ${{ needs.publish.outputs.adoption_run_id }}
           RELEASE_COMMIT: ${{ needs.promote.outputs.commit }}
           RELEASE_TAG: ${{ needs.promote.outputs.tag }}
           RELEASE_VERSION: ${{ needs.verify.outputs.version }}
@@ -918,6 +1037,8 @@ jobs:
           set -Eeuo pipefail
           [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$ADOPTION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ADOPTION_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           test "$RELEASE_TAG" = "v$RELEASE_VERSION"
           asset_root="$RUNNER_TEMP/javascript-release-assets"
           package_ids=(client openai vercel-ai langchain)
@@ -985,12 +1106,13 @@ jobs:
             test "${#matches[@]}" = 1
             adoption_name=${matches[0]##*/}
             [[ "$adoption_name" =~ ^npm-release-adoption-${package_id}-[1-9][0-9]*-[1-9][0-9]*\.json$ ]]
-            test "$adoption_name" = "npm-release-adoption-$package_id-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+            test "$adoption_name" = \
+              "npm-release-adoption-$package_id-$ADOPTION_RUN_ID-$ADOPTION_RUN_ATTEMPT.json"
             jq --exit-status --arg package "$package_name" --arg version "$RELEASE_VERSION" \
               --arg tag "$RELEASE_TAG" --arg repository "https://github.com/$GITHUB_REPOSITORY" \
               --arg commit "$RELEASE_COMMIT" --arg tarball "${tarballs[$index]}" \
-              --arg manifest_sha256 "$manifest_sha256" --argjson run "$GITHUB_RUN_ID" \
-              --argjson attempt "$GITHUB_RUN_ATTEMPT" --slurpfile reviewed "$asset_root/package-evidence.json" '
+              --arg manifest_sha256 "$manifest_sha256" --argjson run "$ADOPTION_RUN_ID" \
+              --argjson attempt "$ADOPTION_RUN_ATTEMPT" --slurpfile reviewed "$asset_root/package-evidence.json" '
               ($reviewed[0].packages[] | select(.package == $package)) as $package_evidence |
               .schema_version == 1 and .kind == "latchway_npm_release_adoption" and
               .package == $package and .version == $version and .release_tag == $tag and
@@ -1014,6 +1136,9 @@ jobs:
               .adoption.ref == "refs/heads/main" and .adoption.run_id == $run and
               .adoption.run_attempt == $attempt and
               (.adoption.mode == "published" or .adoption.mode == "adopted_existing") and
+              ((.adoption.mode == "published") ==
+                (.provenance.run_id == .adoption.run_id and
+                 .provenance.run_attempt == .adoption.run_attempt)) and
               .registry_evidence_manifest == {
                 file: "npm-registry-evidence-manifest.json", sha256: $manifest_sha256
               }
@@ -1031,6 +1156,7 @@ jobs:
             .schema_version == 3 and .kind == "latchway_npm_package_set_publication_evidence" and
             .version == $version and .package_count == 4 and .publish_order == $names and
             (.packages | map(.package)) == $names and
+            all(.packages[]; .publication_mode == "published") and
             .evidence_manifest.file == "npm-registry-evidence-manifest.json" and
             .evidence_manifest.sha256 == $manifest_sha256
           ' "$asset_root/post-publish-evidence.json" >/dev/null
@@ -1059,165 +1185,60 @@ jobs:
         uses: actions/attest-build-provenance@e4d4f7c39adfa4c260fb5c147f0622000aa14b99 # v4.0.0
         with:
           subject-path: ${{ runner.temp }}/javascript-release-assets/*
-      - name: Reconcile, publish, and verify immutable release with fixed API calls
+      - name: Reconcile, publish, and verify the immutable release with the fixed handoff
         shell: bash
         env:
-          RELEASE_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          POLICY_EVIDENCE_SHA256: ${{ needs.github-release-policy.outputs.evidence_sha256 }}
           RELEASE_COMMIT: ${{ needs.promote.outputs.commit }}
           RELEASE_TAG: ${{ needs.promote.outputs.tag }}
           RELEASE_VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -Eeuo pipefail
-          test -n "$RELEASE_TOKEN"
+          test -n "$GH_TOKEN"
           [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$POLICY_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,15}$ ]]
+          (( GITHUB_RUN_ID <= 9007199254740991 ))
+          (( GITHUB_RUN_ATTEMPT <= 9007199254740991 ))
           test "$RELEASE_TAG" = "v$RELEASE_VERSION"
-          version_line=$(gh version | head -n 1)
-          [[ "$version_line" =~ ^gh[[:space:]]version[[:space:]]([0-9]+)\.([0-9]+)\.([0-9]+)([[:space:]]\([^()]+\))?$ ]]
-          major=${BASH_REMATCH[1]}; minor=${BASH_REMATCH[2]}; patch=${BASH_REMATCH[3]}
-          (( major > 2 || (major == 2 && (minor > 97 || (minor == 97 && patch >= 0))) ))
-          gh release verify --help | grep --fixed-strings -- '--format' >/dev/null
-          gh release verify-asset --help | grep --fixed-strings -- '--format' >/dev/null
-
-          export GH_TOKEN="$RELEASE_TOKEN"
-          unset RELEASE_TOKEN
-
-          asset_root="$RUNNER_TEMP/javascript-release-assets"
-          package_ids=(client openai vercel-ai langchain)
-          shopt -s nullglob
-          adoption_assets=("$asset_root"/npm-release-adoption-*.json)
-          test "${#adoption_assets[@]}" = 4
-          fixed_assets=(
-            "$asset_root/latchway-client-$RELEASE_VERSION.tgz"
-            "$asset_root/latchway-openai-$RELEASE_VERSION.tgz"
-            "$asset_root/latchway-vercel-ai-$RELEASE_VERSION.tgz"
-            "$asset_root/latchway-langchain-$RELEASE_VERSION.tgz"
-            "$asset_root/docs-bundle-$RELEASE_VERSION.tar.gz"
-            "$asset_root/SHA256SUMS"
-            "$asset_root/build-reproducibility.json"
-            "$asset_root/contract-evidence.json"
-            "$asset_root/dependency-vulnerability-scan.json"
-            "$asset_root/package-evidence.json"
-            "$asset_root/post-publish-evidence.json"
-            "$asset_root/publish-input-evidence.json"
-            "$asset_root/release-candidate-evidence.json"
-            "$asset_root/tag-evidence.json"
-            "$asset_root/npm-registry-evidence-manifest.json"
-          )
-          for package_id in "${package_ids[@]}"; do
-            fixed_assets+=(
-              "$asset_root/npm-$package_id-registry-version.json"
-              "$asset_root/npm-$package_id-registry-view.json"
-              "$asset_root/npm-$package_id-attestations.json"
-              "$asset_root/npm-$package_id-audit-signatures.json"
-            )
-            matches=("$asset_root"/npm-release-adoption-"$package_id"-*.json)
-            test "${#matches[@]}" = 1
-            [[ "${matches[0]##*/}" =~ ^npm-release-adoption-${package_id}-[1-9][0-9]*-[1-9][0-9]*\.json$ ]]
+          reconciler_root="$RUNNER_TEMP/trusted-github-release-reconciler"
+          reconciler="$reconciler_root/reconcile-github-release.py"
+          version_check="$reconciler_root/require-gh-version.py"
+          shopt -s nullglob dotglob
+          reconciler_closure=("$reconciler_root"/*)
+          test "${#reconciler_closure[@]}" = 2
+          for control in "${reconciler_closure[@]}"; do
+            test -f "$control"
+            test ! -L "$control"
+            test -s "$control"
           done
-          : > "$RUNNER_TEMP/fixed-assets.txt"
-          for asset in "${fixed_assets[@]}" "${adoption_assets[@]}"; do
-            test -f "$asset"
-            test ! -L "$asset"
-            test -s "$asset"
-          done
-          for asset in "${fixed_assets[@]}"; do printf '%s\n' "${asset##*/}" >> "$RUNNER_TEMP/fixed-assets.txt"; done
-          test "$(sort -u "$RUNNER_TEMP/fixed-assets.txt" | wc -l | tr -d ' ')" = 31
-          fixed_names=$(sort "$RUNNER_TEMP/fixed-assets.txt" | jq --raw-input --slurp 'split("\n")[:-1]')
+          printf '%s  %s\n' "$GITHUB_RELEASE_RECONCILER_SHA256" "$reconciler" | sha256sum --check --strict
+          printf '%s  %s\n' "$GITHUB_RELEASE_VERSION_CHECK_SHA256" "$version_check" | sha256sum --check --strict
+          policy_root="$RUNNER_TEMP/immutable-release-policy"
+          policy="$policy_root/immutable-release-policy.json"
+          policy_closure=("$policy_root"/*)
+          test "${#policy_closure[@]}" = 1
+          test "${policy_closure[0]}" = "$policy"
+          test -f "$policy"
+          test ! -L "$policy"
+          test -s "$policy"
+          printf '%s  %s\n' "$POLICY_EVIDENCE_SHA256" "$policy" | sha256sum --check --strict
 
-          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > "$RUNNER_TEMP/tag-ref.json"
-          tag_object=$(jq --raw-output '.object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$RUNNER_TEMP/tag-ref.json")
-          test "$(jq --raw-output .object.type "$RUNNER_TEMP/tag-ref.json")" = tag
-          gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" > "$RUNNER_TEMP/tag-object.json"
-          jq --exit-status --arg tag "$RELEASE_TAG" --arg commit "$RELEASE_COMMIT" \
-            '.tag == $tag and .object.type == "commit" and .object.sha == $commit' \
-            "$RUNNER_TEMP/tag-object.json" >/dev/null
-
-          lookup_release() {
-            gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
-              "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
-          }
-          lookup_release
           title="Latchway JavaScript SDKs $RELEASE_VERSION"
-          validate_release() {
-            local allow_draft=$1
-            jq --exit-status --arg tag "$RELEASE_TAG" --arg title "$title" \
-              --argjson fixed "$fixed_names" --argjson allow_draft "$allow_draft" '
-              . as $release |
-              .tag_name == $tag and .name == $title and .prerelease == false and
-              (.draft | type) == "boolean" and (.immutable | type) == "boolean" and
-              ($allow_draft or .draft == false) and
-              ((.draft == true and .immutable == false) or (.draft == false and .immutable == true)) and
-              ([.assets[].name] | length) == ([.assets[].name] | unique | length) and
-              all($release.assets[].name; . as $name | ($fixed | index($name)) != null or
-                ($name | test("^npm-release-adoption-(client|openai|vercel-ai|langchain)-[1-9][0-9]*-[1-9][0-9]*\\.json$")))
-            ' "$RUNNER_TEMP/release.json" >/dev/null
-          }
-          validate_release true
-          verify_or_upload() {
-            local asset=$1 name remote_count remote_id remote_size downloaded
-            name=${asset##*/}
-            remote_count=$(jq --arg name "$name" '[.assets[] | select(.name == $name)] | length' "$RUNNER_TEMP/release.json")
-            test "$remote_count" -le 1
-            if [[ "$remote_count" -eq 1 ]]; then
-              remote_id=$(jq --raw-output --arg name "$name" '.assets[] | select(.name == $name) | .id' "$RUNNER_TEMP/release.json")
-              remote_size=$(jq --raw-output --arg name "$name" '.assets[] | select(.name == $name) | .size' "$RUNNER_TEMP/release.json")
-              test "$remote_size" = "$(wc -c < "$asset" | tr -d ' ')"
-              downloaded="$RUNNER_TEMP/existing-$name"
-              gh api --method GET -H 'Accept: application/octet-stream' \
-                "repos/$GITHUB_REPOSITORY/releases/assets/$remote_id" > "$downloaded"
-              cmp --silent "$asset" "$downloaded"
-              return
-            fi
-            test "$(jq --raw-output .draft "$RUNNER_TEMP/release.json")" = true
-            gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY"
-          }
-          for asset in "${fixed_assets[@]}"; do verify_or_upload "$asset"; done
-          for package_id in "${package_ids[@]}"; do
-            matches=("$asset_root"/npm-release-adoption-"$package_id"-*.json)
-            test "${#matches[@]}" = 1
-            adoption_name=${matches[0]##*/}
-            if [[ "$(jq --arg name "$adoption_name" '[.assets[] | select(.name == $name)] | length' "$RUNNER_TEMP/release.json")" -eq 1 ||
-                  "$(jq --raw-output .draft "$RUNNER_TEMP/release.json")" == true ]]; then
-              verify_or_upload "${matches[0]}"
-            else
-              pattern="^npm-release-adoption-${package_id}-[1-9][0-9]*-[1-9][0-9]*\\.json$"
-              test "$(jq --arg pattern "$pattern" '[.assets[].name | select(test($pattern))] | length' "$RUNNER_TEMP/release.json")" -ge 1
-            fi
-          done
-          lookup_release
-          validate_release true
-          jq --exit-status --argjson fixed "$fixed_names" '. as $release |
-            ([$release.assets[].name] - $fixed | all(test("^npm-release-adoption-(client|openai|vercel-ai|langchain)-[1-9][0-9]*-[1-9][0-9]*\\.json$"))) and
-            all($fixed[]; . as $name | ($release.assets | map(.name) | index($name)) != null) and
-            all(["client", "openai", "vercel-ai", "langchain"][]; . as $id |
-              any($release.assets[].name; test("^npm-release-adoption-" + $id + "-[1-9][0-9]*-[1-9][0-9]*\\.json$")))
-          ' "$RUNNER_TEMP/release.json" >/dev/null
-          if [[ "$(jq --raw-output .draft "$RUNNER_TEMP/release.json")" == true ]]; then
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-              --draft=false --prerelease=false --latest
-          fi
-          lookup_release
-          validate_release false
-          jq --exit-status --argjson fixed "$fixed_names" '. as $release |
-            all($fixed[]; . as $name | ($release.assets | map(.name) | index($name)) != null) and
-            all(["client", "openai", "vercel-ai", "langchain"][]; . as $id |
-              any($release.assets[].name; test("^npm-release-adoption-" + $id + "-[1-9][0-9]*-[1-9][0-9]*\\.json$")))
-          ' "$RUNNER_TEMP/release.json" >/dev/null
-
-          verified=false
-          for attempt in $(seq 1 12); do
-            if gh release verify "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --format json \
-              > "$RUNNER_TEMP/release-attestation.json"; then verified=true; break; fi
-            test "$attempt" = 12 || sleep 10
-          done
-          test "$verified" = true
-          for asset in "${fixed_assets[@]}"; do
-            verified=false
-            for attempt in $(seq 1 12); do
-              if gh release verify-asset "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --format json \
-                > "$RUNNER_TEMP/${asset##*/}.attestation.json"; then verified=true; break; fi
-              test "$attempt" = 12 || sleep 10
-            done
-            test "$verified" = true
-          done
+          asset_root="$RUNNER_TEMP/javascript-release-assets"
+          release_assets=("$asset_root"/*)
+          test "${#release_assets[@]}" = 35
+          python3 "$reconciler" \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --title "$title" \
+            --expected-commit "$RELEASE_COMMIT" \
+            --npm-adoption-history \
+            --verified-immutable-policy "$policy" \
+            --verified-immutable-policy-sha256 "$POLICY_EVIDENCE_SHA256" \
+            --verified-immutable-policy-run-id "$GITHUB_RUN_ID" \
+            --verified-immutable-policy-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            "${release_assets[@]}"

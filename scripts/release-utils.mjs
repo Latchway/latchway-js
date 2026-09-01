@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { constants, createReadStream } from "node:fs";
 import {
   lstat,
   mkdir,
@@ -16,6 +17,11 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+
+import {
+  parseStrictJSONBytes,
+  readBoundedStrictJSONFileSync,
+} from "./npm-release-evidence.mjs";
 
 export const ROOT_PATH = fileURLToPath(new URL("..", import.meta.url));
 export const ARTIFACTS_PATH = fileURLToPath(new URL("../.artifacts/", import.meta.url));
@@ -89,6 +95,10 @@ const SECRET_CONTENT = [
   /\bsk-[A-Za-z0-9]{20,}\b/u,
   /\/\/registry\.npmjs\.org\/:_authToken\s*=\s*(?!\$\{)[^\s$][^\s]*/u,
 ];
+const MAXIMUM_PACKAGE_MANIFEST_BYTES = 1024 * 1024;
+const MAXIMUM_NPM_COMMAND_MILLISECONDS = 5 * 60 * 1000;
+const MAXIMUM_RUNTIME_COMMAND_MILLISECONDS = 60 * 1000;
+const MAXIMUM_TYPESCRIPT_COMMAND_MILLISECONDS = 2 * 60 * 1000;
 
 export async function readRootManifest() {
   return JSON.parse(await readFile(join(ROOT_PATH, "package.json"), "utf8"));
@@ -143,14 +153,41 @@ export function artifactNameForPackage(packageID, stem) {
   return `npm-${packageID}-${stem}.json`;
 }
 
-export async function digestFile(path) {
-  const bytes = await readFile(path);
+export async function digestFile(path, maximumBytes = 10 * 1024 * 1024) {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
+    throw new Error("Release digest received an invalid file-size limit.");
+  }
+  const metadata = await lstat(path);
+  if (
+    !metadata.isFile()
+    || metadata.isSymbolicLink()
+    || !Number.isSafeInteger(metadata.size)
+    || metadata.size < 1
+    || metadata.size > maximumBytes
+  ) {
+    throw new Error("Release digest input must be a bounded regular file.");
+  }
+  const hashes = {
+    sha1: createHash("sha1"),
+    sha256: createHash("sha256"),
+    sha512: createHash("sha512"),
+  };
+  let size = 0;
+  for await (const chunk of createReadStream(path, {
+    flags: constants.O_RDONLY | constants.O_NOFOLLOW,
+    highWaterMark: 1024 * 1024,
+  })) {
+    size += chunk.byteLength;
+    if (size > maximumBytes) throw new Error("Release digest input changed beyond its file-size limit.");
+    for (const hash of Object.values(hashes)) hash.update(chunk);
+  }
+  if (size !== metadata.size) throw new Error("Release digest input changed while it was read.");
   return {
-    bytes: bytes.byteLength,
-    sha1: createHash("sha1").update(bytes).digest("hex"),
-    sha256: createHash("sha256").update(bytes).digest("hex"),
-    sha512: createHash("sha512").update(bytes).digest("hex"),
-    integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+    bytes: size,
+    sha1: hashes.sha1.digest("hex"),
+    sha256: hashes.sha256.digest("hex"),
+    sha512: hashes.sha512.copy().digest("hex"),
+    integrity: `sha512-${hashes.sha512.digest("base64")}`,
   };
 }
 
@@ -220,10 +257,16 @@ export async function inspectTarball(archivePath, package_) {
   const extraction = await mkdtemp(join(tmpdir(), "latchway-package-inspect-"));
   try {
     execFileSync("tar", ["-xzf", archivePath, "-C", extraction], {
+      maxBuffer: 2 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: MAXIMUM_RUNTIME_COMMAND_MILLISECONDS,
     });
     await assertExtractedTreeIsRegular(join(extraction, "package"));
-    const packagedManifest = JSON.parse(await readFile(join(extraction, "package", "package.json"), "utf8"));
+    const packagedManifest = readBoundedStrictJSONFileSync(
+      join(extraction, "package", "package.json"),
+      `${package_.name} packaged manifest`,
+      MAXIMUM_PACKAGE_MANIFEST_BYTES,
+    );
     assertPackagedManifest(packagedManifest, expectedPublishedManifest(package_));
 
     if (package_.id === "client") {
@@ -304,10 +347,11 @@ export async function runReleaseSetConsumerSmoke(packageArchives, { typescript, 
     if (peerSource === "reviewed") await linkReviewedPeerDependencies(consumer);
 
     for (const package_ of packages) {
-      const installedManifest = JSON.parse(await readFile(
+      const installedManifest = readBoundedStrictJSONFileSync(
         join(consumer, "node_modules", ...package_.name.split("/"), "package.json"),
-        "utf8",
-      ));
+        `${package_.name} installed manifest`,
+        MAXIMUM_PACKAGE_MANIFEST_BYTES,
+      );
       if (installedManifest.name !== package_.name || installedManifest.version !== package_.manifest.version) {
         throw new Error(`The clean consumer did not install exact ${package_.name} archive bytes.`);
       }
@@ -319,7 +363,9 @@ export async function runReleaseSetConsumerSmoke(packageArchives, { typescript, 
     ).join("\n")}\n\nfor (const exported of [${runtimeImports.map((_, index) => `exported${index}`).join(", ")}]) {\n  assert.equal(typeof exported, "function");\n}\n`);
     execFileSync(process.execPath, [join(consumer, "consumer.mjs")], {
       cwd: consumer,
+      maxBuffer: 2 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: MAXIMUM_RUNTIME_COMMAND_MILLISECONDS,
     });
 
     if (typescript) {
@@ -344,7 +390,9 @@ export async function runReleaseSetConsumerSmoke(packageArchives, { typescript, 
         join(consumer, "tsconfig.json"),
       ], {
         cwd: consumer,
+        maxBuffer: 2 * 1024 * 1024,
         stdio: ["ignore", "pipe", "pipe"],
+        timeout: MAXIMUM_TYPESCRIPT_COMMAND_MILLISECONDS,
       });
     }
 
@@ -394,7 +442,11 @@ export async function fetchJSON(url, options) {
   }
   let value;
   try {
-    value = JSON.parse(bytes.toString("utf8"));
+    value = parseStrictJSONBytes(
+      bytes,
+      "The npm registry response",
+      options?.maximumBytes ?? 5 * 1024 * 1024,
+    );
   } catch {
     throw new Error("The npm registry returned invalid JSON.");
   }
@@ -499,6 +551,7 @@ function commandOutput(command, arguments_) {
       encoding: "utf8",
       maxBuffer: 2 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: MAXIMUM_RUNTIME_COMMAND_MILLISECONDS,
     });
   } catch {
     throw new Error(`Release archive inspection failed while running ${basename(command)}.`);
@@ -522,6 +575,7 @@ function runNpm(arguments_, cwd, userconfig) {
       env: environment,
       maxBuffer: 2 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: MAXIMUM_NPM_COMMAND_MILLISECONDS,
     });
   } catch {
     throw new Error("The clean npm package-set consumer failed.");

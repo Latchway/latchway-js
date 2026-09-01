@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { ARTIFACTS_PATH, ROOT_PATH, readReleasePackages, readRootManifest } from "./release-utils.mjs";
 
 const evidencePath = join(ARTIFACTS_PATH, "release-candidate-evidence.json");
+const MAXIMUM_GATE_MILLISECONDS = 20 * 60 * 1000;
+const MAXIMUM_LOCAL_COMMAND_MILLISECONDS = 20 * 1000;
 await mkdir(ARTIFACTS_PATH, { recursive: true });
 await rm(evidencePath, { force: true });
 const manifest = await readRootManifest();
@@ -66,13 +68,17 @@ function packageManagerOutput(arguments_, stdio = ["ignore", "pipe", "pipe"]) {
     return execFileSync(process.execPath, [packageManager, ...arguments_], {
       cwd: ROOT_PATH,
       encoding: stdio === "inherit" ? undefined : "utf8",
+      maxBuffer: 2 * 1024 * 1024,
       stdio,
+      timeout: MAXIMUM_GATE_MILLISECONDS,
     })?.trim() ?? "";
   }
   return execFileSync(packageManager, arguments_, {
     cwd: ROOT_PATH,
     encoding: stdio === "inherit" ? undefined : "utf8",
+    maxBuffer: 2 * 1024 * 1024,
     stdio,
+    timeout: MAXIMUM_GATE_MILLISECONDS,
   })?.trim() ?? "";
 }
 
@@ -80,6 +86,8 @@ function commandOutput(command, arguments_) {
   return execFileSync(command, arguments_, {
     cwd: ROOT_PATH,
     encoding: "utf8",
+    maxBuffer: 2 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: MAXIMUM_LOCAL_COMMAND_MILLISECONDS,
   }).trim();
 }

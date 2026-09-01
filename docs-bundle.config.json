@@ -12,7 +12,7 @@
     {"path": "frameworks/openai.ts", "kind": "framework", "source": {"file": "packages/openai/src/index.ts", "start_line": 1, "end_line": 71}},
     {"path": "frameworks/vercel-ai.ts", "kind": "framework", "source": {"file": "packages/vercel-ai/src/index.ts", "start_line": 1, "end_line": 78}},
     {"path": "frameworks/langchain.ts", "kind": "framework", "source": {"file": "packages/langchain/src/index.ts", "start_line": 1, "end_line": 103}},
-    {"path": "release-notes.md", "kind": "release_notes", "source": {"file": "CHANGELOG.md", "start_line": 1, "end_line": 79}}
+    {"path": "release-notes.md", "kind": "release_notes", "source": {"file": "CHANGELOG.md", "start_line": 1, "end_line": 80}}
   ],
   "supported_versions": [
     {"name": "@latchway/client", "version": "1.0.0", "source": {"file": "package.json", "start_line": 1, "end_line": 13}},

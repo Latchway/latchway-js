@@ -1,11 +1,18 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { ARTIFACTS_PATH, readReleasePackages } from "./release-utils.mjs";
 import { assertReleaseCoordinates } from "./release-policy.mjs";
+import {
+  npmReleaseArtifactName,
+  readBoundedStrictJSONFileSync,
+} from "./npm-release-evidence.mjs";
 
 const packages = await readReleasePackages();
-const evidence = JSON.parse(await readFile(join(ARTIFACTS_PATH, "package-evidence.json"), "utf8"));
+const evidence = readBoundedStrictJSONFileSync(
+  join(ARTIFACTS_PATH, "package-evidence.json"),
+  "Package-set artifact output evidence",
+  2 * 1024 * 1024,
+);
 assertReleaseCoordinates(process.env.EXPECTED_RELEASE_TAG, evidence.version);
 if (
   evidence.schema_version !== 2
@@ -33,6 +40,10 @@ for (const [index, package_] of packages.entries()) {
 
 const output = [
   `version=${evidence.version}`,
-  `artifact_name=npm-release-set-${evidence.version}`,
+  `artifact_name=${npmReleaseArtifactName(
+    evidence.version,
+    process.env.GITHUB_RUN_ID,
+    process.env.GITHUB_RUN_ATTEMPT,
+  )}`,
 ].join("\n");
 process.stdout.write(`${output}\n`);

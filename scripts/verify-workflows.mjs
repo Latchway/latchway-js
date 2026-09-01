@@ -50,7 +50,7 @@ for (const required of [
   "node scripts/verify-release-tag.mjs",
   "node scripts/verify-published.mjs",
   "Preflight immutable release and create draft with fixed API calls",
-  "Reconcile, publish, and verify immutable release with fixed API calls",
+  "Reconcile, publish, and verify the immutable release with the fixed handoff",
   "npm-release-adoption-",
   "npm-$package_id-registry-version.json",
   "npm-$package_id-registry-view.json",
@@ -156,14 +156,30 @@ for (const [index, header] of jobHeaders.entries()) {
 }
 if (oidcJobs.length === 0) throw new Error("release.yml must retain fixed OIDC publication jobs.");
 for (const [name, block] of oidcJobs) {
-  for (const forbidden of [
-    "actions/checkout", "scripts/", "working-directory:", "python3 ", "node ",
+  const forbiddenControls = [
+    "actions/checkout", "scripts/", "working-directory:", "node ",
     "./gradlew", "npm install", "npm exec",
-  ]) {
+  ];
+  if (name !== "github-release") forbiddenControls.push("python3 ");
+  for (const forbidden of forbiddenControls) {
     if (block.includes(forbidden)) throw new Error(`${name} must not execute candidate source with OIDC permissions.`);
   }
   if (block.includes("LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN")) {
     throw new Error(`${name} must not receive the protected immutable-release administration credential.`);
+  }
+  if (name === "github-release") {
+    for (const required of [
+      "trusted-github-release-reconciler",
+      "GITHUB_RELEASE_RECONCILER_SHA256",
+      "GITHUB_RELEASE_VERSION_CHECK_SHA256",
+      "sha256sum --check --strict",
+      'python3 "$reconciler"',
+      "--verified-immutable-policy-sha256",
+    ]) {
+      if (!block.includes(required)) {
+        throw new Error(`github-release must authenticate the fixed reconciler through ${required}.`);
+      }
+    }
   }
 }
 const trustedNpmStart = release.indexOf("\n  trusted-npm-cli:\n");
@@ -270,6 +286,19 @@ if (!releasePolicyJob.includes("LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN")
   || releasePolicyJob.includes("scripts/")) {
   throw new Error("The immutable-release administration credential must remain in a fixed no-checkout, no-OIDC job.");
 }
+for (const marker of [
+  '.enforced_by_owner == true',
+  'test "$GITHUB_RELEASE_POLICY_TTL_SECONDS" = 600',
+  'schema_version: 2',
+  'run_id: $run_id',
+  'run_attempt: $run_attempt',
+  'issued_at: $issued_at',
+  'expires_at: $expires_at',
+]) {
+  if (!releasePolicyJob.includes(marker)) {
+    throw new Error(`The immutable-release policy handoff is missing ${marker}.`);
+  }
+}
 const releaseJob = release.slice(releaseStart);
 const closureValidation = releaseJob.indexOf("Validate exact JavaScript asset closure before OIDC attestation");
 const releaseAttestation = releaseJob.indexOf("Attest exact retained registry and release evidence without candidate checkout");
@@ -278,8 +307,9 @@ if (closureValidation < 0 || releaseAttestation <= closureValidation) {
 }
 for (const marker of [
   "test \"${#expected[@]}\" = 35",
-  "test \"$(sort -u \"$RUNNER_TEMP/fixed-assets.txt\" | wc -l | tr -d ' ')\" = 31",
-  "npm-release-adoption-(client|openai|vercel-ai|langchain)",
+  "test \"${#adoption_assets[@]}\" = 4",
+  "package_ids=(client openai vercel-ai langchain)",
+  'python3 "$reconciler"',
 ]) {
   if (!releaseJob.includes(marker)) throw new Error(`The final JavaScript release closure is missing ${marker}.`);
 }
@@ -289,6 +319,40 @@ if ((release.match(/if: needs\.github-draft\.outputs\.release_state == 'draft'/g
 if (/all\([^;\n]+\s+as\s+\$[A-Za-z_][A-Za-z0-9_]*\s*;/u.test(releaseJob)) {
   throw new Error("Release jq all(generator; condition) expressions use invalid generator bindings.");
 }
+for (const [producer, consumer, output] of [
+  [release.slice(release.indexOf("\n  authorize-promotion:\n"), release.indexOf("\n  verify-promotion:\n")),
+    release.slice(release.indexOf("\n  verify-promotion:\n"), release.indexOf("\n  promote:\n")),
+    "report_artifact_name"],
+  [trustedNpmJob, npmPublishJob, "artifact_name"],
+  [publishJob, releaseJob, "artifact_name"],
+]) {
+  if (!producer.includes(`${output}: \${{ steps.`)
+    || !consumer.includes(`outputs.${output} }}`)) {
+    throw new Error(`Release handoff ${output} must be bound to its successful producer job output.`);
+  }
+}
+for (const marker of [
+  "adoption_run_id: ${{ steps.registry_evidence.outputs.adoption_run_id }}",
+  "adoption_run_attempt: ${{ steps.registry_evidence.outputs.adoption_run_attempt }}",
+  "PUBLISH_PRODUCER_RUN_ID: ${{ needs.npm-publish.outputs.producer_run_id }}",
+  "PUBLISH_PRODUCER_RUN_ATTEMPT: ${{ needs.npm-publish.outputs.producer_run_attempt }}",
+]) {
+  if (!publishJob.includes(marker)) throw new Error(`publish must export retry-stable ${marker}.`);
+}
+for (const marker of [
+  "ADOPTION_RUN_ID: ${{ needs.publish.outputs.adoption_run_id }}",
+  "ADOPTION_RUN_ATTEMPT: ${{ needs.publish.outputs.adoption_run_attempt }}",
+  "POLICY_EVIDENCE_SHA256: ${{ needs.github-release-policy.outputs.evidence_sha256 }}",
+  '--verified-immutable-policy-run-id "$GITHUB_RUN_ID"',
+  '--verified-immutable-policy-run-attempt "$GITHUB_RUN_ATTEMPT"',
+]) {
+  if (!releaseJob.includes(marker)) throw new Error(`github-release must consume producer binding ${marker}.`);
+}
+if (releaseJob.includes(
+  "npm-release-adoption-$package_id-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json",
+)) {
+  throw new Error("github-release must not reinterpret producer adoption evidence as the consumer retry attempt.");
+}
 const secretReferences = [...release.matchAll(/\$\{\{\s*secrets\.([A-Z0-9_]+)\s*\}\}/gu)]
   .map((match) => match[1]);
 if (secretReferences.length !== 2 || secretReferences.some((name) =>
@@ -296,6 +360,10 @@ if (secretReferences.length !== 2 || secretReferences.some((name) =>
   throw new Error("release.yml may use only the protected immutable-release settings credential.");
 }
 if (!releaseDocumentation.includes("repository_dispatch")
+  || !releaseDocumentation.includes("exclusive writer")
+  || !releaseDocumentation.includes("pre-publish draft gate can validate only")
+  || !releaseDocumentation.includes("enforced_by_owner: true")
+  || !releaseDocumentation.includes("Re-run all jobs")
   || !releaseDocumentation.toLowerCase().includes("tag manually")
   || /\n(?:git tag|git push)\s/u.test(releaseDocumentation)) {
   throw new Error("Release documentation must delegate tag creation to the verified promotion dispatch.");

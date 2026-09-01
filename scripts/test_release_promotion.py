@@ -312,6 +312,18 @@ class PromotionVerifierTests(unittest.TestCase):
         ):
             MODULE.load_json(duplicate)
 
+        for payload in (
+            '{"value":NaN}\n',
+            '{"value":1e9999}\n',
+            '{"value":9007199254740992}\n',
+        ):
+            unsafe_number = self.root / "unsafe-number.json"
+            self.write(unsafe_number, payload)
+            with self.assertRaisesRegex(
+                MODULE.PromotionVerificationError, "promotion_report_number_invalid"
+            ):
+                MODULE.load_json(unsafe_number)
+
         regular = self.root / "regular.json"
         self.write(regular, "{}\n")
         symlink = self.root / "symlink.json"
@@ -507,7 +519,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertNotIn("actions/checkout", block, job_name)
             self.assertNotIn("scripts/", block, job_name)
             self.assertNotIn("working-directory:", block, job_name)
-            self.assertNotIn("python3 ", block, job_name)
+            if REPOSITORY_ID == "javascript" and job_name == "github-release":
+                self.assertIn('python3 "$reconciler"', block, job_name)
+                self.assertIn("GITHUB_RELEASE_RECONCILER_SHA256", block, job_name)
+                self.assertIn("sha256sum --check --strict", block, job_name)
+                self.assertIn("trusted-github-release-reconciler", block, job_name)
+            else:
+                self.assertNotIn("python3 ", block, job_name)
             self.assertNotIn("node ", block, job_name)
             self.assertNotIn("./gradlew", block, job_name)
             self.assertNotIn("npm install", block, job_name)

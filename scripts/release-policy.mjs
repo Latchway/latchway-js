@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 
 const STABLE_SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
+const MAXIMUM_GIT_COMMAND_MILLISECONDS = 20 * 1000;
 
 export function assertReleaseCoordinates(tag, version) {
   if (typeof version !== "string" || version.length > 64 || !STABLE_SEMVER.test(version)) {
@@ -32,6 +33,7 @@ export function verifyAnnotatedReleaseTag({ cwd, tag, version, expectedCommit, m
       execFileSync("git", ["merge-base", "--is-ancestor", tagCommit, mainCommit], {
         cwd,
         stdio: "ignore",
+        timeout: MAXIMUM_GIT_COMMAND_MILLISECONDS,
       });
     } catch {
       throw new Error(`The release commit must be reachable from ${mainRef}.`);
@@ -46,7 +48,9 @@ function git(cwd, arguments_) {
     return execFileSync("git", arguments_, {
       cwd,
       encoding: "utf8",
+      maxBuffer: 2 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: MAXIMUM_GIT_COMMAND_MILLISECONDS,
     }).trim();
   } catch {
     throw new Error(`Git release-policy check failed: git ${arguments_.join(" ")}.`);

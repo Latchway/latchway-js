@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import tempfile
 from pathlib import Path
 
 MAX_REPORT_BYTES = 32 * 1024 * 1024
+MAXIMUM_JSON_SAFE_INTEGER = 9_007_199_254_740_991
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -18,6 +20,33 @@ SAFE_PACKAGE = re.compile(r"^[A-Za-z0-9@][A-Za-z0-9@._/+:-]{0,199}$")
 SAFE_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+:-]{0,127}$")
 NON_BLOCKING = {"LOW", "MEDIUM", "MODERATE", "NONE"}
 BLOCKING = {"HIGH", "CRITICAL"}
+
+
+def unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON key")
+        value[key] = item
+    return value
+
+
+def finite_json_float(source: str) -> float:
+    value = float(source)
+    if not math.isfinite(value):
+        raise ValueError("non-finite JSON number")
+    return value
+
+
+def bounded_json_integer(source: str) -> int:
+    value = int(source)
+    if abs(value) > MAXIMUM_JSON_SAFE_INTEGER:
+        raise ValueError("unsafe JSON integer")
+    return value
+
+
+def reject_json_constant(_source: str) -> "NoReturn":
+    raise ValueError("invalid JSON constant")
 
 
 def fail(message: str) -> "NoReturn":
@@ -58,8 +87,14 @@ def main() -> None:
     if size <= 0 or size > MAX_REPORT_BYTES:
         fail("OSV report is empty or exceeds the 32 MiB policy limit")
     try:
-        document = json.loads(arguments.report.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        document = json.loads(
+            arguments.report.read_text(encoding="utf-8"),
+            object_pairs_hook=unique_json_object,
+            parse_constant=reject_json_constant,
+            parse_float=finite_json_float,
+            parse_int=bounded_json_integer,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
         fail("OSV report is not valid bounded UTF-8 JSON")
     if not isinstance(document, dict) or not isinstance(document.get("results"), list):
         fail("OSV report does not contain a results array")

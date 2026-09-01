@@ -7,6 +7,7 @@ import argparse
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import stat
@@ -18,6 +19,7 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[1]
 MAXIMUM_REPORT_BYTES = 2 * 1024 * 1024
 MAXIMUM_LOCAL_METADATA_BYTES = 1024 * 1024
+MAXIMUM_JSON_SAFE_INTEGER = 9_007_199_254_740_991
 MAXIMUM_AGE = timedelta(days=7)
 REPOSITORY_IDS = ("core", "javascript", "ios", "android", "react_native")
 PROMOTION_DOMAINS = {
@@ -115,10 +117,29 @@ def load_json(path: Path) -> dict[str, Any]:
             result[key] = value
         return result
 
+    def bounded_integer(source: str) -> int:
+        value = int(source)
+        if abs(value) > MAXIMUM_JSON_SAFE_INTEGER:
+            raise PromotionVerificationError("promotion_report_number_invalid")
+        return value
+
+    def finite_float(source: str) -> float:
+        value = float(source)
+        if not math.isfinite(value):
+            raise PromotionVerificationError("promotion_report_number_invalid")
+        return value
+
+    def reject_constant(_source: str) -> "NoReturn":
+        raise PromotionVerificationError("promotion_report_number_invalid")
+
     sha256_file(path)
     try:
         value = json.loads(
-            path.read_text(encoding="utf-8"), object_pairs_hook=strict_object
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=strict_object,
+            parse_constant=reject_constant,
+            parse_float=finite_float,
+            parse_int=bounded_integer,
         )
     except PromotionVerificationError:
         raise

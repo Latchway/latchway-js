@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import io
 import json
 import os
 import sys
@@ -28,6 +29,26 @@ COMMIT = "0123456789abcdef0123456789abcdef01234567"
 TAG_OBJECT = "89abcdef0123456789abcdef0123456789abcdef"
 
 
+def subprocess_results(
+    results: list[Any],
+):
+    remaining = iter(results)
+
+    def run(arguments: list[str], **kwargs: Any) -> Any:
+        result = next(remaining)
+        for name in ("stdout", "stderr"):
+            destination = kwargs.get(name)
+            payload = getattr(result, name, None)
+            if hasattr(destination, "write") and payload not in (None, "", b""):
+                if isinstance(payload, str):
+                    payload = payload.encode("utf-8")
+                destination.write(payload)
+                destination.flush()
+        return MODULE.subprocess.CompletedProcess(arguments, result.returncode)
+
+    return run
+
+
 class FakeClient:
     def __init__(self, release: dict[str, Any] | None = None, contents: dict[int, bytes] | None = None) -> None:
         self.value = release
@@ -35,6 +56,7 @@ class FakeClient:
         self.created = 0
         self.uploaded: list[str] = []
         self.finalized = 0
+        self.downloaded_asset_ids: list[int] = []
         self.attestations_verified: list[str] = []
         self.release_attestations_verified: list[str] = []
         self.release_attested_commits: list[str] = []
@@ -74,9 +96,15 @@ class FakeClient:
             "assets": [],
         }
 
-    def download(self, repository: str, asset_id: int, destination: Path) -> None:
+    def download(
+        self, repository: str, asset_id: int, destination: Path, maximum_bytes: int
+    ) -> None:
         del repository
-        destination.write_bytes(self.contents[asset_id])
+        self.downloaded_asset_ids.append(asset_id)
+        payload = self.contents[asset_id]
+        if len(payload) > maximum_bytes:
+            raise RuntimeError("fake download exceeds bound")
+        destination.write_bytes(payload)
 
     def upload(self, repository: str, tag: str, path: Path) -> None:
         del repository, tag
@@ -120,6 +148,68 @@ def release(*, draft: bool, assets: list[dict[str, Any]], title: str = "Latchway
         "immutable": not draft,
         "assets": assets,
     }
+
+
+def adoption_record(
+    *,
+    package_id: str,
+    tarball: MODULE.Asset,
+    manifest_sha256: str,
+    source_commit: str,
+    adoption_run_id: int,
+    adoption_run_attempt: int,
+    provenance_run_id: int = 100,
+    provenance_run_attempt: int = 1,
+) -> bytes:
+    repository = "https://github.com/Latchway/example"
+    tarball_bytes = tarball.path.read_bytes()
+    sha512 = MODULE.hashlib.sha512(tarball_bytes).hexdigest()
+    return (json.dumps({
+        "schema_version": 1,
+        "kind": "latchway_npm_release_adoption",
+        "package": MODULE.ADOPTION_PACKAGES[package_id],
+        "version": "1.0.0",
+        "release_tag": "v1.0.0",
+        "tarball": {
+            "name": tarball.name,
+            "bytes": len(tarball_bytes),
+            "sha256": MODULE.hashlib.sha256(tarball_bytes).hexdigest(),
+            "sha512": sha512,
+            "integrity": f"sha512-{MODULE.base64.b64encode(bytes.fromhex(sha512)).decode('ascii')}",
+        },
+        "source": {
+            "repository": repository,
+            "commit": source_commit,
+            "workflow": ".github/workflows/release.yml",
+            "ref": "refs/heads/main",
+        },
+        "provenance": {
+            "repository": repository,
+            "commit": source_commit,
+            "workflow": ".github/workflows/release.yml",
+            "ref": "refs/heads/main",
+            "predicate_type": "https://slsa.dev/provenance/v1",
+            "invocation_id": (
+                f"{repository}/actions/runs/{provenance_run_id}"
+                f"/attempts/{provenance_run_attempt}"
+            ),
+            "run_id": provenance_run_id,
+            "run_attempt": provenance_run_attempt,
+        },
+        "adoption": {
+            "repository": repository,
+            "commit": source_commit,
+            "workflow": ".github/workflows/release.yml",
+            "ref": "refs/heads/main",
+            "run_id": adoption_run_id,
+            "run_attempt": adoption_run_attempt,
+            "mode": "adopted_existing",
+        },
+        "registry_evidence_manifest": {
+            "file": "npm-registry-evidence-manifest.json",
+            "sha256": manifest_sha256,
+        },
+    }, sort_keys=True) + "\n").encode()
 
 
 class ReconciliationTests(unittest.TestCase):
@@ -175,6 +265,7 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(client.uploaded, ["SHA256SUMS"])
         self.assertEqual(client.finalized, 1)
         self.assertEqual(client.tag_validations, [(REPOSITORY, TAG, COMMIT)])
+        self.assertEqual(client.downloaded_asset_ids.count(7), 3)
 
     def test_exact_final_release_is_a_read_only_success(self) -> None:
         remote_assets = []
@@ -239,7 +330,7 @@ class ReconciliationTests(unittest.TestCase):
     def test_disabled_immutable_setting_rejects_before_release_lookup_or_mutation(self) -> None:
         client = FakeClient()
         client.settings_enabled = False
-        with self.assertRaisesRegex(MODULE.Rejected, "not enabled"):
+        with self.assertRaisesRegex(MODULE.Rejected, "not enforced"):
             self.reconcile(client)
         self.assertEqual(client.settings_reads, 1)
         self.assertEqual(client.created, 0)
@@ -322,32 +413,27 @@ class ReconciliationTests(unittest.TestCase):
         commit = "a" * 40
         prior_name = "npm-release-adoption-client-100-1.json"
         current_name = "npm-release-adoption-client-200-2.json"
+        tarball_path = Path(self.temporary.name) / "latchway-client-1.0.0.tgz"
+        tarball_path.write_bytes(self.first_path.read_bytes())
+        fixed = MODULE.inspect_assets([str(tarball_path)])[0]
+        manifest_path = Path(self.temporary.name) / "npm-registry-evidence-manifest.json"
+        manifest_path.write_bytes(b'{"schema_version":2}\n')
+        manifest_sha256 = MODULE.hashlib.sha256(manifest_path.read_bytes()).hexdigest()
 
         def record(run_id: int, attempt: int) -> bytes:
-            repository = "https://github.com/Latchway/example"
-            tarball = self.first_path.read_bytes()
-            sha512 = MODULE.hashlib.sha512(tarball).hexdigest()
-            return (json.dumps({
-                "schema_version": 1,
-                "kind": "latchway_npm_release_adoption",
-                "package": "@latchway/client",
-                "version": "1.0.0",
-                "release_tag": "v1.0.0",
-                "tarball": {
-                    "name": "first.tgz", "bytes": len(tarball),
-                    "sha256": MODULE.hashlib.sha256(tarball).hexdigest(), "sha512": sha512,
-                    "integrity": f"sha512-{MODULE.base64.b64encode(bytes.fromhex(sha512)).decode('ascii')}",
-                },
-                "source": {"repository": repository, "commit": commit, "workflow": ".github/workflows/release.yml", "ref": "refs/heads/main"},
-                "provenance": {"repository": repository, "commit": commit, "workflow": ".github/workflows/release.yml", "ref": "refs/heads/main", "predicate_type": "https://slsa.dev/provenance/v1", "invocation_id": f"{repository}/actions/runs/100/attempts/1", "run_id": 100, "run_attempt": 1},
-                "adoption": {"repository": repository, "commit": commit, "workflow": ".github/workflows/release.yml", "ref": "refs/heads/main", "run_id": run_id, "run_attempt": attempt, "mode": "adopted_existing"},
-                "registry_evidence_manifest": {"file": "npm-registry-evidence-manifest.json", "sha256": "b" * 64},
-            }, sort_keys=True) + "\n").encode()
+            return adoption_record(
+                package_id="client",
+                tarball=fixed,
+                manifest_sha256=manifest_sha256,
+                source_commit=commit,
+                adoption_run_id=run_id,
+                adoption_run_attempt=attempt,
+                provenance_run_id=50,
+            )
 
         current_path = Path(self.temporary.name) / current_name
         current_path.write_bytes(record(200, 2))
         prior = record(100, 1)
-        fixed = next(asset for asset in self.assets if asset.name == "first.tgz")
         client = FakeClient(
             release(draft=True, assets=[
                 {"id": 1, "name": fixed.name, "size": fixed.size, "state": "uploaded"},
@@ -360,15 +446,63 @@ class ReconciliationTests(unittest.TestCase):
             tag="v1.0.0",
             title="Latchway v1.0.0",
             prerelease=False,
-            assets=MODULE.inspect_assets([str(fixed.path), str(current_path)]),
+            assets=MODULE.inspect_assets([
+                str(fixed.path), str(manifest_path), str(current_path),
+            ]),
             client=client,
             expected_commit=commit,
             adoption_pattern=MODULE.ADOPTION_PATTERN,
         )
         self.assertIn(current_name, client.uploaded)
-        self.assertEqual(client.attestations_verified, [prior_name, current_name])
+        self.assertEqual(
+            client.attestations_verified,
+            [
+                prior_name, current_name,
+                prior_name, current_name,
+                prior_name, current_name,
+            ],
+        )
         self.assertTrue(client.value["immutable"])
-        self.assertEqual(set(client.release_attestations_verified), {"first.tgz", prior_name, current_name})
+        self.assertEqual(set(client.release_attestations_verified), {
+            fixed.name, "npm-registry-evidence-manifest.json", prior_name, current_name,
+        })
+
+        local_assets = MODULE.inspect_assets([
+            str(fixed.path), str(manifest_path), str(current_path),
+        ])
+        manifest_asset = next(
+            asset for asset in local_assets
+            if asset.name == "npm-registry-evidence-manifest.json"
+        )
+        immutable_client = FakeClient(
+            release(draft=False, assets=[
+                {"id": 1, "name": fixed.name, "size": fixed.size, "state": "uploaded"},
+                {"id": 2, "name": manifest_asset.name, "size": manifest_asset.size,
+                 "state": "uploaded"},
+                {"id": 3, "name": prior_name, "size": len(prior), "state": "uploaded"},
+            ]),
+            {
+                1: fixed.path.read_bytes(),
+                2: manifest_path.read_bytes(),
+                3: prior,
+            },
+        )
+        MODULE.reconcile(
+            repository="Latchway/example",
+            tag="v1.0.0",
+            title="Latchway v1.0.0",
+            prerelease=False,
+            assets=local_assets,
+            client=immutable_client,
+            expected_commit=commit,
+            adoption_pattern=MODULE.ADOPTION_PATTERN,
+        )
+        self.assertEqual(immutable_client.uploaded, [])
+        self.assertEqual(immutable_client.finalized, 0)
+        self.assertEqual(immutable_client.attestations_verified, [prior_name, prior_name])
+        self.assertEqual(set(immutable_client.release_attestations_verified), {
+            fixed.name, "npm-registry-evidence-manifest.json", prior_name,
+        })
         tampered = json.loads(record(200, 2))
         tampered["tarball"]["sha256"] = "0" * 64
         with self.assertRaisesRegex(MODULE.Rejected, "not bound"):
@@ -379,7 +513,347 @@ class ReconciliationTests(unittest.TestCase):
                 tag="v1.0.0",
                 source_commit=commit,
                 tarballs={fixed.name: fixed},
+                manifest_sha256=manifest_sha256,
             )
+
+        duplicate_key = record(200, 2).replace(
+            b"{", b'{"schema_version":1,', 1,
+        )
+        with self.assertRaisesRegex(MODULE.Rejected, "not valid JSON"):
+            MODULE.validate_adoption_record(
+                duplicate_key,
+                name=current_name,
+                repository="Latchway/example",
+                tag="v1.0.0",
+                source_commit=commit,
+                tarballs={fixed.name: fixed},
+                manifest_sha256=manifest_sha256,
+            )
+
+        wrong_package_tarball_path = (
+            Path(self.temporary.name) / "latchway-openai-1.0.0.tgz"
+        )
+        wrong_package_tarball_path.write_bytes(fixed.path.read_bytes())
+        wrong_package_tarball = MODULE.inspect_assets([str(wrong_package_tarball_path)])[0]
+        cross_bound = json.loads(record(200, 2))
+        cross_bound["tarball"]["name"] = wrong_package_tarball.name
+        with self.assertRaisesRegex(MODULE.Rejected, "not bound"):
+            MODULE.validate_adoption_record(
+                (json.dumps(cross_bound) + "\n").encode(),
+                name=current_name,
+                repository="Latchway/example",
+                tag="v1.0.0",
+                source_commit=commit,
+                tarballs={
+                    fixed.name: fixed,
+                    wrong_package_tarball.name: wrong_package_tarball,
+                },
+                manifest_sha256=manifest_sha256,
+            )
+
+        for invalid_run_id in (True, MODULE.MAXIMUM_JSON_SAFE_INTEGER + 1):
+            with self.subTest(invalid_provenance_run_id=invalid_run_id):
+                invalid_id = json.loads(record(200, 2))
+                invalid_id["provenance"]["run_id"] = invalid_run_id
+                invalid_id["provenance"]["invocation_id"] = (
+                    "https://github.com/Latchway/example/actions/runs/"
+                    f"{invalid_run_id}/attempts/1"
+                )
+                with self.assertRaisesRegex(MODULE.Rejected, "not bound"):
+                    MODULE.validate_adoption_record(
+                        (json.dumps(invalid_id) + "\n").encode(),
+                        name=current_name,
+                        repository="Latchway/example",
+                        tag="v1.0.0",
+                        source_commit=commit,
+                        tarballs={fixed.name: fixed},
+                        manifest_sha256=manifest_sha256,
+                    )
+
+        unbounded_run_id = MODULE.MAXIMUM_JSON_SAFE_INTEGER + 1
+        unbounded_record = adoption_record(
+            package_id="client",
+            tarball=fixed,
+            manifest_sha256=manifest_sha256,
+            source_commit=commit,
+            adoption_run_id=unbounded_run_id,
+            adoption_run_attempt=2,
+        )
+        with self.assertRaisesRegex(MODULE.Rejected, "not bound"):
+            MODULE.validate_adoption_record(
+                unbounded_record,
+                name=f"npm-release-adoption-client-{unbounded_run_id}-2.json",
+                repository="Latchway/example",
+                tag="v1.0.0",
+                source_commit=commit,
+                tarballs={fixed.name: fixed},
+                manifest_sha256=manifest_sha256,
+            )
+
+        oversized_remote = FakeClient(
+            release(draft=True, assets=[
+                {"id": 1, "name": fixed.name, "size": fixed.size, "state": "uploaded"},
+                {
+                    "id": 2,
+                    "name": prior_name,
+                    "size": MODULE.MAXIMUM_ADOPTION_RECORD_BYTES + 1,
+                    "state": "uploaded",
+                },
+            ]),
+            {1: fixed.path.read_bytes(), 2: prior},
+        )
+        with self.assertRaisesRegex(MODULE.Rejected, "invalid remote asset metadata"):
+            MODULE.reconcile(
+                repository="Latchway/example",
+                tag="v1.0.0",
+                title="Latchway v1.0.0",
+                prerelease=False,
+                assets=local_assets,
+                client=oversized_remote,
+                expected_commit=commit,
+                adoption_pattern=MODULE.ADOPTION_PATTERN,
+            )
+        self.assertEqual(oversized_remote.uploaded, [])
+        self.assertEqual(oversized_remote.finalized, 0)
+        self.assertEqual(oversized_remote.downloaded_asset_ids, [])
+
+        for invalid_asset_id in (True, MODULE.MAXIMUM_JSON_SAFE_INTEGER + 1):
+            with self.subTest(invalid_remote_asset_id=invalid_asset_id):
+                invalid_remote = FakeClient(
+                    release(draft=True, assets=[
+                        {
+                            "id": invalid_asset_id,
+                            "name": prior_name,
+                            "size": len(prior),
+                            "state": "uploaded",
+                        },
+                    ]),
+                    {2: prior},
+                )
+                with self.assertRaisesRegex(MODULE.Rejected, "invalid identifier"):
+                    MODULE.reconcile(
+                        repository="Latchway/example",
+                        tag="v1.0.0",
+                        title="Latchway v1.0.0",
+                        prerelease=False,
+                        assets=local_assets,
+                        client=invalid_remote,
+                        expected_commit=commit,
+                        adoption_pattern=MODULE.ADOPTION_PATTERN,
+                    )
+                self.assertEqual(invalid_remote.downloaded_asset_ids, [])
+                self.assertEqual(invalid_remote.uploaded, [])
+                self.assertEqual(invalid_remote.finalized, 0)
+
+        invalid_prior = b"{}\n"
+        bad_client = FakeClient(
+            release(draft=True, assets=[
+                {"id": 1, "name": fixed.name, "size": fixed.size, "state": "uploaded"},
+                {"id": 2, "name": prior_name, "size": len(invalid_prior), "state": "uploaded"},
+            ]),
+            {1: fixed.path.read_bytes(), 2: invalid_prior},
+        )
+        with self.assertRaisesRegex(MODULE.Rejected, "not bound"):
+            MODULE.reconcile(
+                repository="Latchway/example",
+                tag="v1.0.0",
+                title="Latchway v1.0.0",
+                prerelease=False,
+                assets=MODULE.inspect_assets([
+                    str(fixed.path), str(manifest_path), str(current_path),
+                ]),
+                client=bad_client,
+                expected_commit=commit,
+                adoption_pattern=MODULE.ADOPTION_PATTERN,
+            )
+        self.assertEqual(bad_client.uploaded, [])
+        self.assertEqual(bad_client.finalized, 0)
+
+        wrong_manifest = json.loads(record(200, 2))
+        wrong_manifest["registry_evidence_manifest"]["sha256"] = "b" * 64
+        with self.assertRaisesRegex(MODULE.Rejected, "not bound"):
+            MODULE.validate_adoption_record(
+                (json.dumps(wrong_manifest) + "\n").encode(),
+                name=current_name,
+                repository="Latchway/example",
+                tag="v1.0.0",
+                source_commit=commit,
+                tarballs={fixed.name: fixed},
+                manifest_sha256=manifest_sha256,
+            )
+
+        published_with_foreign_provenance = json.loads(record(200, 2))
+        published_with_foreign_provenance["adoption"]["mode"] = "published"
+        with self.assertRaisesRegex(MODULE.Rejected, "not bound"):
+            MODULE.validate_adoption_record(
+                (json.dumps(published_with_foreign_provenance) + "\n").encode(),
+                name=current_name,
+                repository="Latchway/example",
+                tag="v1.0.0",
+                source_commit=commit,
+                tarballs={fixed.name: fixed},
+                manifest_sha256=manifest_sha256,
+            )
+
+        adopted_with_current_provenance = json.loads(record(200, 2))
+        adopted_with_current_provenance["provenance"]["run_id"] = 200
+        adopted_with_current_provenance["provenance"]["run_attempt"] = 2
+        adopted_with_current_provenance["provenance"]["invocation_id"] = (
+            "https://github.com/Latchway/example/actions/runs/200/attempts/2"
+        )
+        with self.assertRaisesRegex(MODULE.Rejected, "not bound"):
+            MODULE.validate_adoption_record(
+                (json.dumps(adopted_with_current_provenance) + "\n").encode(),
+                name=current_name,
+                repository="Latchway/example",
+                tag="v1.0.0",
+                source_commit=commit,
+                tarballs={fixed.name: fixed},
+                manifest_sha256=manifest_sha256,
+            )
+
+        published_current = json.loads(record(200, 2))
+        published_current["provenance"] = adopted_with_current_provenance["provenance"]
+        published_current["adoption"]["mode"] = "published"
+        MODULE.validate_adoption_record(
+            (json.dumps(published_current) + "\n").encode(),
+            name=current_name,
+            repository="Latchway/example",
+            tag="v1.0.0",
+            source_commit=commit,
+            tarballs={fixed.name: fixed},
+            manifest_sha256=manifest_sha256,
+        )
+
+    def test_finalization_revalidates_historical_adoption_bytes(self) -> None:
+        commit = "a" * 40
+        prior_name = "npm-release-adoption-client-100-1.json"
+        current_name = "npm-release-adoption-client-200-2.json"
+        tarball_path = Path(self.temporary.name) / "latchway-client-1.0.0.tgz"
+        tarball_path.write_bytes(self.first_path.read_bytes())
+        fixed = MODULE.inspect_assets([str(tarball_path)])[0]
+        manifest_path = Path(self.temporary.name) / "npm-registry-evidence-manifest.json"
+        manifest_path.write_bytes(b'{"schema_version":2}\n')
+        manifest_sha256 = MODULE.hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        prior = adoption_record(
+            package_id="client",
+            tarball=fixed,
+            manifest_sha256=manifest_sha256,
+            source_commit=commit,
+            adoption_run_id=100,
+            adoption_run_attempt=1,
+            provenance_run_id=99,
+        )
+        current_path = Path(self.temporary.name) / current_name
+        current_path.write_bytes(adoption_record(
+            package_id="client",
+            tarball=fixed,
+            manifest_sha256=manifest_sha256,
+            source_commit=commit,
+            adoption_run_id=200,
+            adoption_run_attempt=2,
+        ))
+
+        class MutatingDraftClient(FakeClient):
+            def finalize(self, repository: str, tag: str, prerelease: bool) -> None:
+                # Simulate another allowed draft writer replacing bytes in the
+                # narrow interval before GitHub makes the release immutable.
+                self.contents[2] = self.contents[2].replace(
+                    commit.encode(), b"b" * 40,
+                )
+                super().finalize(repository, tag, prerelease)
+
+        client = MutatingDraftClient(
+            release(draft=True, assets=[
+                {"id": 1, "name": fixed.name, "size": fixed.size, "state": "uploaded"},
+                {"id": 2, "name": prior_name, "size": len(prior), "state": "uploaded"},
+            ]),
+            {1: fixed.path.read_bytes(), 2: prior},
+        )
+        with self.assertRaisesRegex(MODULE.Rejected, "not bound"):
+            MODULE.reconcile(
+                repository="Latchway/example",
+                tag="v1.0.0",
+                title="Latchway v1.0.0",
+                prerelease=False,
+                assets=MODULE.inspect_assets([
+                    str(fixed.path), str(manifest_path), str(current_path),
+                ]),
+                client=client,
+                expected_commit=commit,
+                adoption_pattern=MODULE.ADOPTION_PATTERN,
+            )
+        self.assertEqual(client.finalized, 1)
+        self.assertEqual(client.release_attestations_verified, [])
+        self.assertGreaterEqual(client.downloaded_asset_ids.count(2), 2)
+
+    def test_prefinalization_revalidation_rejects_changed_adoption_without_finalizing(self) -> None:
+        commit = "a" * 40
+        prior_name = "npm-release-adoption-client-100-1.json"
+        current_name = "npm-release-adoption-client-200-2.json"
+        tarball_path = Path(self.temporary.name) / "latchway-client-1.0.0.tgz"
+        tarball_path.write_bytes(self.first_path.read_bytes())
+        fixed = MODULE.inspect_assets([str(tarball_path)])[0]
+        manifest_path = Path(self.temporary.name) / "npm-registry-evidence-manifest.json"
+        manifest_path.write_bytes(b'{"schema_version":2}\n')
+        manifest_sha256 = MODULE.hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        prior = adoption_record(
+            package_id="client",
+            tarball=fixed,
+            manifest_sha256=manifest_sha256,
+            source_commit=commit,
+            adoption_run_id=100,
+            adoption_run_attempt=1,
+            provenance_run_id=99,
+        )
+        current_path = Path(self.temporary.name) / current_name
+        current_path.write_bytes(adoption_record(
+            package_id="client",
+            tarball=fixed,
+            manifest_sha256=manifest_sha256,
+            source_commit=commit,
+            adoption_run_id=200,
+            adoption_run_attempt=2,
+        ))
+
+        class MutatingBeforeFinalizeClient(FakeClient):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+                self.release_reads = 0
+
+            def release(self, repository: str, tag: str) -> dict[str, Any] | None:
+                self.release_reads += 1
+                # The second lookup is the post-upload snapshot. Change the
+                # retained draft bytes before the immediate pre-finalize pass.
+                if self.release_reads == 2:
+                    self.contents[2] = self.contents[2].replace(
+                        commit.encode(), b"b" * 40,
+                    )
+                return super().release(repository, tag)
+
+        client = MutatingBeforeFinalizeClient(
+            release(draft=True, assets=[
+                {"id": 1, "name": fixed.name, "size": fixed.size, "state": "uploaded"},
+                {"id": 2, "name": prior_name, "size": len(prior), "state": "uploaded"},
+            ]),
+            {1: fixed.path.read_bytes(), 2: prior},
+        )
+        with self.assertRaisesRegex(MODULE.Rejected, "not bound"):
+            MODULE.reconcile(
+                repository="Latchway/example",
+                tag="v1.0.0",
+                title="Latchway v1.0.0",
+                prerelease=False,
+                assets=MODULE.inspect_assets([
+                    str(fixed.path), str(manifest_path), str(current_path),
+                ]),
+                client=client,
+                expected_commit=commit,
+                adoption_pattern=MODULE.ADOPTION_PATTERN,
+            )
+        self.assertEqual(client.finalized, 0)
+        self.assertEqual(client.release_attestations_verified, [])
+        self.assertGreaterEqual(client.downloaded_asset_ids.count(2), 2)
 
     def test_adoption_history_identifies_all_four_javascript_packages(self) -> None:
         names = {
@@ -395,13 +869,15 @@ class ReconciliationTests(unittest.TestCase):
 
     def test_admin_preflight_requires_exact_enabled_response_and_consumes_protected_token(self) -> None:
         client = MODULE.GitHubClient()
-        accepted = {"enabled": True, "enforced_by_owner": False}
+        accepted = {"enabled": True, "enforced_by_owner": True}
         with patch.dict(
             os.environ, {"LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN": "token"}, clear=True
         ), patch.object(
             MODULE.subprocess,
             "run",
-            return_value=MODULE.subprocess.CompletedProcess([], 0, json.dumps(accepted), ""),
+            side_effect=subprocess_results([
+                MODULE.subprocess.CompletedProcess([], 0, json.dumps(accepted), "")
+            ]),
         ) as run:
             self.assertTrue(client.immutable_releases_enabled(REPOSITORY))
             self.assertNotIn("LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN", os.environ)
@@ -414,15 +890,18 @@ class ReconciliationTests(unittest.TestCase):
 
         for response in (
             {"enabled": False, "enforced_by_owner": False},
+            {"enabled": True, "enforced_by_owner": False},
             {"enabled": True},
-            {"enabled": True, "enforced_by_owner": False, "unexpected": True},
+            {"enabled": True, "enforced_by_owner": True, "unexpected": True},
         ):
             with self.subTest(response=response), patch.dict(
                 os.environ, {"LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN": "token"}, clear=True
             ), patch.object(
                 MODULE.subprocess,
                 "run",
-                return_value=MODULE.subprocess.CompletedProcess([], 0, json.dumps(response), ""),
+                side_effect=subprocess_results([
+                    MODULE.subprocess.CompletedProcess([], 0, json.dumps(response), "")
+                ]),
             ):
                 self.assertFalse(client.immutable_releases_enabled(REPOSITORY))
                 self.assertNotIn("LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN", os.environ)
@@ -432,12 +911,161 @@ class ReconciliationTests(unittest.TestCase):
         ), patch.object(
             MODULE.subprocess,
             "run",
-            return_value=MODULE.subprocess.CompletedProcess(
-                [], 0, '{"enabled":false,"enabled":true,"enforced_by_owner":false}', ""
-            ),
+            side_effect=subprocess_results([
+                MODULE.subprocess.CompletedProcess(
+                    [], 0, '{"enabled":false,"enabled":true,"enforced_by_owner":true}', ""
+                )
+            ]),
         ):
             self.assertFalse(client.immutable_releases_enabled(REPOSITORY))
             self.assertNotIn("LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN", os.environ)
+
+    def test_verified_policy_handoff_is_exact_and_skips_admin_credential(self) -> None:
+        path = Path(self.temporary.name) / "immutable-release-policy.json"
+        now = 1_800_000_000
+        value = {
+            "schema_version": 2,
+            "kind": "latchway_github_immutable_release_policy",
+            "repository": REPOSITORY,
+            "run_id": 41,
+            "run_attempt": 2,
+            "issued_at": now,
+            "expires_at": now + MODULE.MAXIMUM_POLICY_TTL_SECONDS,
+            "settings": {"enabled": True, "enforced_by_owner": True},
+        }
+        path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+        digest = MODULE.hashlib.sha256(path.read_bytes()).hexdigest()
+        expires_at = MODULE.validate_immutable_policy_evidence(
+            path,
+            repository=REPOSITORY,
+            expected_sha256=digest,
+            expected_run_id=41,
+            expected_run_attempt=2,
+            current_time=now,
+        )
+        self.assertEqual(expires_at, value["expires_at"])
+        client = FakeClient()
+        with patch.object(MODULE.time, "time", return_value=now):
+            MODULE.reconcile(
+                repository=REPOSITORY,
+                tag=TAG,
+                title="Latchway v1.0.0",
+                prerelease=False,
+                assets=self.assets,
+                client=client,
+                expected_commit=COMMIT,
+                immutable_policy_expires_at=expires_at,
+            )
+        self.assertEqual(client.settings_reads, 0)
+
+        for label, mutation in (
+            ("repository", {**value, "repository": "Latchway/other"}),
+            ("disabled", {**value, "settings": {"enabled": False, "enforced_by_owner": True}}),
+            ("owner_false", {**value, "settings": {"enabled": True, "enforced_by_owner": False}}),
+            ("schema_boolean", {**value, "schema_version": True}),
+            ("wrong_run", {**value, "run_id": 42}),
+            ("wrong_attempt", {**value, "run_attempt": 1}),
+            ("unsafe_run", {**value, "run_id": 9_007_199_254_740_992}),
+            ("boolean_attempt", {**value, "run_attempt": True}),
+            ("stale", {**value, "issued_at": now - 60, "expires_at": now}),
+            ("future", {**value, "issued_at": now + 1, "expires_at": now + 60}),
+            ("over_ttl", {**value, "expires_at": now + MODULE.MAXIMUM_POLICY_TTL_SECONDS + 1}),
+        ):
+            with self.subTest(label=label):
+                path.write_text(json.dumps(mutation, sort_keys=True) + "\n", encoding="utf-8")
+                mutated_digest = MODULE.hashlib.sha256(path.read_bytes()).hexdigest()
+                rejected_client = FakeClient()
+                with self.assertRaisesRegex(MODULE.Rejected, "authorize"):
+                    rejected_expiry = MODULE.validate_immutable_policy_evidence(
+                        path,
+                        repository=REPOSITORY,
+                        expected_sha256=mutated_digest,
+                        expected_run_id=41,
+                        expected_run_attempt=2,
+                        current_time=now,
+                    )
+                    MODULE.reconcile(
+                        repository=REPOSITORY,
+                        tag=TAG,
+                        title="Latchway v1.0.0",
+                        prerelease=False,
+                        assets=self.assets,
+                        client=rejected_client,
+                        expected_commit=COMMIT,
+                        immutable_policy_expires_at=rejected_expiry,
+                    )
+                self.assertEqual(rejected_client.settings_reads, 0)
+                self.assertEqual(rejected_client.created, 0)
+                self.assertEqual(rejected_client.uploaded, [])
+                self.assertEqual(rejected_client.finalized, 0)
+
+        for expected_run_id, expected_run_attempt in (
+            (0, 2),
+            (9_007_199_254_740_992, 2),
+            (41, True),
+        ):
+            with self.subTest(
+                expected_run_id=expected_run_id,
+                expected_run_attempt=expected_run_attempt,
+            ), self.assertRaisesRegex(MODULE.Rejected, "invalid expected run coordinates"):
+                MODULE.validate_immutable_policy_evidence(
+                    path,
+                    repository=REPOSITORY,
+                    expected_sha256=digest,
+                    expected_run_id=expected_run_id,
+                    expected_run_attempt=expected_run_attempt,
+                    current_time=now,
+                )
+
+    def test_policy_cli_rejects_unbounded_run_coordinate_without_integer_conversion(self) -> None:
+        path = Path(self.temporary.name) / "immutable-release-policy.json"
+        arguments = [
+            str(SCRIPT),
+            "--repository", REPOSITORY,
+            "--tag", TAG,
+            "--title", "Latchway v1.0.0",
+            "--expected-commit", COMMIT,
+            "--verified-immutable-policy", str(path),
+            "--verified-immutable-policy-sha256", "a" * 64,
+            "--verified-immutable-policy-run-id", "9" * 5_000,
+            "--verified-immutable-policy-run-attempt", "1",
+            str(self.assets[0].path),
+        ]
+        with patch.object(sys, "argv", arguments), patch(
+            "sys.stderr", new=io.StringIO()
+        ), self.assertRaises(SystemExit) as raised:
+            MODULE.parse_arguments()
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_policy_expiry_immediately_before_finalize_prevents_finalization(self) -> None:
+        now = 1_800_000_000
+        remote_assets = []
+        contents: dict[int, bytes] = {}
+        for identifier, asset in enumerate(self.assets, 1):
+            remote_assets.append({
+                "id": identifier,
+                "name": asset.name,
+                "size": asset.size,
+                "state": "uploaded",
+                "digest": f"sha256:{asset.sha256}",
+            })
+            contents[identifier] = asset.path.read_bytes()
+        client = FakeClient(release(draft=True, assets=remote_assets), contents)
+        with patch.object(MODULE.time, "time", side_effect=[now, now + 10]):
+            with self.assertRaisesRegex(MODULE.Rejected, "expired before release mutation"):
+                MODULE.reconcile(
+                    repository=REPOSITORY,
+                    tag=TAG,
+                    title="Latchway v1.0.0",
+                    prerelease=False,
+                    assets=self.assets,
+                    client=client,
+                    expected_commit=COMMIT,
+                    immutable_policy_expires_at=now + 10,
+                )
+        self.assertEqual(client.settings_reads, 0)
+        self.assertEqual(client.uploaded, [])
+        self.assertEqual(client.finalized, 0)
 
     def test_admin_preflight_rejects_missing_or_multiline_token_without_network(self) -> None:
         client = MODULE.GitHubClient()
@@ -503,6 +1131,83 @@ class GitHubClientTests(unittest.TestCase):
         second.write_bytes(b"sum")
         return MODULE.inspect_assets([str(first), str(second)])
 
+    def test_json_command_rejects_oversized_and_duplicate_key_documents(self) -> None:
+        cases = (
+            (b'{"value":"too large"}', 8, "oversized JSON"),
+            (b'{"value":1,"value":2}', 128, "invalid JSON"),
+        )
+        for payload, maximum_bytes, message in cases:
+            with self.subTest(message=message), patch.object(
+                MODULE.subprocess,
+                "run",
+                side_effect=subprocess_results([
+                    MODULE.subprocess.CompletedProcess([], 0, payload, b"")
+                ]),
+            ), self.assertRaisesRegex(RuntimeError, message):
+                MODULE._execute_json_command(
+                    ["gh", "api", "test"],
+                    "bounded GitHub JSON test",
+                    maximum_bytes=maximum_bytes,
+                )
+
+    @unittest.skipIf(MODULE.resource is None, "POSIX file-size limits are unavailable")
+    def test_json_command_bounds_producer_output_and_runtime(self) -> None:
+        with self.assertRaises(RuntimeError):
+            MODULE._execute_json_command(
+                [
+                    sys.executable,
+                    "-c",
+                    f'import sys; sys.stdout.write("x" * {MODULE.MAXIMUM_DIAGNOSTIC_BYTES + 4096})',
+                ],
+                "bounded producer output test",
+                maximum_bytes=128,
+            )
+        with patch.object(MODULE, "MAXIMUM_API_COMMAND_SECONDS", 0.01):
+            with self.assertRaisesRegex(RuntimeError, "timeout"):
+                MODULE._execute_json_command(
+                    [sys.executable, "-c", "import time; time.sleep(1)"],
+                    "bounded producer runtime test",
+                    maximum_bytes=128,
+                )
+
+    def test_download_rejects_output_beyond_call_site_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.object(
+            MODULE.subprocess,
+            "run",
+            side_effect=subprocess_results([
+                MODULE.subprocess.CompletedProcess([], 0, b"123456789", b"")
+            ]),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "invalid amount"):
+                MODULE.GitHubClient().download(
+                    REPOSITORY, 1, Path(temporary, "asset"), 8
+                )
+
+    def test_command_failure_caps_and_sanitizes_retained_stderr(self) -> None:
+        secret = "github_pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        diagnostic = f"Bearer {secret}\n".encode("utf-8") + (
+            b"x" * (MODULE.MAXIMUM_DIAGNOSTIC_BYTES + 100)
+        )
+        with patch.object(
+            MODULE.subprocess,
+            "run",
+            side_effect=subprocess_results([
+                MODULE.subprocess.CompletedProcess([], 1, b"", diagnostic)
+            ]),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "truncated") as raised:
+                MODULE._execute_json_command(
+                    ["gh", "api", "test"],
+                    "failed GitHub JSON test",
+                    maximum_bytes=128,
+                )
+        message = str(raised.exception)
+        self.assertNotIn(secret, message)
+        self.assertNotIn("\n", message)
+        self.assertLessEqual(
+            len(message), MODULE.MAXIMUM_DIAGNOSTIC_BYTES + 128
+        )
+
     def test_release_and_each_asset_attestation_retry_then_bind_exact_closure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             assets = self.make_assets(temporary)
@@ -520,7 +1225,9 @@ class GitHubClientTests(unittest.TestCase):
                     "LATCHWAY_GITHUB_RELEASE_ATTESTATION_ATTEMPTS": "2",
                     "LATCHWAY_GITHUB_RELEASE_ATTESTATION_DELAY_SECONDS": "1",
                 },
-            ), patch.object(MODULE.subprocess, "run", side_effect=results) as run, patch.object(
+            ), patch.object(
+                MODULE.subprocess, "run", side_effect=subprocess_results(results)
+            ) as run, patch.object(
                 MODULE.time, "sleep"
             ) as sleep:
                 MODULE.GitHubClient().verify_release_attestation(
@@ -554,7 +1261,9 @@ class GitHubClientTests(unittest.TestCase):
                 with self.subTest(message=message), patch.object(
                     MODULE.subprocess,
                     "run",
-                    return_value=MODULE.subprocess.CompletedProcess([], 0, json.dumps(document), ""),
+                    side_effect=subprocess_results([
+                        MODULE.subprocess.CompletedProcess([], 0, json.dumps(document), "")
+                    ]),
                 ):
                     with self.assertRaisesRegex(MODULE.Rejected, message):
                         MODULE.GitHubClient().verify_release_attestation(
@@ -575,6 +1284,20 @@ class GitHubClientTests(unittest.TestCase):
             inner_document["attestation"]["bundle"]["dsseEnvelope"]["payload"] = (
                 base64.b64encode(duplicate_inner.encode("utf-8")).decode("ascii")
             )
+            noncanonical_base64 = attestation_document(assets)
+            encoded = noncanonical_base64["attestation"]["bundle"]["dsseEnvelope"]["payload"]
+            self.assertTrue(encoded.endswith("=="))
+            replacement = "R" if encoded[-3] == "Q" else "B"
+            noncanonical_base64["attestation"]["bundle"]["dsseEnvelope"]["payload"] = (
+                f"{encoded[:-3]}{replacement}=="
+            )
+            self.assertEqual(
+                base64.b64decode(encoded, validate=True),
+                base64.b64decode(
+                    noncanonical_base64["attestation"]["bundle"]["dsseEnvelope"]["payload"],
+                    validate=True,
+                ),
+            )
             outputs = [
                 "",
                 "not-json",
@@ -582,14 +1305,19 @@ class GitHubClientTests(unittest.TestCase):
                 "{}",
                 '{"attestation":{},"attestation":{},"verificationResult":{}}',
                 '{"attestation":NaN,"verificationResult":{}}',
+                '{"attestation":1e9999,"verificationResult":{}}',
+                '{"attestation":9007199254740992,"verificationResult":{}}',
                 json.dumps(malformed_envelope),
                 json.dumps(inner_document),
+                json.dumps(noncanonical_base64),
             ]
             for output in outputs:
                 with self.subTest(output=output[:40]), patch.object(
                     MODULE.subprocess,
                     "run",
-                    return_value=MODULE.subprocess.CompletedProcess([], 0, output, ""),
+                    side_effect=subprocess_results([
+                        MODULE.subprocess.CompletedProcess([], 0, output, "")
+                    ]),
                 ):
                     with self.assertRaises((RuntimeError, MODULE.Rejected)):
                         MODULE.GitHubClient().verify_release_attestation(
@@ -605,10 +1333,10 @@ class GitHubClientTests(unittest.TestCase):
         with patch.object(
             MODULE.subprocess,
             "run",
-            side_effect=[
+            side_effect=subprocess_results([
                 MODULE.subprocess.CompletedProcess([], 0, json.dumps(reference), ""),
                 MODULE.subprocess.CompletedProcess([], 0, json.dumps(annotated), ""),
-            ],
+            ]),
         ) as run:
             MODULE.GitHubClient().validate_remote_tag(REPOSITORY, TAG, COMMIT)
         self.assertIn(f"repos/{REPOSITORY}/git/ref/tags/{TAG}", run.call_args_list[0].args[0])
@@ -618,7 +1346,9 @@ class GitHubClientTests(unittest.TestCase):
         with patch.object(
             MODULE.subprocess,
             "run",
-            return_value=MODULE.subprocess.CompletedProcess([], 0, json.dumps(lightweight), ""),
+            side_effect=subprocess_results([
+                MODULE.subprocess.CompletedProcess([], 0, json.dumps(lightweight), "")
+            ]),
         ) as run:
             with self.assertRaisesRegex(MODULE.Rejected, "annotated tag object"):
                 MODULE.GitHubClient().validate_remote_tag(REPOSITORY, TAG, COMMIT)
@@ -628,10 +1358,10 @@ class GitHubClientTests(unittest.TestCase):
         with patch.object(
             MODULE.subprocess,
             "run",
-            side_effect=[
+            side_effect=subprocess_results([
                 MODULE.subprocess.CompletedProcess([], 0, json.dumps(reference), ""),
                 MODULE.subprocess.CompletedProcess([], 0, json.dumps(wrong_commit), ""),
-            ],
+            ]),
         ):
             with self.assertRaisesRegex(MODULE.Rejected, "promoted commit"):
                 MODULE.GitHubClient().validate_remote_tag(REPOSITORY, TAG, COMMIT)

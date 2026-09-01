@@ -19,7 +19,8 @@ Versioning once package publication begins.
   provider identity bound into each retained conformance report.
 - Release the client, OpenAI, Vercel AI, and LangChain packages as one
   deterministic evidence-bound set, with all-coordinate preflight, exact
-  registry-byte verification, provenance, signatures, and adoption history.
+  registry-byte verification, provenance, signatures, and retry-stable
+  package-suffixed adoption history.
 - Restrict authenticated transports to contract-declared method/path pairs,
   reject redirected or cross-origin responses, attach exact framework
   metadata, and fail closed rather than replaying streaming request bodies.

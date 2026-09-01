@@ -13,12 +13,14 @@ creation or verification of the evidence-bound annotated SDK tag.
 Before the first automated release, configure these external controls:
 
 1. Protect release tags and the `npm` GitHub environment. Require an independent
-   reviewer for the environment.
+   reviewer for the environment. Enforce immutable releases for this repository
+   from the owning organization so the repository response is exactly
+   `enabled: true` and `enforced_by_owner: true`.
    Store a fine-grained `LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN` in that protected
    environment with read-only repository Administration permission. The workflow
    uses it only to require GitHub's exact immutable-release setting response
-   (`enabled: true` and a Boolean `enforced_by_owner`) before any draft or asset
-   mutation.
+   before any draft or asset mutation. The final policy handoff is bound to the
+   exact workflow run and attempt and expires after at most 10 minutes.
 2. In each of the four npm package settings, configure the GitHub Actions
    trusted publisher for organization `Latchway`, repository `latchway-js`,
    workflow file `release.yml`, environment `npm`, and the `npm publish` action.
@@ -32,6 +34,22 @@ Before the first automated release, configure these external controls:
    credential scoped to `Latchway/latchway`. It authenticates only the pinned
    promotion asset download and attestation verification. Public core
    repositories need no secret and fall back to the job token.
+6. Make `release.yml` the exclusive writer for generated SDK tags and GitHub
+   release drafts; do not upload, replace, or remove draft assets manually. The
+   per-commit workflow concurrency group prevents overlapping dispatches for the
+   same promoted commit, and the protected `npm` environment limits who may
+   write. The pre-publish draft gate can validate only release
+   metadata and allowed asset-name shape because registry evidence does not exist
+   until publication verification completes. The final no-checkout reconciler
+   subsequently downloads, bounds, parses, byte-binds, and attests every retained
+   adoption record before it uploads anything, repeats that validation after all
+   uploads immediately before finalization, and verifies the immutable result
+   again. GitHub does not expose an atomic compare-and-finalize operation for
+   draft asset bytes, so the exclusive-writer control remains necessary for the
+   final interval between the last validation and finalization. A foreign or
+   corrupt draft therefore fails closed, but the exclusive-writer control is what
+   prevents such a draft from causing an otherwise valid immutable npm publication
+   before that later cryptographic check.
 
 npm currently requires a package to exist before its trusted publisher can be
 configured. If any package has no npm package record, its initial namespace
@@ -150,10 +168,28 @@ is never treated as success. An attested, attempt-specific adoption record binds
 the immutable npm provenance-producing run and attempt, exact registry evidence
 manifest, and the current successful adoption run and attempt. The provenance
 producer is therefore allowed to be the earlier interrupted attempt without
-misrepresenting the successful rerun. The GitHub release is equally resumable: an
+misrepresenting the successful rerun. The fixed post-publish record describes
+the immutable registry state and therefore always records `publication_mode` as
+`published`; only the package-suffixed adoption record describes whether the
+current attempt published or adopted those bytes. This keeps every fixed asset
+byte-stable across a valid retry. If the npm job succeeded in an earlier workflow
+attempt and only a downstream evidence job is rerun, the workflow consumes the
+npm producer's exported run and attempt, converts its earlier `published` result
+to `adopted_existing` for the current adoption record, and keeps the original npm
+provenance coordinates unchanged. A record says `published` if and only if its
+provenance and adoption run/attempt coordinates are identical; every consumer
+enforces that equivalence. The GitHub release is equally resumable: an
 interrupted draft can be completed only when its metadata and every existing
 asset match the exact rerun inputs, while an identical final release is a
 read-only success.
+
+The short immutable-policy lease intentionally cannot be reused by a later
+workflow attempt. If `github-release` must be retried after its policy producer
+already succeeded, use **Re-run all jobs** (or send a fresh verified promotion
+dispatch) rather than **Re-run failed jobs** or a single-job rerun. A full rerun
+generates new attempt-bound policy evidence and safely adopts any npm bytes from
+the earlier attempt; a partial rerun fails before release mutation when it sees
+the prior attempt's policy handoff.
 
 ## Consumer verification
 

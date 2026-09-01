@@ -1,6 +1,10 @@
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import {
+  readBoundedFileSync,
+  readBoundedStrictJSONFileSync,
+} from "./npm-release-evidence.mjs";
 import {
   ARTIFACTS_PATH,
   fetchBytes,
@@ -10,7 +14,11 @@ import {
 } from "./release-utils.mjs";
 
 const packages = await readReleasePackages();
-const evidence = JSON.parse(await readFile(join(ARTIFACTS_PATH, "package-evidence.json"), "utf8"));
+const evidence = readBoundedStrictJSONFileSync(
+  join(ARTIFACTS_PATH, "package-evidence.json"),
+  "Package-set registry preflight evidence",
+  2 * 1024 * 1024,
+);
 if (!Array.isArray(evidence.packages) || evidence.packages.length !== packages.length) {
   throw new Error("Package-set evidence is incomplete.");
 }
@@ -41,7 +49,11 @@ for (const [index, package_] of packages.entries()) {
     maximumBytes: 10 * 1024 * 1024,
     accept: "application/octet-stream",
   });
-  const localBytes = await readFile(join(ARTIFACTS_PATH, package_.archiveName));
+  const localBytes = readBoundedFileSync(
+    join(ARTIFACTS_PATH, package_.archiveName),
+    `${package_.name} registry-preflight archive`,
+    10 * 1024 * 1024,
+  );
   if (result.response.status !== 200 || !localBytes.equals(result.bytes)) {
     throw new Error(`${package_.name}@${package_.manifest.version} exists with different archive bytes.`);
   }

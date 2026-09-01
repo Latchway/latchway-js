@@ -6,6 +6,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 // This tokenless job only needs the npm audit-signature commands available in
 // the exact Node 24 runtime, whose supported floor is npm 10.9.3.
 const minimumNpm = [10, 9, 3];
+const MAXIMUM_COMMAND_MILLISECONDS = 20 * 1000;
 if (process.version !== "v24.19.0") {
   throw new Error(`The registry-evidence job requires Node v24.19.0, received ${process.version}.`);
 }
@@ -13,7 +14,9 @@ if (process.version !== "v24.19.0") {
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const npmVersion = execFileSync(npmCommand, ["--version"], {
   encoding: "utf8",
+  maxBuffer: 64 * 1024,
   stdio: ["ignore", "pipe", "pipe"],
+  timeout: MAXIMUM_COMMAND_MILLISECONDS,
 }).trim();
 const npmParts = npmVersion.split(".").map(Number);
 if (npmParts.length !== 3 || npmParts.some((part) => !Number.isInteger(part)) ||

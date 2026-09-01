@@ -15,22 +15,27 @@ WORKFLOW = Path(__file__).parents[1] / ".github" / "workflows" / "release.yml"
 
 
 class GitHubCLIVersionTests(unittest.TestCase):
-    def run_fake(self, version: str) -> subprocess.CompletedProcess[str]:
+    def run_script(self, contents: bytes) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as directory:
             executable = Path(directory) / "gh"
-            executable.write_text(
-                "#!/bin/sh\n"
-                f"printf '%s\\n' 'gh version {version} (2026-08-29)' "
-                "'https://github.com/cli/cli/releases'\n",
-                encoding="utf-8",
-            )
+            executable.write_bytes(contents)
             executable.chmod(0o700)
             return subprocess.run(
                 [sys.executable, str(SCRIPT), "--gh", str(executable)],
                 check=False,
                 capture_output=True,
                 text=True,
+                timeout=5,
             )
+
+    def run_fake(self, version: str) -> subprocess.CompletedProcess[str]:
+        return self.run_script(
+            (
+                "#!/bin/sh\n"
+                f"printf '%s\\n' 'gh version {version} (2026-08-29)' "
+                "'https://github.com/cli/cli/releases'\n"
+            ).encode("utf-8")
+        )
 
     def test_rejects_2_96_series(self) -> None:
         result = self.run_fake("2.96.99")
@@ -46,6 +51,18 @@ class GitHubCLIVersionTests(unittest.TestCase):
         result = self.run_fake("2.97.0-rc.1")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unrecognized version string", result.stderr)
+
+    def test_rejects_oversized_output_before_retaining_it(self) -> None:
+        result = self.run_script(
+            b"#!/bin/sh\nhead -c 32768 /dev/zero | tr '\\000' x\n"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("version probe failed", result.stderr)
+
+    def test_rejects_invalid_utf8_output(self) -> None:
+        result = self.run_script(b"#!/bin/sh\nprintf 'gh version 2.97.0 \\377\\n'\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid UTF-8", result.stderr)
 
     def test_workflow_guards_earliest_signer_workflow_verification(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
