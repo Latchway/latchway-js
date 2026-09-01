@@ -17,7 +17,7 @@ native messages, tools, structured output, streaming, and cancellation APIs;
 Latchway does not introduce a second AI framework.
 
 Version `1.0.0` is the intended stable source candidate and has not yet been
-published to npm. Draft contract 1.0.0, current wire protocol 2, and the exact
+published to npm. Released contract 1.0.0, current wire protocol 2, and the exact
 reviewed core bundle are pinned in `contract.lock`. Wire-1-shaped session
 grants without Installation Family metadata remain parseable for legacy
 server compatibility; new family/component operations require wire 2.

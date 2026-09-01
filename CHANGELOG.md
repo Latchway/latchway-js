@@ -7,12 +7,14 @@ Versioning once package publication begins.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-01
+
 ### Changed
 
 - Synchronize the SDK, runtime headers, release evidence, and all four canonical
-  fixtures to draft Latchway contract 1.0.0 at core commit
-  `116ebe4ed31a6a86ec97dc5351e289e12b06a38e` and deterministic bundle SHA-256
-  `a8ef48786f16c1a7c6acb5be4eb62269bf3f5fda55bb5dbbe2842c4c52cad8ad`,
+  fixtures to released Latchway contract 1.0.0 at core commit
+  `5063351711ea7a781e398112cbcc34b99b3770b2` and deterministic bundle SHA-256
+  `36641cfb4276b5f0fe645ac3ed102dc803f58f0073967423bd431328b82be8fd`,
   emitting current wire protocol 2 while retaining legacy grant parsing.
 - Require exact-image JavaScript release evidence for both Firebase App Check
   and Cloudflare Turnstile, with separate protected tokens and a non-secret
@@ -26,6 +28,18 @@ Versioning once package publication begins.
   metadata, and fail closed rather than replaying streaming request bodies.
 - Parse and persist Installation Family, component grant, feature scope, and
   trust provenance fields without weakening legacy wire compatibility.
+- Established the original reviewed client-contract lock, compatibility
+  constants, canonical fixtures, and server 1.0.0/1.0.x compatibility policy.
+- Hardened control and RFC 9457 response parsing with bounded fatal UTF-8,
+  duplicate-member and nesting rejection, exact error-registry metadata,
+  request-ID correlation, and canonical operation reconciliation identifiers.
+- Expanded provider-credential stripping and reject credential-like query
+  names before identity acquisition or network dispatch.
+- Restricted automatic proof/session retries to unambiguous nonce and exact
+  pre-dispatch Problem responses.
+- Bound Turnstile Siteverify verdicts to the session challenge through widget
+  `cData`, send token-only evidence, and require a fresh challenge instead of
+  attempting to reuse single-use Turnstile evidence during refresh.
 
 ### Added
 
@@ -46,26 +60,6 @@ Versioning once package publication begins.
   newest-compatible observation that can report one issue without widening a
   support range. Compatibility remains experimental until hosted/exact-image,
   broader-version, and live-provider evidence exists.
-
-## Planned 1.0.0 candidate baseline (unreleased)
-
-### Changed
-
-- Established the original reviewed client-contract lock, compatibility
-  constants, canonical fixtures, and server 1.0.0/1.0.x compatibility policy.
-- Hardened control and RFC 9457 response parsing with bounded fatal UTF-8,
-  duplicate-member and nesting rejection, exact error-registry metadata,
-  request-ID correlation, and canonical operation reconciliation identifiers.
-- Expanded provider-credential stripping and reject credential-like query
-  names before identity acquisition or network dispatch.
-- Restricted automatic proof/session retries to unambiguous nonce and exact
-  pre-dispatch Problem responses.
-- Bound Turnstile Siteverify verdicts to the session challenge through widget
-  `cData`, send token-only evidence, and require a fresh challenge instead of
-  attempting to reuse single-use Turnstile evidence during refresh.
-
-### Added
-
 - Initial governance, contribution, security, and architecture documentation.
 - Contract 0.1.0 lock and canonical DPoP and attestation-binding fixtures.
 - Handwritten browser and Node.js clients with DPoP session orchestration.

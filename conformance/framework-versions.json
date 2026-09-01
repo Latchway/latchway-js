@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "contract_bundle_sha256": "a8ef48786f16c1a7c6acb5be4eb62269bf3f5fda55bb5dbbe2842c4c52cad8ad",
+  "contract_bundle_sha256": "36641cfb4276b5f0fe645ac3ed102dc803f58f0073967423bd431328b82be8fd",
   "support": "experimental",
   "profiles": {
     "minimum": {

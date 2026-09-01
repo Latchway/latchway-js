@@ -1,7 +1,7 @@
 # Conformance
 
 Unit conformance consumes the DPoP, attestation-binding, and Installation
-Family vectors from draft core contract 1.0.0. `pnpm verify:contracts` checks
+Family vectors from released core contract 1.0.0. `pnpm verify:contracts` checks
 their byte hashes and the pinned manifest. Tests cover proof signatures and
 claims, non-exportable keys,
 IndexedDB cloning and failure, simultaneous multi-tab first use, expired-lease

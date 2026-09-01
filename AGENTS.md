@@ -8,12 +8,12 @@ Build the TypeScript client that lets browser and bounded Node.js applications
 authenticate to Latchway, establish DPoP-bound sessions, and authorize ordinary
 fetch requests without holding an upstream provider credential.
 
-The version 1 JavaScript implementation is locked to draft contract checkpoint
-1.0.0, current wire protocol 2, and the reviewed core bundle recorded in
+The version 1 JavaScript implementation is locked to released contract
+checkpoint 1.0.0, current wire protocol 2, and the reviewed core bundle recorded in
 `contract.lock`. Compatible legacy wire-1 session grants remain parseable, but
 Installation Family and Client Component operations require wire 2. The
-package remains unpublished until the draft contract is promoted and protected
-registry, provenance, compatibility, and immutable-release evidence gates pass.
+package remains unpublished until the protected registry, provenance,
+compatibility, and immutable-release evidence gates pass.
 Production source, package metadata, tests, examples, and CI are authorized.
 Never invent a temporary wire contract, fake production behavior, or describe
 an unpublished package as released.

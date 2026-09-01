@@ -3,9 +3,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const expected = {
   contract: "1.0.0",
-  release: "unreleased",
-  commit: "116ebe4ed31a6a86ec97dc5351e289e12b06a38e",
-  bundle: "a8ef48786f16c1a7c6acb5be4eb62269bf3f5fda55bb5dbbe2842c4c52cad8ad",
+  release: "v1.0.0",
+  commit: "5063351711ea7a781e398112cbcc34b99b3770b2",
+  bundle: "36641cfb4276b5f0fe645ac3ed102dc803f58f0073967423bd431328b82be8fd",
   protocol: 2,
   minimumServer: "1.0.0",
   maximumTestedServer: "1.0.x",
@@ -23,7 +23,7 @@ const fixtureHashes = new Map([
   ["component-attestation-binding-v2.json", "8411308998cdffccf286892b94a6c759cbcf63b92e4727144d3a755dcd7c13d4"],
   ["dpop-v1.json", "b639e22dcd1c1a18e1292a044d96ec043c3be1e0271aacd6904bca39253bc5d4"],
   ["installation-family-v2.json", "87ea67542983a406ef7257476429b8d23e36a90c1b448142a5728632e63395f3"],
-  ["protocol-version.json", "8b51f10f1e08c3435cd217846a1b6a03ee22cf4640a9d52fde9c71882b0f7385"],
+  ["protocol-version.json", "4a6cf9f271bc9e83648eacf05f250f8fab24fc215d292a5a721148578f7372b1"],
 ]);
 
 const lock = await readFile(new URL("../contract.lock", import.meta.url), "utf8");
