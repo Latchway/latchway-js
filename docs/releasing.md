@@ -12,9 +12,13 @@ creation or verification of the evidence-bound annotated SDK tag.
 
 Before the first automated release, configure these external controls:
 
-1. Protect release tags and the `npm` GitHub environment. Require an independent
-   reviewer for the environment. Enforce immutable releases for this repository
-   from the owning organization so the repository response is exactly
+1. Install an active ruleset for `refs/tags/v*` that allows tag creation only
+   through the GitHub Actions integration used by `release.yml` and denies tag
+   updates, deletion, and non-fast-forward changes. Operators and administrators
+   must not create, move, or delete release tags manually. Protect the `npm`
+   GitHub environment and require an independent reviewer. Enforce immutable
+   releases for this repository from the owning organization so the response is
+   exactly
    `enabled: true` and `enforced_by_owner: true`.
    Store a fine-grained `LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN` in that protected
    environment with read-only repository Administration permission. The workflow
@@ -27,8 +31,11 @@ Before the first automated release, configure these external controls:
 3. Disallow package-token publication after trusted publishing is working.
    Never add `NPM_TOKEN`, `NODE_AUTH_TOKEN`, or an npm auth token to this
    repository or workflow.
-4. Confirm the public package repository URL is exactly
-   `https://github.com/Latchway/latchway-js`.
+4. Make `Latchway/latchway-js` public before publication and confirm the public
+   package repository URL is exactly
+   `https://github.com/Latchway/latchway-js`. Required npm provenance is not
+   generated from a private source repository, so private visibility is not a
+   supported stable-publication state.
 5. If the core repository remains private, configure
    `LATCHWAY_SIBLING_REPOSITORIES_READ_TOKEN` as a fine-grained Contents: read
    credential scoped to `Latchway/latchway`. It authenticates only the pinned
