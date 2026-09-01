@@ -127,7 +127,8 @@ describe("vanilla Web golden journey", () => {
     const transport: AuthenticatedTransport = {
       gatewayURL: "https://ai.example.com",
       fetchFor: () => async () => new Response(JSON.stringify({
-        type: "https://latchway.dev/problems/quota_exceeded",
+        type: "https://docs.latchway.dev/errors/quota-exceeded",
+        documentation_url: "https://docs.latchway.dev/errors/quota-exceeded",
         title: "Quota exceeded",
         status: 429,
         detail: "The request limit is exhausted.",
@@ -150,7 +151,7 @@ describe("vanilla Web golden journey", () => {
       expect(error).toMatchObject({
         name: "LatchwayError",
         code: "quota_exceeded",
-        documentationURL: "https://docs.latchway.dev/errors/quota_exceeded",
+        documentationURL: "https://docs.latchway.dev/errors/quota-exceeded",
         requestID: "req_12345678",
         retryable: true,
       });
@@ -161,7 +162,8 @@ describe("vanilla Web golden journey", () => {
     const transport: AuthenticatedTransport = {
       gatewayURL: "https://ai.example.com",
       fetchFor: () => async () => new Response(JSON.stringify({
-        type: "https://latchway.dev/problems/quota_exceeded",
+        type: "https://docs.latchway.dev/errors/quota-exceeded",
+        documentation_url: "https://docs.latchway.dev/errors/quota-exceeded",
         title: "Quota exceeded",
         status: 429,
         detail: "The request limit is exhausted.",
@@ -183,7 +185,7 @@ describe("vanilla Web golden journey", () => {
         code: "quota_exceeded",
         requestID: "req_12345678",
         retryable: true,
-        documentationURL: "https://docs.latchway.dev/errors/quota_exceeded",
+        documentationURL: "https://docs.latchway.dev/errors/quota-exceeded",
       },
     });
     expect(safeHabitAssistantFailure(new Error("sensitive local detail"))).toEqual({

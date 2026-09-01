@@ -823,8 +823,10 @@ class MockGateway {
       session_expired: { title: "Session expired", retryable: true },
     }[code];
     if (policy === undefined) throw new Error(`Missing test problem policy for ${code}.`);
+    const documentationURL = `https://docs.latchway.dev/errors/${code.replaceAll("_", "-")}`;
     return new Response(JSON.stringify({
-      type: `https://latchway.dev/problems/${code}`,
+      type: documentationURL,
+      documentation_url: documentationURL,
       title: policy.title,
       status,
       detail: "The request was rejected before upstream dispatch.",

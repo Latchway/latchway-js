@@ -465,8 +465,10 @@ function streamResponse(request, response, origin, cancellable) {
 function writeProblem(response, origin, code, detail) {
   const policy = problemPolicies[code];
   if (policy === undefined) throw new Error(`Missing problem policy for ${code}.`);
+  const documentationURL = `https://docs.latchway.dev/errors/${code.replaceAll("_", "-")}`;
   writeJSON(response, origin, policy.status, {
-    type: `https://latchway.dev/problems/${code}`,
+    type: documentationURL,
+    documentation_url: documentationURL,
     title: policy.title,
     status: policy.status,
     detail,

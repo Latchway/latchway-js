@@ -79,8 +79,9 @@ cross-origin response fails closed.
 
 Every `LatchwayError` has a closed `code`, optional safe `requestID`, and a
 stable `documentationURL` at
-`https://docs.latchway.dev/errors/<code>`. The URL is derived locally from the
-typed code rather than trusted from a response. Error reports should include
+`https://docs.latchway.dev/errors/<hyphenated-code>`. The URL is derived locally
+from the typed code, while server Problems are accepted only when both `type`
+and `documentation_url` match it exactly. Error reports should include
 only `code`, `requestID`, `retryable`, and `documentationURL`; do not attach
 response bodies, tokens, browser storage, or the error cause.
 

@@ -314,8 +314,10 @@ export function latchwayProblem(
     session_expired: { status: 401, title: "Session expired", retryable: true },
     upstream_unavailable: { status: 503, title: "Upstream unavailable", retryable: true },
   }[code];
+  const documentationURL = `https://docs.latchway.dev/errors/${code.replaceAll("_", "-")}`;
   return jsonResponse({
-    type: `https://latchway.dev/problems/${code}`,
+    type: documentationURL,
+    documentation_url: documentationURL,
     title: policy.title,
     status: policy.status,
     detail: `Conformance ${code.replaceAll("_", " ")}.`,

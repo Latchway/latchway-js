@@ -230,7 +230,7 @@ test("surfaces a canonical revoked-browser-component rejection", async ({ page, 
     code: "component_revoked",
     requestID: "req_browser_conformance_0001",
     retryable: false,
-    documentationURL: "https://docs.latchway.dev/errors/component_revoked",
+    documentationURL: "https://docs.latchway.dev/errors/component-revoked",
   });
 });
 
@@ -301,7 +301,7 @@ test("loads plain browser ESM with request IDs, safe diagnostics, and safe failu
       code: "component_revoked",
       requestID: "req_browser_conformance_0001",
       retryable: false,
-      documentationURL: "https://docs.latchway.dev/errors/component_revoked",
+      documentationURL: "https://docs.latchway.dev/errors/component-revoked",
     },
   });
 });

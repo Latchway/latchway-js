@@ -4,8 +4,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 const expected = {
   contract: "1.0.0",
   release: "unreleased",
-  commit: "b07a4762f08e6b68d5829cda500bae9d79e5f16c",
-  bundle: "397a3920aaa2ed0438a96156cd8a51f0fa85ac2e3fb9266b4fe79618812a3d9a",
+  commit: "a5f6b6b843b40f90f99062430aba268aa3c0f723",
+  bundle: "3a88fb69b911724da849229f34f735608e829bcfb0658087313c8d31441e9927",
   protocol: 2,
   minimumServer: "1.0.0",
   maximumTestedServer: "1.0.x",

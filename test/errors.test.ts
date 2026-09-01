@@ -9,7 +9,8 @@ import {
 describe("stable error mapping", () => {
   it("maps safe RFC 9457 fields", async () => {
     const response = new Response(JSON.stringify({
-      type: "https://latchway.dev/problems/quota_exceeded",
+      type: "https://docs.latchway.dev/errors/quota-exceeded",
+      documentation_url: "https://docs.latchway.dev/errors/quota-exceeded",
       title: "Quota exceeded",
       status: 429,
       detail: "The request limit is exhausted.",
@@ -29,7 +30,7 @@ describe("stable error mapping", () => {
     expect(error).toBeInstanceOf(LatchwayError);
     expect(error).toMatchObject({
       code: "quota_exceeded",
-      documentationURL: "https://docs.latchway.dev/errors/quota_exceeded",
+      documentationURL: "https://docs.latchway.dev/errors/quota-exceeded",
       status: 429,
       requestID: "req_12345678",
       retryable: true,
@@ -39,13 +40,13 @@ describe("stable error mapping", () => {
 
   it("provides a stable documentation URL for server and client error codes", async () => {
     const clientError = new LatchwayError("network_error", "The request failed.");
-    expect(clientError.documentationURL).toBe("https://docs.latchway.dev/errors/network_error");
+    expect(clientError.documentationURL).toBe("https://docs.latchway.dev/errors/network-error");
     expect(Object.keys(clientError)).not.toContain("documentationURL");
     expect(() => {
       Object.assign(clientError, { documentationURL: "https://malicious.invalid" });
     }).toThrow(TypeError);
     expect(latchwayErrorDocumentationURL("component_revoked"))
-      .toBe("https://docs.latchway.dev/errors/component_revoked");
+      .toBe("https://docs.latchway.dev/errors/component-revoked");
 
     const malformed = await errorFromResponse(new Response("not-json", {
       status: 502,
@@ -53,7 +54,7 @@ describe("stable error mapping", () => {
     }));
     expect(malformed).toMatchObject({
       code: "protocol_response_invalid",
-      documentationURL: "https://docs.latchway.dev/errors/protocol_response_invalid",
+      documentationURL: "https://docs.latchway.dev/errors/protocol-response-invalid",
       requestID: "req_12345678",
     });
   });
@@ -68,8 +69,8 @@ describe("stable error mapping", () => {
 
   it("rejects duplicate problem fields, including Unicode-escaped aliases", async () => {
     for (const body of [
-      "{\"type\":\"https://latchway.dev/problems/quota_exceeded\",\"title\":\"Quota exceeded\",\"status\":429,\"detail\":\"first\",\"detail\":\"second\",\"code\":\"quota_exceeded\",\"request_id\":\"req_12345678\",\"retryable\":true}",
-      "{\"type\":\"https://latchway.dev/problems/quota_exceeded\",\"title\":\"Quota exceeded\",\"status\":429,\"detail\":\"first\",\"\\u0064etail\":\"second\",\"code\":\"quota_exceeded\",\"request_id\":\"req_12345678\",\"retryable\":true}",
+      "{\"type\":\"https://docs.latchway.dev/errors/quota-exceeded\",\"documentation_url\":\"https://docs.latchway.dev/errors/quota-exceeded\",\"title\":\"Quota exceeded\",\"status\":429,\"detail\":\"first\",\"detail\":\"second\",\"code\":\"quota_exceeded\",\"request_id\":\"req_12345678\",\"retryable\":true}",
+      "{\"type\":\"https://docs.latchway.dev/errors/quota-exceeded\",\"documentation_url\":\"https://docs.latchway.dev/errors/quota-exceeded\",\"title\":\"Quota exceeded\",\"status\":429,\"detail\":\"first\",\"\\u0064etail\":\"second\",\"code\":\"quota_exceeded\",\"request_id\":\"req_12345678\",\"retryable\":true}",
     ]) {
       const error = await errorFromResponse(new Response(body, {
         status: 429,
@@ -81,7 +82,8 @@ describe("stable error mapping", () => {
 
   it("requires exact canonical problem metadata and header correlation", async () => {
     const valid = {
-      type: "https://latchway.dev/problems/internal_error",
+      type: "https://docs.latchway.dev/errors/internal-error",
+      documentation_url: "https://docs.latchway.dev/errors/internal-error",
       title: "Internal server error",
       status: 500,
       detail: "A safe internal error occurred.",
@@ -98,7 +100,9 @@ describe("stable error mapping", () => {
       retryable: valid.retryable,
     };
     const cases = [
-      { body: { ...valid, type: "https://gateway.example/problems/internal_error" } },
+      { body: { ...valid, type: "https://gateway.example/errors/internal-error" } },
+      { body: { ...valid, documentation_url: "https://malicious.invalid/internal-error" } },
+      { body: { ...valid, documentation_url: undefined } },
       { body: { ...valid, title: "Almost right" } },
       { body: { ...valid, status: 503 } },
       { body: { ...valid, retryable: true } },
@@ -124,7 +128,8 @@ describe("stable error mapping", () => {
     const error = await errorFromResponse(new Response(JSON.stringify({
       title: "Operation outcome indeterminate",
       status: 503,
-      type: "https://latchway.dev/problems/operation_indeterminate",
+      type: "https://docs.latchway.dev/errors/operation-indeterminate",
+      documentation_url: "https://docs.latchway.dev/errors/operation-indeterminate",
       detail: "The operation must be reconciled before retrying.",
       code: "operation_indeterminate",
       request_id: "req_12345678",
@@ -149,7 +154,8 @@ describe("stable error mapping", () => {
 
   it("rejects missing, malformed, or forbidden operation IDs", async () => {
     const indeterminate = {
-      type: "https://latchway.dev/problems/operation_indeterminate",
+      type: "https://docs.latchway.dev/errors/operation-indeterminate",
+      documentation_url: "https://docs.latchway.dev/errors/operation-indeterminate",
       title: "Operation outcome indeterminate",
       status: 503,
       detail: "Reconcile the operation before retrying.",
@@ -167,7 +173,8 @@ describe("stable error mapping", () => {
     }
 
     const error = await errorFromResponse(new Response(JSON.stringify({
-      type: "https://latchway.dev/problems/internal_error",
+      type: "https://docs.latchway.dev/errors/internal-error",
+      documentation_url: "https://docs.latchway.dev/errors/internal-error",
       title: "Internal server error",
       status: 500,
       detail: "A safe internal error occurred.",

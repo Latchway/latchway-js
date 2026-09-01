@@ -72,14 +72,19 @@ export type LatchwayClientErrorCode =
 
 export type LatchwayErrorCode = LatchwayServerErrorCode | LatchwayClientErrorCode;
 
+type HyphenatedErrorCode<Code extends string> =
+  Code extends `${infer Head}_${infer Tail}`
+    ? `${Head}-${HyphenatedErrorCode<Tail>}`
+    : Code;
+
 export type LatchwayErrorDocumentationURL =
-  `https://docs.latchway.dev/errors/${LatchwayErrorCode}`;
+  `https://docs.latchway.dev/errors/${HyphenatedErrorCode<LatchwayErrorCode>}`;
 
 /** Stable public troubleshooting page for a typed SDK or gateway error. */
 export function latchwayErrorDocumentationURL(
   code: LatchwayErrorCode,
 ): LatchwayErrorDocumentationURL {
-  return `https://docs.latchway.dev/errors/${code}`;
+  return `https://docs.latchway.dev/errors/${code.replaceAll("_", "-")}` as LatchwayErrorDocumentationURL;
 }
 
 export interface LatchwayErrorOptions {
@@ -194,12 +199,13 @@ const serverCodePolicies: Readonly<Record<LatchwayServerErrorCode, ServerCodePol
 };
 
 const problemKeys = new Set([
-  "type", "title", "status", "detail", "code", "request_id", "retryable", "instance",
+  "type", "documentation_url", "title", "status", "detail", "code", "request_id", "retryable", "instance",
   "retry_after", "operation_id", "feature", "supported_protocol_versions", "errors",
 ]);
 
 interface ProblemDocument extends Record<string, unknown> {
   type: string;
+  documentation_url: string;
   title: string;
   detail: string;
   status: number;
@@ -252,7 +258,8 @@ function isProblemDocument(
 ): value is ProblemDocument {
   if (Object.keys(value).some((key) => !problemKeys.has(key)) || !isServerCode(value.code)) return false;
   const policy = serverCodePolicies[value.code];
-  if (value.type !== `https://latchway.dev/problems/${value.code}` || value.title !== policy.title ||
+  const documentationURL = latchwayErrorDocumentationURL(value.code);
+  if (value.type !== documentationURL || value.documentation_url !== documentationURL || value.title !== policy.title ||
       value.status !== responseStatus || value.status !== policy.status || value.retryable !== policy.retryable ||
       typeof value.detail !== "string" || value.detail.length < 1 || value.detail.length > 2_048 ||
       value.request_id !== responseRequestID || !isRequestID(value.request_id)) {

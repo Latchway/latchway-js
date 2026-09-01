@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "manifest_sha256": "32cd1df9365e04cc684fa63ac0798feec37f44ef1a95898f91935108bb58ef9a",
+  "repository": "latchway-js",
+  "integrations": [
+    {
+      "id": "openai-js",
+      "support": "experimental",
+      "pass": {
+        "FW-AUTH-001": ["test/framework-adapters.test.ts#FW-AUTH-001"],
+        "FW-REQ-001": ["test/framework-adapters.test.ts#FW-REQ-001"],
+        "FW-REQ-002": ["test/framework-adapters.test.ts#FW-REQ-002"],
+        "FW-REQ-003": ["test/framework-adapters.test.ts#FW-REQ-003"],
+        "FW-REQ-004": ["test/framework-adapters.test.ts#FW-REQ-004"],
+        "FW-REQ-005": ["test/framework-adapters.test.ts#FW-REQ-005"],
+        "FW-REQ-006": ["test/framework-adapters.test.ts#FW-REQ-006"],
+        "FW-REQ-007": ["test/framework-adapters.test.ts#FW-REQ-007"],
+        "FW-BEH-001": ["test/framework-adapters.test.ts#FW-BEH-001"],
+        "FW-BEH-002": ["test/framework-adapters.test.ts#FW-BEH-002"],
+        "FW-BEH-003": ["test/framework-adapters.test.ts#FW-BEH-003"],
+        "FW-BEH-004": ["test/framework-adapters.test.ts#FW-BEH-004"],
+        "FW-BEH-005": ["test/framework-adapters.test.ts#FW-BEH-005"],
+        "FW-BEH-006": ["test/framework-adapters.test.ts#FW-BEH-006"],
+        "FW-SEC-001": ["test/framework-adapters.test.ts#FW-SEC-001"],
+        "FW-SEC-002": ["test/framework-adapters.test.ts#FW-SEC-002"],
+        "FW-SEC-003": ["test/framework-adapters.test.ts#FW-SEC-003"],
+        "FW-SEC-004": ["test/framework-adapters.test.ts#FW-SEC-004"],
+        "FW-OAI-001": ["test/framework-adapters.test.ts#FW-OAI-001"],
+        "FW-OAI-002": ["test/framework-adapters.test.ts#FW-OAI-002"]
+      },
+      "not_applicable": [
+        {
+          "case_ids": ["FW-VAI-001", "FW-VAI-002", "FW-VAI-003", "FW-VAI-004"],
+          "reason": "These cases exercise Vercel AI SDK middleware rather than the official OpenAI client."
+        },
+        {
+          "case_ids": ["FW-LC-001", "FW-LC-002", "FW-LC-003"],
+          "reason": "These cases exercise LangChain batch APIs rather than the official OpenAI client."
+        }
+      ]
+    },
+    {
+      "id": "vercel-ai-sdk",
+      "support": "experimental",
+      "pass": {
+        "FW-AUTH-001": ["test/framework-adapters.test.ts#FW-AUTH-001"],
+        "FW-REQ-001": ["test/framework-adapters.test.ts#FW-REQ-001"],
+        "FW-REQ-002": ["test/framework-adapters.test.ts#FW-REQ-002"],
+        "FW-REQ-003": ["test/framework-adapters.test.ts#FW-REQ-003"],
+        "FW-REQ-004": ["test/framework-adapters.test.ts#FW-REQ-004"],
+        "FW-REQ-005": ["test/framework-adapters.test.ts#FW-REQ-005"],
+        "FW-REQ-006": ["test/framework-adapters.test.ts#FW-REQ-006"],
+        "FW-REQ-007": ["test/framework-adapters.test.ts#FW-REQ-007"],
+        "FW-BEH-001": ["test/framework-adapters.test.ts#FW-BEH-001"],
+        "FW-BEH-002": ["test/framework-adapters.test.ts#FW-BEH-002"],
+        "FW-BEH-003": ["test/framework-adapters.test.ts#FW-BEH-003"],
+        "FW-BEH-004": ["test/framework-adapters.test.ts#FW-BEH-004"],
+        "FW-BEH-005": ["test/framework-adapters.test.ts#FW-BEH-005"],
+        "FW-BEH-006": ["test/framework-adapters.test.ts#FW-BEH-006"],
+        "FW-SEC-001": ["test/framework-adapters.test.ts#FW-SEC-001"],
+        "FW-SEC-002": ["test/framework-adapters.test.ts#FW-SEC-002"],
+        "FW-SEC-003": ["test/framework-adapters.test.ts#FW-SEC-003"],
+        "FW-SEC-004": ["test/framework-adapters.test.ts#FW-SEC-004"],
+        "FW-VAI-001": ["test/framework-adapters.test.ts#FW-VAI-001"],
+        "FW-VAI-002": ["test/framework-adapters.test.ts#FW-VAI-002"],
+        "FW-VAI-003": ["test/framework-adapters.test.ts#FW-VAI-003"],
+        "FW-VAI-004": ["test/framework-adapters.test.ts#FW-VAI-004"]
+      },
+      "not_applicable": [
+        {
+          "case_ids": ["FW-OAI-001", "FW-OAI-002"],
+          "reason": "These cases exercise official OpenAI client-only surfaces rather than Vercel AI middleware."
+        },
+        {
+          "case_ids": ["FW-LC-001", "FW-LC-002", "FW-LC-003"],
+          "reason": "These cases exercise LangChain batch APIs rather than Vercel AI middleware."
+        }
+      ]
+    },
+    {
+      "id": "langchain-js",
+      "support": "experimental",
+      "pass": {
+        "FW-AUTH-001": ["test/framework-adapters.test.ts#FW-AUTH-001"],
+        "FW-REQ-002": ["test/framework-adapters.test.ts#FW-REQ-002"],
+        "FW-REQ-003": ["test/framework-adapters.test.ts#FW-REQ-003"],
+        "FW-REQ-004": ["test/framework-adapters.test.ts#FW-REQ-004"],
+        "FW-REQ-005": ["test/framework-adapters.test.ts#FW-REQ-005"],
+        "FW-REQ-006": ["test/framework-adapters.test.ts#FW-REQ-006"],
+        "FW-REQ-007": ["test/framework-adapters.test.ts#FW-REQ-007"],
+        "FW-BEH-001": ["test/framework-adapters.test.ts#FW-BEH-001"],
+        "FW-BEH-002": ["test/framework-adapters.test.ts#FW-BEH-002"],
+        "FW-BEH-003": ["test/framework-adapters.test.ts#FW-BEH-003"],
+        "FW-BEH-004": ["test/framework-adapters.test.ts#FW-BEH-004"],
+        "FW-BEH-005": ["test/framework-adapters.test.ts#FW-BEH-005"],
+        "FW-BEH-006": ["test/framework-adapters.test.ts#FW-BEH-006"],
+        "FW-SEC-001": ["test/framework-adapters.test.ts#FW-SEC-001"],
+        "FW-SEC-002": ["test/framework-adapters.test.ts#FW-SEC-002"],
+        "FW-SEC-003": ["test/framework-adapters.test.ts#FW-SEC-003"],
+        "FW-SEC-004": ["test/framework-adapters.test.ts#FW-SEC-004"],
+        "FW-LC-001": ["test/framework-adapters.test.ts#FW-LC-001"],
+        "FW-LC-002": ["test/framework-adapters.test.ts#FW-LC-002"],
+        "FW-LC-003": ["test/framework-adapters.test.ts#FW-LC-003"]
+      },
+      "not_applicable": [
+        {
+          "case_ids": ["FW-REQ-001"],
+          "reason": "The LangChain registry row uses Chat Completions and embeddings; it does not claim Responses support."
+        },
+        {
+          "case_ids": ["FW-OAI-001", "FW-OAI-002"],
+          "reason": "These cases exercise official OpenAI client-only surfaces rather than LangChain."
+        },
+        {
+          "case_ids": ["FW-VAI-001", "FW-VAI-002", "FW-VAI-003", "FW-VAI-004"],
+          "reason": "These cases exercise Vercel AI middleware rather than LangChain batch APIs."
+        }
+      ]
+    }
+  ]
+}

@@ -22,6 +22,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Keep both contract labels even while their exact coordinates match so
+        # the retained evidence remains comparable when either boundary moves.
         profile: [minimum, latest]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -36,9 +38,75 @@ jobs:
           node-version: 24.19.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm framework:verify-profile ${{ matrix.profile }}
-      - run: pnpm test:framework
-      - run: pnpm typecheck
+      - name: Resolve the locked core source
+        id: core
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit=$(awk '$1 == "core_commit:" {print $2}' contract.lock)
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
+      - name: Check out the locked canonical registry and case validator
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: Latchway/latchway
+          ref: ${{ steps.core.outputs.commit }}
+          path: _core
+          persist-credentials: false
+      - name: Validate the complete JavaScript registry report
+        run: >-
+          python3 _core/scripts/framework_conformance.py
+          --manifest _core/conformance/framework-cases.json
+          --registry _core/compatibility/frameworks.yaml
+          --report conformance/framework-report.json
+          --require-repository latchway-js
+      - name: Run the pinned framework profile
+        id: framework-tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm framework:verify-profile ${{ matrix.profile }}
+          pnpm test:framework
+          pnpm typecheck
+      - name: Emit machine-readable compatibility evidence
+        if: always()
+        env:
+          PROFILE: ${{ matrix.profile }}
+          OUTCOME: ${{ steps.framework-tests.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          openai=$(node -p "require('./node_modules/openai/package.json').version")
+          ai_sdk_openai=$(node -p "require('./node_modules/@ai-sdk/openai/package.json').version")
+          vercel_ai=$(node -p "require('./node_modules/ai/package.json').version")
+          langchain_openai=$(node -p "require('./node_modules/@langchain/openai/package.json').version")
+          pnpm list --depth 0 --json > "$RUNNER_TEMP/js-framework-$PROFILE-versions.json"
+          python3 _core/scripts/framework_observation.py \
+            --repository latchway-js \
+            --profile "$PROFILE" \
+            --outcome "$OUTCOME" \
+            --report conformance/framework-report.json \
+            --version "OpenAI=$openai" \
+            --version "AISDKOpenAI=$ai_sdk_openai" \
+            --version "VercelAI=$vercel_ai" \
+            --version "LangChainOpenAI=$langchain_openai" \
+            --output "$RUNNER_TEMP/js-framework-$PROFILE.json"
+      - name: Retain the report, lock, and observation
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: js-framework-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/js-framework-${{ matrix.profile }}.json
+            ${{ runner.temp }}/js-framework-${{ matrix.profile }}-versions.json
+            conformance/framework-report.json
+            pnpm-lock.yaml
+          if-no-files-found: error
+          retention-days: 30
+      - name: Fail after evidence retention
+        if: steps.framework-tests.outcome != 'success'
+        run: exit 1
 
   newest-compatible:
     name: Newest compatible candidate observation
@@ -58,16 +126,80 @@ jobs:
           node-version: 24.19.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Install bounded newest-compatible candidates without changing the lockfile
-        run: pnpm framework:install-profile newest-compatible
-      - run: pnpm framework:verify-profile newest-compatible
-      - run: pnpm test:framework
-      - run: pnpm typecheck
+      - name: Resolve the locked core source
+        id: core
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit=$(awk '$1 == "core_commit:" {print $2}' contract.lock)
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
+      - name: Check out the locked canonical registry and case validator
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: Latchway/latchway
+          ref: ${{ steps.core.outputs.commit }}
+          path: _core
+          persist-credentials: false
+      - name: Validate the complete JavaScript registry report
+        run: >-
+          python3 _core/scripts/framework_conformance.py
+          --manifest _core/conformance/framework-cases.json
+          --registry _core/compatibility/frameworks.yaml
+          --report conformance/framework-report.json
+          --require-repository latchway-js
+      - name: Run the bounded newest-compatible framework profile
+        id: framework-tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm framework:install-profile newest-compatible
+          pnpm framework:verify-profile newest-compatible
+          pnpm test:framework
+          pnpm typecheck
+      - name: Emit machine-readable compatibility evidence
+        if: always()
+        env:
+          OUTCOME: ${{ steps.framework-tests.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          openai=$(node -p "require('./node_modules/openai/package.json').version")
+          ai_sdk_openai=$(node -p "require('./node_modules/@ai-sdk/openai/package.json').version")
+          vercel_ai=$(node -p "require('./node_modules/ai/package.json').version")
+          langchain_openai=$(node -p "require('./node_modules/@langchain/openai/package.json').version")
+          pnpm list --depth 0 --json > "$RUNNER_TEMP/js-framework-newest-compatible-versions.json"
+          python3 _core/scripts/framework_observation.py \
+            --repository latchway-js \
+            --profile newest-compatible \
+            --outcome "$OUTCOME" \
+            --report conformance/framework-report.json \
+            --version "OpenAI=$openai" \
+            --version "AISDKOpenAI=$ai_sdk_openai" \
+            --version "VercelAI=$vercel_ai" \
+            --version "LangChainOpenAI=$langchain_openai" \
+            --output "$RUNNER_TEMP/js-framework-newest-compatible.json"
+      - name: Retain the report, lock, and observation
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: js-framework-newest-compatible-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/js-framework-newest-compatible.json
+            ${{ runner.temp }}/js-framework-newest-compatible-versions.json
+            conformance/framework-report.json
+            pnpm-lock.yaml
+          if-no-files-found: error
+          retention-days: 30
+      - name: Fail after evidence retention
+        if: steps.framework-tests.outcome != 'success'
+        run: exit 1
 
   report-newest-failure:
-    name: Report one bounded candidate failure issue
-    needs: newest-compatible
-    if: ${{ always() && github.event_name == 'schedule' && needs.newest-compatible.result == 'failure' }}
+    name: Report one bounded compatibility failure issue
+    needs: [pinned-profiles, newest-compatible]
+    if: ${{ always() && github.event_name == 'schedule' && (needs.pinned-profiles.result == 'failure' || needs.newest-compatible.result == 'failure') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -79,14 +211,14 @@ jobs:
     steps:
       - name: Open at most one active compatibility issue
         run: |
-          title="Scheduled framework compatibility candidate failed"
+          title="Scheduled framework compatibility profile failed"
           existing="$(gh api -X GET search/issues \
             -f q="repo:$LATCHWAY_REPOSITORY is:issue is:open in:title $title" \
-            --jq '.items[] | select(.title == "Scheduled framework compatibility candidate failed") | .number')"
+            --jq '.items[] | select(.title == "Scheduled framework compatibility profile failed") | .number')"
           if [ -n "$existing" ]; then
             exit 0
           fi
-          body="The bounded newest-compatible framework observation failed. No supported range was widened. Inspect: $LATCHWAY_RUN_URL"
+          body="At least one bounded minimum/latest/newest-compatible framework observation failed. No supported range was widened. Inspect: $LATCHWAY_RUN_URL"
           gh api --method POST "repos/$LATCHWAY_REPOSITORY/issues" \
             -f title="$title" \
             -f body="$body"

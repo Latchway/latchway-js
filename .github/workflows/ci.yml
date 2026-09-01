@@ -38,3 +38,78 @@ jobs:
       - name: Install pinned browser matrix
         run: pnpm exec playwright install --with-deps chromium firefox webkit
       - run: pnpm release:check
+      - name: Retain package, unit, wire, DPoP, browser, and reproducibility evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: latchway-js-package-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
+  pinned-core-conformance:
+    name: Pinned core Docker and PostgreSQL conformance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: docker.io/library/postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        env:
+          POSTGRES_DB: latchway
+          POSTGRES_USER: latchway
+          POSTGRES_PASSWORD: latchway-js-pr-ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U latchway -d latchway"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      LATCHWAY_CONFORMANCE_DATABASE_URL: postgres://latchway:latchway-js-pr-ci@127.0.0.1:5432/latchway?sslmode=disable
+    steps:
+      - name: Check out the JavaScript SDK
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Resolve the exact locked core revision
+        id: core
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit=$(awk '$1 == "core_commit:" {print $2}' contract.lock)
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
+      - name: Check out only the exact locked core revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: Latchway/latchway
+          ref: ${{ steps.core.outputs.commit }}
+          path: _core
+          persist-credentials: false
+      - uses: pnpm/action-setup@d15e628ca66d93ee5f352c71671a7bc6a97af5c9 # v6.0.8
+        with:
+          version: 10.15.0
+          run_install: false
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+      - name: Build the exact JavaScript package for live conformance
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+      - name: Load the contract bundle and run the exact core image vertical
+        env:
+          LATCHWAY_SDK_KIND: javascript
+          LATCHWAY_CORE_DIR: _core
+          LATCHWAY_EVIDENCE_DIR: ${{ runner.temp }}/latchway-js-pr-core-conformance
+        run: sh scripts/run-pr-core-conformance.sh node scripts/pr-live-conformance.mjs
+      - name: Retain exact-image conformance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: latchway-js-pr-core-conformance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/latchway-js-pr-core-conformance/
+          if-no-files-found: error
+          retention-days: 14
