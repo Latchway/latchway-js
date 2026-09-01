@@ -320,8 +320,8 @@ class ReconciliationTests(unittest.TestCase):
 
     def test_retry_preserves_attested_adoption_history(self) -> None:
         commit = "a" * 40
-        prior_name = "npm-release-adoption-100-1.json"
-        current_name = "npm-release-adoption-200-2.json"
+        prior_name = "npm-release-adoption-client-100-1.json"
+        current_name = "npm-release-adoption-client-200-2.json"
 
         def record(run_id: int, attempt: int) -> bytes:
             repository = "https://github.com/Latchway/example"
@@ -363,7 +363,7 @@ class ReconciliationTests(unittest.TestCase):
             assets=MODULE.inspect_assets([str(fixed.path), str(current_path)]),
             client=client,
             expected_commit=commit,
-            adoption_pattern=MODULE.re.compile(r"npm-release-adoption-[1-9][0-9]*-[1-9][0-9]*\.json"),
+            adoption_pattern=MODULE.ADOPTION_PATTERN,
         )
         self.assertIn(current_name, client.uploaded)
         self.assertEqual(client.attestations_verified, [prior_name, current_name])
@@ -380,6 +380,18 @@ class ReconciliationTests(unittest.TestCase):
                 source_commit=commit,
                 tarballs={fixed.name: fixed},
             )
+
+    def test_adoption_history_identifies_all_four_javascript_packages(self) -> None:
+        names = {
+            f"npm-release-adoption-{package_id}-200-2.json"
+            for package_id in ("client", "openai", "vercel-ai", "langchain")
+        }
+        self.assertEqual(
+            MODULE.adoption_package_ids(names),
+            {"client", "openai", "vercel-ai", "langchain"},
+        )
+        with self.assertRaisesRegex(MODULE.Rejected, "invalid package record"):
+            MODULE.adoption_package_ids({"npm-release-adoption-200-2.json"})
 
     def test_admin_preflight_requires_exact_enabled_response_and_consumes_protected_token(self) -> None:
         client = MODULE.GitHubClient()

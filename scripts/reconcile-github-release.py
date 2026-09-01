@@ -29,6 +29,16 @@ MAXIMUM_ASSET_BYTES = 2 * 1024 * 1024 * 1024
 MAXIMUM_ATTESTATION_JSON_BYTES = 16 * 1024 * 1024
 RELEASE_PREDICATE_TYPE = "https://in-toto.io/attestation/release/v0.2"
 STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
+ADOPTION_PACKAGES = {
+    "client": "@latchway/client",
+    "openai": "@latchway/openai",
+    "vercel-ai": "@latchway/vercel-ai",
+    "langchain": "@latchway/langchain",
+}
+ADOPTION_PATTERN = re.compile(
+    r"npm-release-adoption-(client|openai|vercel-ai|langchain)-"
+    r"([1-9][0-9]*)-([1-9][0-9]*)\.json"
+)
 
 
 class Rejected(RuntimeError):
@@ -536,7 +546,7 @@ def validate_adoption_record(
         value = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise Rejected(f"Adoption record {name} is not valid JSON.") from error
-    match = re.fullmatch(r"npm-release-adoption-([1-9][0-9]*)-([1-9][0-9]*)\.json", name)
+    match = ADOPTION_PATTERN.fullmatch(name)
     expected_repository = f"https://github.com/{repository}"
     source = value.get("source") if isinstance(value, dict) else None
     provenance = value.get("provenance") if isinstance(value, dict) else None
@@ -560,7 +570,7 @@ def validate_adoption_record(
         }
         or value.get("schema_version") != 1
         or value.get("kind") != "latchway_npm_release_adoption"
-        or re.fullmatch(r"@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*", str(value.get("package", ""))) is None
+        or value.get("package") != ADOPTION_PACKAGES.get(match.group(1) if match else "")
         or value.get("version") != tag[1:]
         or value.get("release_tag") != tag
         or not isinstance(tarball, dict)
@@ -598,8 +608,8 @@ def validate_adoption_record(
         or set(adoption) != {
             "repository", "commit", "workflow", "ref", "run_id", "run_attempt", "mode",
         }
-        or str(adoption.get("run_id")) != match.group(1)
-        or str(adoption.get("run_attempt")) != match.group(2)
+        or str(adoption.get("run_id")) != match.group(2)
+        or str(adoption.get("run_attempt")) != match.group(3)
         or adoption.get("repository") != expected_repository
         or adoption.get("commit") != source_commit
         or adoption.get("workflow") != ".github/workflows/release.yml"
@@ -654,6 +664,16 @@ def verify_remote_asset(client: Client, repository: str, local: Asset, remote: d
             raise Rejected(f"Existing GitHub release asset {local.name} is not byte-identical.")
 
 
+def adoption_package_ids(names: set[str] | list[str]) -> set[str]:
+    package_ids: set[str] = set()
+    for name in names:
+        match = ADOPTION_PATTERN.fullmatch(name)
+        if match is None:
+            raise Rejected(f"Npm adoption history contains an invalid package record {name}.")
+        package_ids.add(match.group(1))
+    return package_ids
+
+
 def reconcile(
     *,
     repository: str,
@@ -692,15 +712,20 @@ def reconcile(
     validate_release_state(release, tag=tag, title=title, prerelease=prerelease)
     adoption_names = sorted(name for name in observed if adoption_pattern is not None and adoption_pattern.fullmatch(name))
     tarballs = {asset.name: asset for asset in assets if asset.name.endswith(".tgz")}
+    expected_adoption_ids: set[str] = set()
     if adoption_pattern is not None:
-        if len(tarballs) != 1:
-            raise Rejected("Npm adoption history requires one exact release tarball.")
+        if not tarballs:
+            raise Rejected("Npm adoption history requires at least one exact release tarball.")
         for name in adoption_names:
             verify_adoption_asset(
                 client, repository, tag, expected_commit, name, observed[name]["id"], tarballs
             )
         for asset in assets:
             if adoption_pattern.fullmatch(asset.name):
+                match = ADOPTION_PATTERN.fullmatch(asset.name)
+                if match is None or match.group(1) in expected_adoption_ids:
+                    raise Rejected("Each npm package requires one unambiguous current adoption record.")
+                expected_adoption_ids.add(match.group(1))
                 validate_adoption_record(
                     asset.path.read_bytes(),
                     name=asset.name,
@@ -710,6 +735,8 @@ def reconcile(
                     tarballs=tarballs,
                 )
                 client.verify_attestation(repository, asset.path, expected_commit)
+        if not expected_adoption_ids:
+            raise Rejected("Npm adoption history requires a current record for every release package.")
     # Prove every existing byte before making any mutation. A mismatched
     # partial release must fail without uploading otherwise-missing assets.
     for asset in assets:
@@ -719,8 +746,11 @@ def reconcile(
     for asset in assets:
         if asset.name not in observed:
             if release["draft"] is not True:
-                if adoption_pattern is not None and adoption_pattern.fullmatch(asset.name) and adoption_names:
-                    continue
+                if adoption_pattern is not None and adoption_pattern.fullmatch(asset.name):
+                    match = ADOPTION_PATTERN.fullmatch(asset.name)
+                    remote_ids = adoption_package_ids(adoption_names)
+                    if match is not None and match.group(1) in remote_ids:
+                        continue
                 raise Rejected(f"Final GitHub release is missing immutable asset {asset.name}.")
             client.upload(repository, tag, asset.path)
 
@@ -744,7 +774,10 @@ def reconcile(
         name for name in observed
         if adoption_pattern is not None and adoption_pattern.fullmatch(name)
     }
-    if not expected_fixed.issubset(observed) or (adoption_pattern is not None and not observed_adoptions):
+    if not expected_fixed.issubset(observed) or (
+        adoption_pattern is not None
+        and not expected_adoption_ids.issubset(adoption_package_ids(observed_adoptions))
+    ):
         raise Rejected("GitHub draft release does not contain the complete immutable asset set.")
     for asset in assets:
         if asset.name not in observed and adoption_pattern is not None and adoption_pattern.fullmatch(asset.name):
@@ -772,7 +805,10 @@ def reconcile(
         name for name in final_assets
         if adoption_pattern is not None and adoption_pattern.fullmatch(name)
     }
-    if not expected_fixed.issubset(final_assets) or (adoption_pattern is not None and not final_adoptions):
+    if not expected_fixed.issubset(final_assets) or (
+        adoption_pattern is not None
+        and not expected_adoption_ids.issubset(adoption_package_ids(final_adoptions))
+    ):
         raise Rejected("Final GitHub release does not contain the complete immutable asset set.")
     for asset in assets:
         if asset.name not in final_assets and adoption_pattern is not None and adoption_pattern.fullmatch(asset.name):
@@ -860,7 +896,7 @@ def main() -> int:
         if result.returncode != 0:
             raise RuntimeError("GitHub CLI does not satisfy the release security baseline.")
         adoption_pattern = (
-            re.compile(r"npm-release-adoption-[1-9][0-9]*-[1-9][0-9]*\.json")
+            ADOPTION_PATTERN
             if arguments.npm_adoption_history else None
         )
         client = GitHubClient()

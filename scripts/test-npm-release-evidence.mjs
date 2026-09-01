@@ -6,16 +6,43 @@ import {
   PROVENANCE_TYPE,
   assertSafeRetainedOutput,
   buildAdoptionRecord,
-  buildRegistryManifest,
+  buildRegistrySetManifest,
   parseProvenanceOrigin,
   requireCurrentPublicationOrigin,
   sha256,
   verifyProvenanceStatement,
 } from "./npm-release-evidence.mjs";
+import {
+  artifactNameForPackage,
+  expectedPublishedManifest,
+  readReleasePackages,
+} from "./release-utils.mjs";
 
 const repository = "https://github.com/Latchway/latchway-js";
 const commit = "a".repeat(40);
 const sha512 = "b".repeat(128);
+
+test("release package inventory is fixed and workspace peers become registry-safe", async () => {
+  const packages = await readReleasePackages();
+  assert.deepEqual(packages.map(({ name }) => name), [
+    "@latchway/client",
+    "@latchway/openai",
+    "@latchway/vercel-ai",
+    "@latchway/langchain",
+  ]);
+  assert.deepEqual(packages.map(({ archiveName }) => archiveName), [
+    "latchway-client-1.0.0.tgz",
+    "latchway-openai-1.0.0.tgz",
+    "latchway-vercel-ai-1.0.0.tgz",
+    "latchway-langchain-1.0.0.tgz",
+  ]);
+  for (const package_ of packages.slice(1)) {
+    assert.equal(expectedPublishedManifest(package_).peerDependencies["@latchway/client"], "^1.0.0");
+  }
+  assert.equal(artifactNameForPackage("vercel-ai", "audit-signatures"),
+    "npm-vercel-ai-audit-signatures.json");
+  assert.throws(() => artifactNameForPackage("../escape", "registry-view"), /unsafe/u);
+});
 
 test("provenance from a prior failed run can be adopted by a later attempt", () => {
   const statement = provenanceStatement(`${repository}/actions/runs/41/attempts/1`);
@@ -97,17 +124,34 @@ test("retained output is bounded JSON and rejects credentials", () => {
   assert.throws(() => assertSafeRetainedOutput(Buffer.alloc(129, 1), "test", 128), /size/u);
 });
 
-test("registry manifest hashes exact retained output bytes", () => {
-  const first = Buffer.from('{"one":1}\n');
-  const second = Buffer.from('{"two":2}\n');
-  const manifest = buildRegistryManifest({
-    packageName: "@latchway/client",
-    packageVersion: "1.0.0",
-    tarball: { name: "client.tgz", sha256: "c".repeat(64) },
-    evidence: [{ name: "two.json", bytes: second }, { name: "one.json", bytes: first }],
-  });
-  assert.deepEqual(manifest.evidence.map((entry) => entry.name), ["one.json", "two.json"]);
-  assert.equal(manifest.evidence[0].sha256, sha256(first));
+test("registry package-set manifest preserves the dependency-safe release order", () => {
+  const names = ["@latchway/client", "@latchway/openai", "@latchway/vercel-ai", "@latchway/langchain"];
+  const ids = ["client", "openai", "vercel-ai", "langchain"];
+  const packages = names.map((packageName, index) => ({
+    id: ids[index],
+    package: packageName,
+    version: "1.0.0",
+    tarball: {
+      name: `latchway-${ids[index]}-1.0.0.tgz`,
+      bytes: 100 + index,
+      sha256: "c".repeat(64),
+      sha512: "d".repeat(128),
+      integrity: `sha512-${Buffer.from("d".repeat(128), "hex").toString("base64")}`,
+    },
+    evidence: ["registry-version", "registry-view", "attestations", "audit-signatures"].map((kind) => ({
+      name: `npm-${ids[index]}-${kind}.json`,
+      bytes: Buffer.from(`{"package":${index},"kind":"${kind}"}\n`),
+    })),
+  }));
+  const manifest = buildRegistrySetManifest({ version: "1.0.0", publishOrder: names, packages });
+  assert.equal(manifest.schema_version, 2);
+  assert.deepEqual(manifest.publish_order, names);
+  assert.deepEqual(manifest.packages.map(({ package: packageName }) => packageName), names);
+  assert.throws(() => buildRegistrySetManifest({
+    version: "1.0.0",
+    publishOrder: [...names].reverse(),
+    packages,
+  }), /registry/u);
 });
 
 test("provenance invocation parser rejects ambiguous or unbounded paths", () => {
@@ -139,10 +183,11 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
     && assetClosure < evidenceAttestation && evidenceAttestation < githubPublish);
   for (const asset of [
     "docs-bundle-$RELEASE_VERSION.tar.gz",
-    "npm-registry-version.json",
-    "npm-registry-view.json",
-    "npm-attestations.json",
-    "npm-audit-signatures.json",
+    "dependency-vulnerability-scan.json",
+    "npm-$package_id-registry-version.json",
+    "npm-$package_id-registry-view.json",
+    "npm-$package_id-attestations.json",
+    "npm-$package_id-audit-signatures.json",
     "npm-registry-evidence-manifest.json",
     "npm-release-adoption-",
   ]) assert.ok(workflow.slice(githubPublish).includes(asset), `final reconciliation omits ${asset}`);
@@ -167,6 +212,20 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
   assert.doesNotMatch(trustedNpmJob, /(?:^|\n)\s*npx\s/u);
   assert.match(npmPublishJob, /needs: \[promote, verify, trusted-npm-cli, github-draft\]/u);
   assert.match(npmPublishJob, /Verify exact npm CLI closure before extraction or execution/u);
+  assert.match(npmPublishJob,
+    /package_names=\('@latchway\/client' '@latchway\/openai' '@latchway\/vercel-ai' '@latchway\/langchain'\)/u);
+  assert.match(npmPublishJob, /archive_sha1=\$\(sha1sum "\$archive"/u);
+  assert.match(npmPublishJob,
+    /\.sha256 == \$sha256 and \.sha512 == \$sha512 and \.integrity == \$integrity/u);
+  assert.match(npmPublishJob, /publish_state=\$\(jq --compact-output/u);
+  const registryPreflight = npmPublishJob.indexOf("publish_required=()");
+  const preflightCompletion = npmPublishJob.indexOf("publish_state='{}'", registryPreflight);
+  const registryMutation = npmPublishJob.indexOf('"$LATCHWAY_NPM_CLI" publish "$archive"');
+  assert.ok(registryPreflight >= 0 && registryPreflight < preflightCompletion
+    && preflightCompletion < registryMutation);
+  assert.equal((npmPublishJob.slice(registryPreflight).match(
+    /for index in "\$\{!package_names\[@\]\}"; do/gu,
+  ) ?? []).length, 2);
   assert.doesNotMatch(npmPublishJob, /npm install|npm exec/u);
   assert.doesNotMatch(npmPublishJob, /(?:^|\n)\s*npx\s/u);
   assert.ok(
@@ -185,6 +244,9 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
   assert.doesNotMatch(policyJob, /id-token: write|attestations: write|actions\/checkout|scripts\//u);
   assert.doesNotMatch(releaseJob, /LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN/u);
   assert.match(releaseJob, /cmp --silent "\$RUNNER_TEMP\/expected-assets\.txt"/u);
+  assert.match(releaseJob, /test "\$\{#expected\[@\]\}" = 35/u);
+  assert.match(releaseJob, /npm-release-adoption-\(client\|openai\|vercel-ai\|langchain\)/u);
+  assert.equal((workflow.match(/if: needs\.github-draft\.outputs\.release_state == 'draft'/gu) ?? []).length, 2);
   const reconciler = await readFile(new URL("reconcile-github-release.py", import.meta.url), "utf8");
   for (const control of [
     "repos/{repository}/immutable-releases",

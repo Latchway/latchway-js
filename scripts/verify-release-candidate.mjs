@@ -2,12 +2,13 @@ import { execFileSync } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ARTIFACTS_PATH, ROOT_PATH, readRootManifest } from "./release-utils.mjs";
+import { ARTIFACTS_PATH, ROOT_PATH, readReleasePackages, readRootManifest } from "./release-utils.mjs";
 
 const evidencePath = join(ARTIFACTS_PATH, "release-candidate-evidence.json");
 await mkdir(ARTIFACTS_PATH, { recursive: true });
 await rm(evidencePath, { force: true });
 const manifest = await readRootManifest();
+const releasePackages = await readReleasePackages();
 if (process.version !== "v24.19.0") {
   throw new Error(`The reproducible release gate requires Node v24.19.0, received ${process.version}.`);
 }
@@ -40,8 +41,9 @@ for (const [name, script] of [
 const sourceCommit = commandOutput("git", ["rev-parse", "HEAD"]);
 const worktreeStatus = commandOutput("git", ["status", "--porcelain=v1", "--untracked-files=all"]);
 const evidence = {
-  schema_version: 1,
-  package: manifest.name,
+  schema_version: 2,
+  package_count: releasePackages.length,
+  packages: releasePackages.map(({ name }) => name),
   version: manifest.version,
   source_commit: sourceCommit,
   worktree_clean: worktreeStatus.length === 0,

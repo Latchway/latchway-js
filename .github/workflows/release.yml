@@ -232,9 +232,6 @@ jobs:
     timeout-minutes: 30
     outputs:
       artifact_name: ${{ steps.package.outputs.artifact_name }}
-      integrity: ${{ steps.package.outputs.integrity }}
-      sha256: ${{ steps.package.outputs.sha256 }}
-      tarball: ${{ steps.package.outputs.tarball }}
       version: ${{ steps.package.outputs.version }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -293,7 +290,10 @@ jobs:
         with:
           name: ${{ steps.package.outputs.artifact_name }}
           path: |
-            .artifacts/${{ steps.package.outputs.tarball }}
+            .artifacts/latchway-client-${{ steps.package.outputs.version }}.tgz
+            .artifacts/latchway-openai-${{ steps.package.outputs.version }}.tgz
+            .artifacts/latchway-vercel-ai-${{ steps.package.outputs.version }}.tgz
+            .artifacts/latchway-langchain-${{ steps.package.outputs.version }}.tgz
             .artifacts/docs-bundle-${{ steps.package.outputs.version }}.tar.gz
             .artifacts/SHA256SUMS
             .artifacts/build-reproducibility.json
@@ -407,7 +407,6 @@ jobs:
           RELEASE_COMMIT: ${{ needs.promote.outputs.commit }}
           RELEASE_TAG: ${{ needs.promote.outputs.tag }}
           RELEASE_VERSION: ${{ needs.verify.outputs.version }}
-          RELEASE_TARBALL: ${{ needs.verify.outputs.tarball }}
         run: |
           set -Eeuo pipefail
           test -n "$ADMIN_TOKEN"
@@ -415,7 +414,6 @@ jobs:
           [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           test "$RELEASE_TAG" = "v$RELEASE_VERSION"
-          [[ "$RELEASE_TARBALL" =~ ^latchway-client-[0-9]+\.[0-9]+\.[0-9]+\.tgz$ ]]
           version_line=$(gh version | head -n 1)
           [[ "$version_line" =~ ^gh[[:space:]]version[[:space:]]([0-9]+)\.([0-9]+)\.([0-9]+)([[:space:]]\([^()]+\))?$ ]]
           major=${BASH_REMATCH[1]}; minor=${BASH_REMATCH[2]}; patch=${BASH_REMATCH[3]}
@@ -448,7 +446,7 @@ jobs:
             > "$RUNNER_TEMP/release.json" 2> "$RUNNER_TEMP/release-error.txt"
           status=$?
           set -e
-          title="@latchway/client $RELEASE_VERSION"
+          title="Latchway JavaScript SDKs $RELEASE_VERSION"
           if [[ "$status" -ne 0 ]]; then
             test "$status" -eq 1
             grep --fixed-strings --quiet 'HTTP 404' "$RUNNER_TEMP/release-error.txt"
@@ -456,21 +454,25 @@ jobs:
               --verify-tag --draft --generate-notes --title "$title"
             gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
           fi
-          jq --exit-status --arg tag "$RELEASE_TAG" --arg title "$title" --arg tarball "$RELEASE_TARBALL" \
-            --arg docs "docs-bundle-$RELEASE_VERSION.tar.gz" '
+          jq --exit-status --arg tag "$RELEASE_TAG" --arg title "$title" \
+            --arg version "$RELEASE_VERSION" --arg docs "docs-bundle-$RELEASE_VERSION.tar.gz" '
             .tag_name == $tag and .name == $title and .prerelease == false and
             (.draft | type) == "boolean" and (.immutable | type) == "boolean" and
             ((.draft == true and .immutable == false) or (.draft == false and .immutable == true)) and
             ([.assets[].name] | length) == ([.assets[].name] | unique | length) and
             all(.assets[].name;
-              . == $tarball or . == $docs or . == "SHA256SUMS" or . == "build-reproducibility.json" or
-              . == "contract-evidence.json" or . == "package-evidence.json" or
+              . == "latchway-client-\($version).tgz" or
+              . == "latchway-openai-\($version).tgz" or
+              . == "latchway-vercel-ai-\($version).tgz" or
+              . == "latchway-langchain-\($version).tgz" or
+              . == $docs or . == "SHA256SUMS" or . == "build-reproducibility.json" or
+              . == "contract-evidence.json" or . == "dependency-vulnerability-scan.json" or
+              . == "package-evidence.json" or
               . == "post-publish-evidence.json" or . == "publish-input-evidence.json" or
               . == "release-candidate-evidence.json" or . == "tag-evidence.json" or
-              . == "npm-registry-version.json" or . == "npm-registry-view.json" or
-              . == "npm-attestations.json" or . == "npm-audit-signatures.json" or
               . == "npm-registry-evidence-manifest.json" or
-              test("^npm-release-adoption-[1-9][0-9]*-[1-9][0-9]*\\.json$"))
+              test("^npm-(client|openai|vercel-ai|langchain)-(registry-version|registry-view|attestations|audit-signatures)\\.json$") or
+              test("^npm-release-adoption-(client|openai|vercel-ai|langchain)-[1-9][0-9]*-[1-9][0-9]*\\.json$"))
           ' "$RUNNER_TEMP/release.json" >/dev/null
           state=draft
           if [[ "$(jq --raw-output .immutable "$RUNNER_TEMP/release.json")" == true ]]; then state=immutable; fi
@@ -491,7 +493,7 @@ jobs:
       contents: read
       id-token: write
     outputs:
-      publish_performed: ${{ steps.registry.outputs.publish_performed }}
+      publish_state: ${{ steps.registry.outputs.publish_state }}
     steps:
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
@@ -572,71 +574,178 @@ jobs:
       - name: Validate reviewed archive identity and checksum with fixed tooling
         shell: bash
         env:
-          EXPECTED_INTEGRITY: ${{ needs.verify.outputs.integrity }}
-          EXPECTED_SHA256: ${{ needs.verify.outputs.sha256 }}
           RELEASE_STATE: ${{ needs.github-draft.outputs.release_state }}
-          RELEASE_TARBALL: ${{ needs.verify.outputs.tarball }}
           RELEASE_VERSION: ${{ needs.verify.outputs.version }}
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          export LC_ALL=C
           [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          test "$RELEASE_TARBALL" = "latchway-client-$RELEASE_VERSION.tgz"
-          [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$EXPECTED_INTEGRITY" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]]
           [[ "$RELEASE_STATE" == draft || "$RELEASE_STATE" == immutable ]]
           root="$RUNNER_TEMP/reviewed-release"
-          archive="$root/$RELEASE_TARBALL"
-          test -s "$archive"
-          test ! -L "$archive"
-          test "$(sha256sum "$archive" | cut -d ' ' -f 1)" = "$EXPECTED_SHA256"
-          test "$(tar -xOzf "$archive" package/package.json | jq --raw-output .name)" = '@latchway/client'
-          test "$(tar -xOzf "$archive" package/package.json | jq --raw-output .version)" = "$RELEASE_VERSION"
-          jq --exit-status --arg version "$RELEASE_VERSION" --arg tarball "$RELEASE_TARBALL" \
-            --arg sha256 "$EXPECTED_SHA256" --arg integrity "$EXPECTED_INTEGRITY" '
-            .schema_version == 1 and .package == "@latchway/client" and .version == $version and
-            .tarball == $tarball and .sha256 == $sha256 and .integrity == $integrity
+          package_names=(
+            '@latchway/client'
+            '@latchway/openai'
+            '@latchway/vercel-ai'
+            '@latchway/langchain'
+          )
+          tarballs=(
+            "latchway-client-$RELEASE_VERSION.tgz"
+            "latchway-openai-$RELEASE_VERSION.tgz"
+            "latchway-vercel-ai-$RELEASE_VERSION.tgz"
+            "latchway-langchain-$RELEASE_VERSION.tgz"
+          )
+          expected=(
+            "${tarballs[@]}"
+            "docs-bundle-$RELEASE_VERSION.tar.gz"
+            SHA256SUMS
+            build-reproducibility.json
+            contract-evidence.json
+            dependency-vulnerability-scan.json
+            package-evidence.json
+            release-candidate-evidence.json
+            tag-evidence.json
+          )
+          shopt -s nullglob dotglob
+          actual=("$root"/*)
+          test "${#actual[@]}" = "${#expected[@]}"
+          for file in "${actual[@]}"; do test -f "$file" && test ! -L "$file" && test -s "$file"; done
+          printf '%s\n' "${expected[@]}" | sort > "$RUNNER_TEMP/expected-reviewed-assets.txt"
+          printf '%s\n' "${actual[@]##*/}" | sort > "$RUNNER_TEMP/actual-reviewed-assets.txt"
+          cmp --silent "$RUNNER_TEMP/expected-reviewed-assets.txt" "$RUNNER_TEMP/actual-reviewed-assets.txt"
+          jq --exit-status --arg version "$RELEASE_VERSION" \
+            --argjson names '["@latchway/client","@latchway/openai","@latchway/vercel-ai","@latchway/langchain"]' \
+            --argjson tarballs "$(printf '%s\n' "${tarballs[@]}" | jq --raw-input --slurp 'split("\n")[:-1]')" '
+            .schema_version == 2 and .kind == "latchway_npm_package_set_evidence" and
+            .version == $version and .package_count == 4 and .publish_order == $names and
+            (.packages | length) == 4 and (.packages | map(.package)) == $names and
+            (.packages | map(.tarball)) == $tarballs and
+            all(.packages[];
+              (.entries | type) == "array" and (.entries | length) > 0 and
+              (.entries | length) == (.entries | unique | length) and
+              (.sha1 | test("^[0-9a-f]{40}$")) and (.sha256 | test("^[0-9a-f]{64}$")) and
+              (.sha512 | test("^[0-9a-f]{128}$")) and
+              (.integrity | test("^sha512-[A-Za-z0-9+/]+={0,2}$")))
           ' "$root/package-evidence.json" >/dev/null
-      - name: Attest reviewed npm package and reproducibility inputs without candidate checkout
+          test "$(wc -l < "$root/SHA256SUMS" | tr -d ' ')" = 4
+          (cd "$root" && sha256sum --check --strict SHA256SUMS)
+          for index in "${!package_names[@]}"; do
+            archive="$root/${tarballs[$index]}"
+            test "$(wc -c < "$archive" | tr -d ' ')" -le 10485760
+            archive_bytes=$(wc -c < "$archive" | tr -d ' ')
+            archive_sha1=$(sha1sum "$archive" | cut -d ' ' -f 1)
+            archive_sha256=$(sha256sum "$archive" | cut -d ' ' -f 1)
+            archive_sha512=$(sha512sum "$archive" | cut -d ' ' -f 1)
+            archive_integrity="sha512-$(openssl dgst -sha512 -binary "$archive" | base64 -w 0)"
+            jq --exit-status --arg name "${package_names[$index]}" \
+              --arg tarball "${tarballs[$index]}" --argjson bytes "$archive_bytes" \
+              --arg sha1 "$archive_sha1" --arg sha256 "$archive_sha256" \
+              --arg sha512 "$archive_sha512" --arg integrity "$archive_integrity" '
+              .packages[] | select(.package == $name) |
+              .tarball == $tarball and .bytes == $bytes and .sha1 == $sha1 and
+              .sha256 == $sha256 and .sha512 == $sha512 and .integrity == $integrity
+            ' "$root/package-evidence.json" >/dev/null
+            tar --list --gzip --file "$archive" | LC_ALL=C sort > "$RUNNER_TEMP/archive-$index.txt"
+            entry_count=$(wc -l < "$RUNNER_TEMP/archive-$index.txt" | tr -d ' ')
+            test "$entry_count" -ge 1
+            test "$entry_count" -le 512
+            while IFS= read -r entry; do
+              [[ "$entry" =~ ^package/([A-Za-z0-9@._+-]+/)*[A-Za-z0-9@._+-]+$ ]]
+            done < "$RUNNER_TEMP/archive-$index.txt"
+            jq --exit-status --raw-output --arg name "${package_names[$index]}" \
+              '.packages[] | select(.package == $name) | .entries[]' "$root/package-evidence.json" | \
+              LC_ALL=C sort > "$RUNNER_TEMP/evidence-entries-$index.txt"
+            cmp --silent "$RUNNER_TEMP/evidence-entries-$index.txt" "$RUNNER_TEMP/archive-$index.txt"
+            type_count=0
+            while IFS= read -r listing; do
+              test "${listing:0:1}" = '-'
+              ((type_count += 1))
+            done < <(tar --list --verbose --gzip --file "$archive")
+            test "$type_count" = "$entry_count"
+            test "$(tar -xOzf "$archive" package/package.json | jq --raw-output .name)" = "${package_names[$index]}"
+            test "$(tar -xOzf "$archive" package/package.json | jq --raw-output .version)" = "$RELEASE_VERSION"
+          done
+      - name: Attest reviewed npm package set and reproducibility inputs without candidate checkout
+        if: needs.github-draft.outputs.release_state == 'draft'
         uses: actions/attest-build-provenance@e4d4f7c39adfa4c260fb5c147f0622000aa14b99 # v4.0.0
         with:
           subject-path: |
-            ${{ runner.temp }}/reviewed-release/${{ needs.verify.outputs.tarball }}
+            ${{ runner.temp }}/reviewed-release/latchway-client-${{ needs.verify.outputs.version }}.tgz
+            ${{ runner.temp }}/reviewed-release/latchway-openai-${{ needs.verify.outputs.version }}.tgz
+            ${{ runner.temp }}/reviewed-release/latchway-vercel-ai-${{ needs.verify.outputs.version }}.tgz
+            ${{ runner.temp }}/reviewed-release/latchway-langchain-${{ needs.verify.outputs.version }}.tgz
             ${{ runner.temp }}/reviewed-release/package-evidence.json
             ${{ runner.temp }}/reviewed-release/build-reproducibility.json
       - name: Publish or adopt exact npm bytes with fixed commands
         id: registry
         shell: bash
         env:
-          EXPECTED_INTEGRITY: ${{ needs.verify.outputs.integrity }}
           RELEASE_STATE: ${{ needs.github-draft.outputs.release_state }}
-          RELEASE_TARBALL: ${{ needs.verify.outputs.tarball }}
           RELEASE_VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -Eeuo pipefail
           root="$RUNNER_TEMP/reviewed-release"
-          archive="$root/$RELEASE_TARBALL"
-          metadata="$RUNNER_TEMP/npm-version.json"
-          status=$(curl --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
-            --silent --show-error --output "$metadata" --write-out '%{http_code}' \
-            "https://registry.npmjs.org/%40latchway%2Fclient/$RELEASE_VERSION")
-          publish_performed=false
-          if [[ "$status" == 200 ]]; then
-            test "$(jq --raw-output .name "$metadata")" = '@latchway/client'
-            test "$(jq --raw-output .version "$metadata")" = "$RELEASE_VERSION"
-            test "$(jq --raw-output .dist.integrity "$metadata")" = "$EXPECTED_INTEGRITY"
-            tarball=$(jq --exit-status --raw-output '.dist.tarball | strings' "$metadata")
-            [[ "$tarball" =~ ^https://registry\.npmjs\.org/@latchway/client/-/[A-Za-z0-9._-]+\.tgz$ ]]
-            curl --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 120 --max-filesize 20971520 \
-              --fail --silent --show-error --output "$RUNNER_TEMP/existing.tgz" "$tarball"
-            cmp --silent "$archive" "$RUNNER_TEMP/existing.tgz"
-          else
-            test "$status" = 404
-            test "$RELEASE_STATE" = draft
-            "$LATCHWAY_NPM_CLI" publish "$archive" --provenance --access public \
-              --registry=https://registry.npmjs.org/
-            publish_performed=true
-          fi
-          printf 'publish_performed=%s\n' "$publish_performed" >> "$GITHUB_OUTPUT"
+          package_names=('@latchway/client' '@latchway/openai' '@latchway/vercel-ai' '@latchway/langchain')
+          package_ids=(client openai vercel-ai langchain)
+          registry_paths=(
+            '%40latchway%2Fclient'
+            '%40latchway%2Fopenai'
+            '%40latchway%2Fvercel-ai'
+            '%40latchway%2Flangchain'
+          )
+          tarballs=(
+            "latchway-client-$RELEASE_VERSION.tgz"
+            "latchway-openai-$RELEASE_VERSION.tgz"
+            "latchway-vercel-ai-$RELEASE_VERSION.tgz"
+            "latchway-langchain-$RELEASE_VERSION.tgz"
+          )
+          publish_required=()
+          for index in "${!package_names[@]}"; do
+            package_name=${package_names[$index]}
+            package_id=${package_ids[$index]}
+            archive="$root/${tarballs[$index]}"
+            metadata="$RUNNER_TEMP/npm-version-$package_id.json"
+            expected_integrity=$(jq --exit-status --raw-output --arg name "$package_name" \
+              '.packages[] | select(.package == $name) | .integrity' "$root/package-evidence.json")
+            expected_shasum=$(jq --exit-status --raw-output --arg name "$package_name" \
+              '.packages[] | select(.package == $name) | .sha1' "$root/package-evidence.json")
+            [[ "$expected_integrity" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]]
+            [[ "$expected_shasum" =~ ^[0-9a-f]{40}$ ]]
+            status=$(curl --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
+              --silent --show-error --output "$metadata" --write-out '%{http_code}' \
+              "https://registry.npmjs.org/${registry_paths[$index]}/$RELEASE_VERSION")
+            if [[ "$status" == 200 ]]; then
+              test "$(jq --raw-output .name "$metadata")" = "$package_name"
+              test "$(jq --raw-output .version "$metadata")" = "$RELEASE_VERSION"
+              test "$(jq --raw-output .dist.integrity "$metadata")" = "$expected_integrity"
+              test "$(jq --raw-output .dist.shasum "$metadata")" = "$expected_shasum"
+              remote_tarball=$(jq --exit-status --raw-output '.dist.tarball | strings' "$metadata")
+              [[ "$remote_tarball" == https://registry.npmjs.org/"$package_name"/-/*.tgz ]]
+              [[ "${remote_tarball##*/}" =~ ^[A-Za-z0-9._-]+\.tgz$ ]]
+              curl --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 120 --max-filesize 20971520 \
+                --fail --silent --show-error --output "$RUNNER_TEMP/existing-$package_id.tgz" "$remote_tarball"
+              cmp --silent "$archive" "$RUNNER_TEMP/existing-$package_id.tgz"
+              publish_required[$index]=false
+            else
+              test "$status" = 404
+              test "$RELEASE_STATE" = draft
+              publish_required[$index]=true
+            fi
+          done
+          publish_state='{}'
+          for index in "${!package_names[@]}"; do
+            package_name=${package_names[$index]}
+            archive="$root/${tarballs[$index]}"
+            publish_performed=false
+            if [[ "${publish_required[$index]}" == true ]]; then
+              "$LATCHWAY_NPM_CLI" publish "$archive" --provenance --access public \
+                --registry=https://registry.npmjs.org/
+              publish_performed=true
+            fi
+            publish_state=$(jq --compact-output --null-input --argjson current "$publish_state" \
+              --arg name "$package_name" --argjson performed "$publish_performed" \
+              '$current + {($name): $performed}')
+          done
+          printf 'publish_state=%s\n' "$publish_state" >> "$GITHUB_OUTPUT"
 
   publish:
     name: Generate and stage npm registry evidence without OIDC
@@ -649,7 +758,6 @@ jobs:
       actions: read
       contents: read
     env:
-      RELEASE_TARBALL: .artifacts/${{ needs.verify.outputs.tarball }}
       RELEASE_COMMIT: ${{ needs.promote.outputs.commit }}
       RELEASE_TAG: ${{ needs.promote.outputs.tag }}
     steps:
@@ -683,42 +791,66 @@ jobs:
       - name: Verify downloaded release artifact
         run: node scripts/verify-release-artifact.mjs
         env:
-          EXPECTED_INTEGRITY: ${{ needs.verify.outputs.integrity }}
           EXPECTED_RELEASE_TAG: ${{ needs.promote.outputs.tag }}
-          EXPECTED_SHA256: ${{ needs.verify.outputs.sha256 }}
           EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
-          EXPECTED_TARBALL: ${{ needs.verify.outputs.tarball }}
           EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
       - name: Verify registry integrity, exports, signatures, and provenance
         id: registry_evidence
         env:
           EXPECTED_RELEASE_TAG: ${{ needs.promote.outputs.tag }}
           EXPECTED_SOURCE_COMMIT: ${{ needs.promote.outputs.commit }}
-          PUBLISH_PERFORMED: ${{ needs.npm-publish.outputs.publish_performed }}
+          PUBLISH_STATE_JSON: ${{ needs.npm-publish.outputs.publish_state }}
         run: node scripts/verify-published.mjs
       - name: Stage exact JavaScript release assets for isolated GitHub publication
+        env:
+          ADOPTION_ASSET_COUNT: ${{ steps.registry_evidence.outputs.adoption_asset_count }}
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          test "$ADOPTION_ASSET_COUNT" = 4
+          [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           destination="$RUNNER_TEMP/javascript-release-assets"
           mkdir -m 700 "$destination"
-          install -m 600 -- \
-            "$RELEASE_TARBALL" \
-            ".artifacts/docs-bundle-${{ needs.verify.outputs.version }}.tar.gz" \
-            .artifacts/SHA256SUMS \
-            .artifacts/build-reproducibility.json \
-            .artifacts/contract-evidence.json \
-            .artifacts/package-evidence.json \
-            .artifacts/post-publish-evidence.json \
-            .artifacts/publish-input-evidence.json \
-            .artifacts/release-candidate-evidence.json \
-            .artifacts/tag-evidence.json \
-            .artifacts/npm-registry-version.json \
-            .artifacts/npm-registry-view.json \
-            .artifacts/npm-attestations.json \
-            .artifacts/npm-audit-signatures.json \
-            .artifacts/npm-registry-evidence-manifest.json \
-            ".artifacts/${{ steps.registry_evidence.outputs.adoption_asset }}" \
-            "$destination/"
+          package_ids=(client openai vercel-ai langchain)
+          fixed_assets=(
+            ".artifacts/latchway-client-$RELEASE_VERSION.tgz"
+            ".artifacts/latchway-openai-$RELEASE_VERSION.tgz"
+            ".artifacts/latchway-vercel-ai-$RELEASE_VERSION.tgz"
+            ".artifacts/latchway-langchain-$RELEASE_VERSION.tgz"
+            ".artifacts/docs-bundle-$RELEASE_VERSION.tar.gz"
+            .artifacts/SHA256SUMS
+            .artifacts/build-reproducibility.json
+            .artifacts/contract-evidence.json
+            .artifacts/dependency-vulnerability-scan.json
+            .artifacts/package-evidence.json
+            .artifacts/post-publish-evidence.json
+            .artifacts/publish-input-evidence.json
+            .artifacts/release-candidate-evidence.json
+            .artifacts/tag-evidence.json
+            .artifacts/npm-registry-evidence-manifest.json
+          )
+          for package_id in "${package_ids[@]}"; do
+            fixed_assets+=(
+              ".artifacts/npm-$package_id-registry-version.json"
+              ".artifacts/npm-$package_id-registry-view.json"
+              ".artifacts/npm-$package_id-attestations.json"
+              ".artifacts/npm-$package_id-audit-signatures.json"
+            )
+          done
+          shopt -s nullglob
+          adoption_assets=(.artifacts/npm-release-adoption-*.json)
+          test "${#adoption_assets[@]}" = 4
+          for package_id in "${package_ids[@]}"; do
+            matches=(.artifacts/npm-release-adoption-"$package_id"-*.json)
+            test "${#matches[@]}" = 1
+            [[ "${matches[0]##*/}" =~ ^npm-release-adoption-${package_id}-[1-9][0-9]*-[1-9][0-9]*\.json$ ]]
+          done
+          for asset in "${fixed_assets[@]}" "${adoption_assets[@]}"; do
+            test -f "$asset"
+            test ! -L "$asset"
+            test -s "$asset"
+          done
+          install -m 600 -- "${fixed_assets[@]}" "${adoption_assets[@]}" "$destination/"
       - name: Transfer exact JavaScript assets to the no-checkout publication job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -761,7 +893,7 @@ jobs:
   github-release:
     name: Publish immutable GitHub release without candidate checkout
     if: github.repository == 'Latchway/latchway-js'
-    needs: [promote, verify, publish, github-release-policy]
+    needs: [promote, verify, publish, github-release-policy, github-draft]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: npm
@@ -779,36 +911,139 @@ jobs:
       - name: Validate exact JavaScript asset closure before OIDC attestation
         shell: bash
         env:
-          RELEASE_TARBALL: ${{ needs.verify.outputs.tarball }}
+          RELEASE_COMMIT: ${{ needs.promote.outputs.commit }}
+          RELEASE_TAG: ${{ needs.promote.outputs.tag }}
           RELEASE_VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -Eeuo pipefail
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          test "$RELEASE_TARBALL" = "latchway-client-$RELEASE_VERSION.tgz"
+          test "$RELEASE_TAG" = "v$RELEASE_VERSION"
           asset_root="$RUNNER_TEMP/javascript-release-assets"
+          package_ids=(client openai vercel-ai langchain)
+          package_names=('@latchway/client' '@latchway/openai' '@latchway/vercel-ai' '@latchway/langchain')
+          tarballs=(
+            "latchway-client-$RELEASE_VERSION.tgz"
+            "latchway-openai-$RELEASE_VERSION.tgz"
+            "latchway-vercel-ai-$RELEASE_VERSION.tgz"
+            "latchway-langchain-$RELEASE_VERSION.tgz"
+          )
           shopt -s nullglob
           adoption_assets=("$asset_root"/npm-release-adoption-*.json)
-          test "${#adoption_assets[@]}" = 1
-          adoption_name=${adoption_assets[0]##*/}
-          [[ "$adoption_name" =~ ^npm-release-adoption-[1-9][0-9]*-[1-9][0-9]*\.json$ ]]
+          test "${#adoption_assets[@]}" = 4
           expected=(
-            "$RELEASE_TARBALL"
+            "latchway-client-$RELEASE_VERSION.tgz"
+            "latchway-openai-$RELEASE_VERSION.tgz"
+            "latchway-vercel-ai-$RELEASE_VERSION.tgz"
+            "latchway-langchain-$RELEASE_VERSION.tgz"
             "docs-bundle-$RELEASE_VERSION.tar.gz"
             SHA256SUMS
             build-reproducibility.json
             contract-evidence.json
+            dependency-vulnerability-scan.json
             package-evidence.json
             post-publish-evidence.json
             publish-input-evidence.json
             release-candidate-evidence.json
             tag-evidence.json
-            npm-registry-version.json
-            npm-registry-view.json
-            npm-attestations.json
-            npm-audit-signatures.json
             npm-registry-evidence-manifest.json
-            "$adoption_name"
           )
+          manifest_sha256=$(sha256sum "$asset_root/npm-registry-evidence-manifest.json" | cut -d ' ' -f 1)
+          for index in "${!package_ids[@]}"; do
+            package_id=${package_ids[$index]}
+            package_name=${package_names[$index]}
+            expected+=(
+              "npm-$package_id-registry-version.json"
+              "npm-$package_id-registry-view.json"
+              "npm-$package_id-attestations.json"
+              "npm-$package_id-audit-signatures.json"
+            )
+            for evidence_kind in registry-version registry-view attestations audit-signatures; do
+              evidence_name="npm-$package_id-$evidence_kind.json"
+              evidence_path="$asset_root/$evidence_name"
+              evidence_sha256=$(sha256sum "$evidence_path" | cut -d ' ' -f 1)
+              evidence_bytes=$(wc -c < "$evidence_path" | tr -d ' ')
+              jq --exit-status --arg package "$package_name" --arg name "$evidence_name" \
+                --arg sha256 "$evidence_sha256" --argjson bytes "$evidence_bytes" '
+                .packages[] | select(.package == $package) |
+                any(.evidence[]; .name == $name and .sha256 == $sha256 and .bytes == $bytes)
+              ' "$asset_root/npm-registry-evidence-manifest.json" >/dev/null
+            done
+            archive_path="$asset_root/${tarballs[$index]}"
+            archive_sha256=$(sha256sum "$archive_path" | cut -d ' ' -f 1)
+            archive_sha512=$(sha512sum "$archive_path" | cut -d ' ' -f 1)
+            archive_integrity="sha512-$(openssl dgst -sha512 -binary "$archive_path" | base64 -w 0)"
+            archive_bytes=$(wc -c < "$archive_path" | tr -d ' ')
+            jq --exit-status --arg package "$package_name" --arg name "${tarballs[$index]}" \
+              --arg sha256 "$archive_sha256" --arg sha512 "$archive_sha512" \
+              --arg integrity "$archive_integrity" --argjson bytes "$archive_bytes" '
+              .packages[] | select(.package == $package) |
+              .tarball == {name: $name, bytes: $bytes, sha256: $sha256,
+                sha512: $sha512, integrity: $integrity}
+            ' "$asset_root/npm-registry-evidence-manifest.json" >/dev/null
+            matches=("$asset_root"/npm-release-adoption-"$package_id"-*.json)
+            test "${#matches[@]}" = 1
+            adoption_name=${matches[0]##*/}
+            [[ "$adoption_name" =~ ^npm-release-adoption-${package_id}-[1-9][0-9]*-[1-9][0-9]*\.json$ ]]
+            test "$adoption_name" = "npm-release-adoption-$package_id-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+            jq --exit-status --arg package "$package_name" --arg version "$RELEASE_VERSION" \
+              --arg tag "$RELEASE_TAG" --arg repository "https://github.com/$GITHUB_REPOSITORY" \
+              --arg commit "$RELEASE_COMMIT" --arg tarball "${tarballs[$index]}" \
+              --arg manifest_sha256 "$manifest_sha256" --argjson run "$GITHUB_RUN_ID" \
+              --argjson attempt "$GITHUB_RUN_ATTEMPT" --slurpfile reviewed "$asset_root/package-evidence.json" '
+              ($reviewed[0].packages[] | select(.package == $package)) as $package_evidence |
+              .schema_version == 1 and .kind == "latchway_npm_release_adoption" and
+              .package == $package and .version == $version and .release_tag == $tag and
+              .tarball == {
+                name: $tarball, bytes: $package_evidence.bytes, sha256: $package_evidence.sha256,
+                sha512: $package_evidence.sha512, integrity: $package_evidence.integrity
+              } and
+              .source == {repository: $repository, commit: $commit,
+                workflow: ".github/workflows/release.yml", ref: "refs/heads/main"} and
+              (.provenance as $provenance |
+                $provenance.repository == $repository and $provenance.commit == $commit and
+                $provenance.workflow == ".github/workflows/release.yml" and
+                $provenance.ref == "refs/heads/main" and
+                $provenance.predicate_type == "https://slsa.dev/provenance/v1" and
+                ($provenance.run_id | type) == "number" and $provenance.run_id >= 1 and
+                ($provenance.run_attempt | type) == "number" and $provenance.run_attempt >= 1 and
+                $provenance.invocation_id == ($repository + "/actions/runs/" +
+                  ($provenance.run_id | tostring) + "/attempts/" + ($provenance.run_attempt | tostring))) and
+              .adoption.repository == $repository and .adoption.commit == $commit and
+              .adoption.workflow == ".github/workflows/release.yml" and
+              .adoption.ref == "refs/heads/main" and .adoption.run_id == $run and
+              .adoption.run_attempt == $attempt and
+              (.adoption.mode == "published" or .adoption.mode == "adopted_existing") and
+              .registry_evidence_manifest == {
+                file: "npm-registry-evidence-manifest.json", sha256: $manifest_sha256
+              }
+            ' "${matches[0]}" >/dev/null
+            expected+=("$adoption_name")
+          done
+          jq --exit-status --arg version "$RELEASE_VERSION" \
+            --argjson names '["@latchway/client","@latchway/openai","@latchway/vercel-ai","@latchway/langchain"]' '
+            .schema_version == 2 and .kind == "latchway_npm_registry_package_set_evidence_manifest" and
+            .version == $version and .package_count == 4 and .publish_order == $names and
+            (.packages | map(.package)) == $names and all(.packages[]; (.evidence | length) == 4)
+          ' "$asset_root/npm-registry-evidence-manifest.json" >/dev/null
+          jq --exit-status --arg version "$RELEASE_VERSION" --arg manifest_sha256 "$manifest_sha256" \
+            --argjson names '["@latchway/client","@latchway/openai","@latchway/vercel-ai","@latchway/langchain"]' '
+            .schema_version == 3 and .kind == "latchway_npm_package_set_publication_evidence" and
+            .version == $version and .package_count == 4 and .publish_order == $names and
+            (.packages | map(.package)) == $names and
+            .evidence_manifest.file == "npm-registry-evidence-manifest.json" and
+            .evidence_manifest.sha256 == $manifest_sha256
+          ' "$asset_root/post-publish-evidence.json" >/dev/null
+          jq --exit-status --arg version "$RELEASE_VERSION" --arg commit "$RELEASE_COMMIT" \
+            --arg tag "$RELEASE_TAG" \
+            --argjson names '["@latchway/client","@latchway/openai","@latchway/vercel-ai","@latchway/langchain"]' '
+            .schema_version == 2 and .kind == "latchway_npm_publish_input_evidence" and
+            .version == $version and .source_commit == $commit and .release_tag == $tag and
+            .package_count == 4 and .publish_order == $names and (.packages | map(.package)) == $names and
+            .consumer.package_count == 4 and .consumer.node_esm == true and
+            .consumer.typescript == false and .consumer.peer_source == "registry"
+          ' "$asset_root/publish-input-evidence.json" >/dev/null
+          test "${#expected[@]}" = 35
           actual=("$asset_root"/*)
           test "${#actual[@]}" = "${#expected[@]}"
           for asset in "${actual[@]}"; do
@@ -820,6 +1055,7 @@ jobs:
           printf '%s\n' "${actual[@]##*/}" | LC_ALL=C sort > "$RUNNER_TEMP/actual-assets.txt"
           cmp --silent "$RUNNER_TEMP/expected-assets.txt" "$RUNNER_TEMP/actual-assets.txt"
       - name: Attest exact retained registry and release evidence without candidate checkout
+        if: needs.github-draft.outputs.release_state == 'draft'
         uses: actions/attest-build-provenance@e4d4f7c39adfa4c260fb5c147f0622000aa14b99 # v4.0.0
         with:
           subject-path: ${{ runner.temp }}/javascript-release-assets/*
@@ -830,14 +1066,12 @@ jobs:
           RELEASE_COMMIT: ${{ needs.promote.outputs.commit }}
           RELEASE_TAG: ${{ needs.promote.outputs.tag }}
           RELEASE_VERSION: ${{ needs.verify.outputs.version }}
-          RELEASE_TARBALL: ${{ needs.verify.outputs.tarball }}
         run: |
           set -Eeuo pipefail
           test -n "$RELEASE_TOKEN"
           [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           test "$RELEASE_TAG" = "v$RELEASE_VERSION"
-          [[ "$RELEASE_TARBALL" =~ ^latchway-client-[0-9]+\.[0-9]+\.[0-9]+\.tgz$ ]]
           version_line=$(gh version | head -n 1)
           [[ "$version_line" =~ ^gh[[:space:]]version[[:space:]]([0-9]+)\.([0-9]+)\.([0-9]+)([[:space:]]\([^()]+\))?$ ]]
           major=${BASH_REMATCH[1]}; minor=${BASH_REMATCH[2]}; patch=${BASH_REMATCH[3]}
@@ -849,26 +1083,38 @@ jobs:
           unset RELEASE_TOKEN
 
           asset_root="$RUNNER_TEMP/javascript-release-assets"
+          package_ids=(client openai vercel-ai langchain)
+          shopt -s nullglob
           adoption_assets=("$asset_root"/npm-release-adoption-*.json)
-          test "${#adoption_assets[@]}" = 1
-          [[ "${adoption_assets[0]##*/}" =~ ^npm-release-adoption-[1-9][0-9]*-[1-9][0-9]*\.json$ ]]
+          test "${#adoption_assets[@]}" = 4
           fixed_assets=(
-            "$asset_root/$RELEASE_TARBALL"
+            "$asset_root/latchway-client-$RELEASE_VERSION.tgz"
+            "$asset_root/latchway-openai-$RELEASE_VERSION.tgz"
+            "$asset_root/latchway-vercel-ai-$RELEASE_VERSION.tgz"
+            "$asset_root/latchway-langchain-$RELEASE_VERSION.tgz"
             "$asset_root/docs-bundle-$RELEASE_VERSION.tar.gz"
             "$asset_root/SHA256SUMS"
             "$asset_root/build-reproducibility.json"
             "$asset_root/contract-evidence.json"
+            "$asset_root/dependency-vulnerability-scan.json"
             "$asset_root/package-evidence.json"
             "$asset_root/post-publish-evidence.json"
             "$asset_root/publish-input-evidence.json"
             "$asset_root/release-candidate-evidence.json"
             "$asset_root/tag-evidence.json"
-            "$asset_root/npm-registry-version.json"
-            "$asset_root/npm-registry-view.json"
-            "$asset_root/npm-attestations.json"
-            "$asset_root/npm-audit-signatures.json"
             "$asset_root/npm-registry-evidence-manifest.json"
           )
+          for package_id in "${package_ids[@]}"; do
+            fixed_assets+=(
+              "$asset_root/npm-$package_id-registry-version.json"
+              "$asset_root/npm-$package_id-registry-view.json"
+              "$asset_root/npm-$package_id-attestations.json"
+              "$asset_root/npm-$package_id-audit-signatures.json"
+            )
+            matches=("$asset_root"/npm-release-adoption-"$package_id"-*.json)
+            test "${#matches[@]}" = 1
+            [[ "${matches[0]##*/}" =~ ^npm-release-adoption-${package_id}-[1-9][0-9]*-[1-9][0-9]*\.json$ ]]
+          done
           : > "$RUNNER_TEMP/fixed-assets.txt"
           for asset in "${fixed_assets[@]}" "${adoption_assets[@]}"; do
             test -f "$asset"
@@ -876,7 +1122,7 @@ jobs:
             test -s "$asset"
           done
           for asset in "${fixed_assets[@]}"; do printf '%s\n' "${asset##*/}" >> "$RUNNER_TEMP/fixed-assets.txt"; done
-          test "$(sort -u "$RUNNER_TEMP/fixed-assets.txt" | wc -l | tr -d ' ')" = 15
+          test "$(sort -u "$RUNNER_TEMP/fixed-assets.txt" | wc -l | tr -d ' ')" = 31
           fixed_names=$(sort "$RUNNER_TEMP/fixed-assets.txt" | jq --raw-input --slurp 'split("\n")[:-1]')
 
           gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > "$RUNNER_TEMP/tag-ref.json"
@@ -892,7 +1138,7 @@ jobs:
               "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
           }
           lookup_release
-          title="@latchway/client $RELEASE_VERSION"
+          title="Latchway JavaScript SDKs $RELEASE_VERSION"
           validate_release() {
             local allow_draft=$1
             jq --exit-status --arg tag "$RELEASE_TAG" --arg title "$title" \
@@ -904,7 +1150,7 @@ jobs:
               ((.draft == true and .immutable == false) or (.draft == false and .immutable == true)) and
               ([.assets[].name] | length) == ([.assets[].name] | unique | length) and
               all($release.assets[].name as $name; ($fixed | index($name)) != null or
-                ($name | test("^npm-release-adoption-[1-9][0-9]*-[1-9][0-9]*\\.json$")))
+                ($name | test("^npm-release-adoption-(client|openai|vercel-ai|langchain)-[1-9][0-9]*-[1-9][0-9]*\\.json$")))
             ' "$RUNNER_TEMP/release.json" >/dev/null
           }
           validate_release true
@@ -927,19 +1173,25 @@ jobs:
             gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY"
           }
           for asset in "${fixed_assets[@]}"; do verify_or_upload "$asset"; done
-          adoption_name=${adoption_assets[0]##*/}
-          if [[ "$(jq --arg name "$adoption_name" '[.assets[] | select(.name == $name)] | length' "$RUNNER_TEMP/release.json")" -eq 1 ||
-                "$(jq --raw-output .draft "$RUNNER_TEMP/release.json")" == true ]]; then
-            verify_or_upload "${adoption_assets[0]}"
-          else
-            test "$(jq '[.assets[].name | select(test("^npm-release-adoption-[1-9][0-9]*-[1-9][0-9]*\\.json$"))] | length' "$RUNNER_TEMP/release.json")" -ge 1
-          fi
+          for package_id in "${package_ids[@]}"; do
+            matches=("$asset_root"/npm-release-adoption-"$package_id"-*.json)
+            test "${#matches[@]}" = 1
+            adoption_name=${matches[0]##*/}
+            if [[ "$(jq --arg name "$adoption_name" '[.assets[] | select(.name == $name)] | length' "$RUNNER_TEMP/release.json")" -eq 1 ||
+                  "$(jq --raw-output .draft "$RUNNER_TEMP/release.json")" == true ]]; then
+              verify_or_upload "${matches[0]}"
+            else
+              pattern="^npm-release-adoption-${package_id}-[1-9][0-9]*-[1-9][0-9]*\\.json$"
+              test "$(jq --arg pattern "$pattern" '[.assets[].name | select(test($pattern))] | length' "$RUNNER_TEMP/release.json")" -ge 1
+            fi
+          done
           lookup_release
           validate_release true
           jq --exit-status --argjson fixed "$fixed_names" '. as $release |
-            ([$release.assets[].name] - $fixed | all(test("^npm-release-adoption-[1-9][0-9]*-[1-9][0-9]*\\.json$"))) and
+            ([$release.assets[].name] - $fixed | all(test("^npm-release-adoption-(client|openai|vercel-ai|langchain)-[1-9][0-9]*-[1-9][0-9]*\\.json$"))) and
             all($fixed[] as $name; ($release.assets | map(.name) | index($name)) != null) and
-            ([$release.assets[].name | select(test("^npm-release-adoption-[1-9][0-9]*-[1-9][0-9]*\\.json$"))] | length) >= 1
+            all(["client", "openai", "vercel-ai", "langchain"][] as $id;
+              any($release.assets[].name; test("^npm-release-adoption-" + $id + "-[1-9][0-9]*-[1-9][0-9]*\\.json$")))
           ' "$RUNNER_TEMP/release.json" >/dev/null
           if [[ "$(jq --raw-output .draft "$RUNNER_TEMP/release.json")" == true ]]; then
             gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
@@ -949,7 +1201,8 @@ jobs:
           validate_release false
           jq --exit-status --argjson fixed "$fixed_names" '. as $release |
             all($fixed[] as $name; ($release.assets | map(.name) | index($name)) != null) and
-            ([$release.assets[].name | select(test("^npm-release-adoption-[1-9][0-9]*-[1-9][0-9]*\\.json$"))] | length) >= 1
+            all(["client", "openai", "vercel-ai", "langchain"][] as $id;
+              any($release.assets[].name; test("^npm-release-adoption-" + $id + "-[1-9][0-9]*-[1-9][0-9]*\\.json$")))
           ' "$RUNNER_TEMP/release.json" >/dev/null
 
           verified=false

@@ -5,70 +5,91 @@ import { join } from "node:path";
 import {
   ARTIFACTS_PATH,
   ROOT_PATH,
-  archiveNameFor,
   digestFile,
   expectedPackFiles,
   inspectTarball,
-  readRootManifest,
-  runConsumerSmoke,
+  readReleasePackages,
+  runReleaseSetConsumerSmoke,
 } from "./release-utils.mjs";
 
-runPackageManager(["build"]);
-const manifest = await readRootManifest();
-const archiveName = archiveNameFor(manifest);
-const firstDirectory = join(ARTIFACTS_PATH, "pack-a");
-const secondDirectory = join(ARTIFACTS_PATH, "pack-b");
-const canonicalArchive = join(ARTIFACTS_PATH, archiveName);
-
+runPackageManager(["build"], ROOT_PATH);
+const packages = await readReleasePackages();
+const releaseVersion = packages[0].manifest.version;
 await mkdir(ARTIFACTS_PATH, { recursive: true });
-for (const path of [firstDirectory, secondDirectory]) {
-  await rm(path, { recursive: true, force: true });
-  await mkdir(path, { recursive: true });
+
+const packageEvidence = [];
+const packageArchives = [];
+for (const package_ of packages) {
+  const firstDirectory = join(ARTIFACTS_PATH, `pack-a-${package_.id}`);
+  const secondDirectory = join(ARTIFACTS_PATH, `pack-b-${package_.id}`);
+  const canonicalArchive = join(ARTIFACTS_PATH, package_.archiveName);
+  await rm(canonicalArchive, { force: true });
+  for (const path of [firstDirectory, secondDirectory]) {
+    await rm(path, { recursive: true, force: true });
+    await mkdir(path, { recursive: true });
+  }
+
+  const expectedEntries = await expectedPackFiles(package_);
+  pack(package_, firstDirectory);
+  pack(package_, secondDirectory);
+  const firstArchive = await onlyArchive(firstDirectory, package_.archiveName);
+  const secondArchive = await onlyArchive(secondDirectory, package_.archiveName);
+  const [firstBytes, secondBytes] = await Promise.all([readFile(firstArchive), readFile(secondArchive)]);
+  if (!firstBytes.equals(secondBytes)) {
+    throw new Error(`Two independent ${package_.name} pack operations did not produce byte-identical tarballs.`);
+  }
+  const firstDigest = await digestFile(firstArchive);
+  const secondDigest = await digestFile(secondArchive);
+  if (firstDigest.sha256 !== secondDigest.sha256 || firstDigest.integrity !== secondDigest.integrity) {
+    throw new Error(`The byte-identical ${package_.name} tarballs produced different cryptographic digests.`);
+  }
+
+  const inspection = await inspectTarball(firstArchive, package_);
+  if (JSON.stringify(inspection.entries) !== JSON.stringify(expectedEntries)) {
+    throw new Error(`The ${package_.name} archive does not exactly match its release file allowlist.`);
+  }
+
+  await copyFile(firstArchive, canonicalArchive);
+  packageArchives.push({ name: package_.name, path: canonicalArchive });
+  packageEvidence.push({
+    id: package_.id,
+    package: package_.name,
+    version: package_.manifest.version,
+    tarball: package_.archiveName,
+    bytes: firstDigest.bytes,
+    sha1: firstDigest.sha1,
+    sha256: firstDigest.sha256,
+    sha512: firstDigest.sha512,
+    integrity: firstDigest.integrity,
+    double_pack_byte_identical: true,
+    archive_allowlist_verified: true,
+    archive_regular_files_only: true,
+    credential_scan: "passed",
+    entries: inspection.entries,
+    unpacked_bytes: inspection.unpackedBytes,
+    published_peer_dependencies: inspection.manifest.peerDependencies ?? {},
+  });
+  await rm(firstDirectory, { recursive: true, force: true });
+  await rm(secondDirectory, { recursive: true, force: true });
 }
 
-pack(firstDirectory);
-pack(secondDirectory);
-const firstArchive = await onlyArchive(firstDirectory);
-const secondArchive = await onlyArchive(secondDirectory);
-const [firstBytes, secondBytes] = await Promise.all([readFile(firstArchive), readFile(secondArchive)]);
-if (!firstBytes.equals(secondBytes)) {
-  throw new Error("Two independent package operations did not produce byte-identical tarballs.");
-}
-const firstDigest = await digestFile(firstArchive);
-const secondDigest = await digestFile(secondArchive);
-if (firstDigest.sha256 !== secondDigest.sha256 || firstDigest.integrity !== secondDigest.integrity) {
-  throw new Error("The byte-identical tarballs did not produce identical cryptographic digests.");
-}
+const consumer = await runReleaseSetConsumerSmoke(packageArchives, {
+  typescript: true,
+  peerSource: "reviewed",
+});
+const checksums = packageEvidence
+  .map(({ sha256, tarball }) => `${sha256}  ${tarball}`)
+  .sort()
+  .join("\n");
+await writeFile(join(ARTIFACTS_PATH, "SHA256SUMS"), `${checksums}\n`, { mode: 0o600 });
 
-const inspection = await inspectTarball(firstArchive, manifest);
-const expectedEntries = await expectedPackFiles();
-if (JSON.stringify(inspection.entries) !== JSON.stringify(expectedEntries)) {
-  throw new Error("The npm archive does not exactly match the release file allowlist.");
-}
-const consumer = await runConsumerSmoke(firstArchive, { typescript: true });
-
-await copyFile(firstArchive, canonicalArchive);
-await writeFile(
-  join(ARTIFACTS_PATH, "SHA256SUMS"),
-  `${firstDigest.sha256}  ${archiveName}\n`,
-  { mode: 0o600 },
-);
 const evidence = {
-  schema_version: 1,
-  package: manifest.name,
-  version: manifest.version,
-  tarball: archiveName,
-  bytes: firstDigest.bytes,
-  sha1: firstDigest.sha1,
-  sha256: firstDigest.sha256,
-  sha512: firstDigest.sha512,
-  integrity: firstDigest.integrity,
-  double_pack_byte_identical: true,
-  archive_allowlist_verified: true,
-  archive_regular_files_only: true,
-  credential_scan: "passed",
-  entries: inspection.entries,
-  unpacked_bytes: inspection.unpackedBytes,
+  schema_version: 2,
+  kind: "latchway_npm_package_set_evidence",
+  version: releaseVersion,
+  package_count: packages.length,
+  publish_order: packages.map(({ name }) => name),
+  packages: packageEvidence,
   consumer,
 };
 await writeFile(
@@ -76,31 +97,29 @@ await writeFile(
   `${JSON.stringify(evidence, null, 2)}\n`,
   { mode: 0o600 },
 );
-await rm(firstDirectory, { recursive: true, force: true });
-await rm(secondDirectory, { recursive: true, force: true });
 process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
 
-function pack(destination) {
-  runPackageManager(["pack", "--pack-destination", destination]);
+function pack(package_, destination) {
+  runPackageManager(["pack", "--pack-destination", destination], package_.directory);
 }
 
-function runPackageManager(arguments_) {
+function runPackageManager(arguments_, cwd) {
   const packageManager = process.env.npm_execpath;
   if (packageManager === undefined) throw new Error("Run package verification through pnpm.");
   if (/\.[cm]?js$/u.test(packageManager)) {
     execFileSync(process.execPath, [packageManager, ...arguments_], {
-      cwd: ROOT_PATH,
+      cwd,
       stdio: "inherit",
     });
   } else {
-    execFileSync(packageManager, arguments_, { cwd: ROOT_PATH, stdio: "inherit" });
+    execFileSync(packageManager, arguments_, { cwd, stdio: "inherit" });
   }
 }
 
-async function onlyArchive(directory) {
+async function onlyArchive(directory, archiveName) {
   const archives = (await readdir(directory)).filter((name) => name.endsWith(".tgz"));
   if (archives.length !== 1 || archives[0] !== archiveName) {
-    throw new Error("Each package operation must produce exactly the expected npm archive.");
+    throw new Error(`Each package operation must produce exactly ${archiveName}.`);
   }
   return join(directory, archiveName);
 }

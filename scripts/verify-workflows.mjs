@@ -52,10 +52,17 @@ for (const required of [
   "Preflight immutable release and create draft with fixed API calls",
   "Reconcile, publish, and verify immutable release with fixed API calls",
   "npm-release-adoption-",
-  "npm-registry-view.json",
-  "npm-attestations.json",
-  "npm-audit-signatures.json",
+  "npm-$package_id-registry-version.json",
+  "npm-$package_id-registry-view.json",
+  "npm-$package_id-attestations.json",
+  "npm-$package_id-audit-signatures.json",
   "npm-registry-evidence-manifest.json",
+  "latchway-client-$RELEASE_VERSION.tgz",
+  "latchway-openai-$RELEASE_VERSION.tgz",
+  "latchway-vercel-ai-$RELEASE_VERSION.tgz",
+  "latchway-langchain-$RELEASE_VERSION.tgz",
+  "dependency-vulnerability-scan.json",
+  "PUBLISH_STATE_JSON",
   "docs-bundle-$RELEASE_VERSION.tar.gz",
   "actions/attest-build-provenance@",
   "RELEASE_STATE",
@@ -213,7 +220,12 @@ for (const marker of [
   "sha512sum --check --strict",
   "test \"$observed_integrity\" = \"$NPM_CLI_INTEGRITY\"",
   "tar --extract --gzip --file \"$archive\"",
+  "archive_sha1=$(sha1sum \"$archive\"",
+  ".sha256 == $sha256 and .sha512 == $sha512 and .integrity == $integrity",
   "\"$LATCHWAY_NPM_CLI\" publish \"$archive\"",
+  "package_names=('@latchway/client' '@latchway/openai' '@latchway/vercel-ai' '@latchway/langchain')",
+  "publish_required=()",
+  "publish_state=$(jq --compact-output",
 ]) {
   if (!npmPublishJob.includes(marker)) throw new Error(`npm-publish is missing ${marker}.`);
 }
@@ -226,6 +238,24 @@ if (cliClosure < 0 || cliExtraction <= cliClosure || cliExecution <= cliExtracti
 if (npmPublishJob.includes("npm install") || npmPublishJob.includes("npm exec")
   || /(?:^|\n)\s*npx\s/u.test(npmPublishJob)) {
   throw new Error("The OIDC npm publication job must never live-install executable tooling.");
+}
+const registryPreflight = npmPublishJob.indexOf("publish_required=()");
+const preflightCompletion = npmPublishJob.indexOf("publish_state='{}'", registryPreflight);
+const registryMutation = npmPublishJob.indexOf('"$LATCHWAY_NPM_CLI" publish "$archive"');
+if (
+  registryPreflight < 0
+  || preflightCompletion <= registryPreflight
+  || registryMutation <= preflightCompletion
+  || (npmPublishJob.slice(registryPreflight).match(
+    /for index in "\$\{!package_names\[@\]\}"; do/gu,
+  ) ?? []).length !== 2
+) {
+  throw new Error("The OIDC npm job must preflight the complete package set before its first registry mutation.");
+}
+for (const packageName of ["@latchway/client", "@latchway/openai", "@latchway/vercel-ai", "@latchway/langchain"]) {
+  if (!npmPublishJob.includes(packageName)) {
+    throw new Error(`The OIDC npm job does not bind ${packageName}.`);
+  }
 }
 const releasePolicyStart = release.indexOf("\n  github-release-policy:\n");
 const releaseStart = release.indexOf("\n  github-release:\n");
@@ -245,6 +275,16 @@ const closureValidation = releaseJob.indexOf("Validate exact JavaScript asset cl
 const releaseAttestation = releaseJob.indexOf("Attest exact retained registry and release evidence without candidate checkout");
 if (closureValidation < 0 || releaseAttestation <= closureValidation) {
   throw new Error("The exact JavaScript release asset closure must be validated before attestation.");
+}
+for (const marker of [
+  "test \"${#expected[@]}\" = 35",
+  "test \"$(sort -u \"$RUNNER_TEMP/fixed-assets.txt\" | wc -l | tr -d ' ')\" = 31",
+  "npm-release-adoption-(client|openai|vercel-ai|langchain)",
+]) {
+  if (!releaseJob.includes(marker)) throw new Error(`The final JavaScript release closure is missing ${marker}.`);
+}
+if ((release.match(/if: needs\.github-draft\.outputs\.release_state == 'draft'/gu) ?? []).length !== 2) {
+  throw new Error("Artifact attestations must be skipped on immutable read-only release retries.");
 }
 const secretReferences = [...release.matchAll(/\$\{\{\s*secrets\.([A-Z0-9_]+)\s*\}\}/gu)]
   .map((match) => match[1]);

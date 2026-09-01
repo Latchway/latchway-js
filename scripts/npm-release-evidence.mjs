@@ -4,6 +4,12 @@ export const PROVENANCE_TYPE = "https://slsa.dev/provenance/v1";
 export const PUBLISH_TYPE = "https://github.com/npm/attestation/tree/main/specs/publish/v0.1";
 export const WORKFLOW_PATH = ".github/workflows/release.yml";
 export const SOURCE_REF = "refs/heads/main";
+const RELEASE_PACKAGE_ORDER = Object.freeze([
+  Object.freeze({ id: "client", name: "@latchway/client" }),
+  Object.freeze({ id: "openai", name: "@latchway/openai" }),
+  Object.freeze({ id: "vercel-ai", name: "@latchway/vercel-ai" }),
+  Object.freeze({ id: "langchain", name: "@latchway/langchain" }),
+]);
 
 export function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -92,19 +98,65 @@ export function verifyPublishStatement(statement, { packageName, packageVersion,
   }
 }
 
-export function buildRegistryManifest({ packageName, packageVersion, tarball, evidence }) {
-  const assets = evidence.map(({ name, bytes }) => ({
-    name,
-    bytes: bytes.byteLength,
-    sha256: sha256(bytes),
-  })).sort((left, right) => left.name.localeCompare(right.name));
+export function buildRegistrySetManifest({ version, publishOrder, packages }) {
+  const expectedOrder = RELEASE_PACKAGE_ORDER.map(({ name }) => name);
+  if (
+    !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u.test(version)
+    || !Array.isArray(publishOrder)
+    || JSON.stringify(publishOrder) !== JSON.stringify(expectedOrder)
+    || !Array.isArray(packages)
+    || packages.length !== publishOrder.length
+  ) {
+    throw new Error("The npm registry package-set manifest has invalid coordinates.");
+  }
+  const normalized = packages.map((entry, index) => {
+    const expectedPackage = RELEASE_PACKAGE_ORDER[index];
+    const expectedEvidenceNames = [
+      `npm-${expectedPackage.id}-registry-version.json`,
+      `npm-${expectedPackage.id}-registry-view.json`,
+      `npm-${expectedPackage.id}-attestations.json`,
+      `npm-${expectedPackage.id}-audit-signatures.json`,
+    ].sort();
+    if (
+      entry?.package !== publishOrder[index]
+      || entry.package !== expectedPackage.name
+      || entry.version !== version
+      || entry.id !== expectedPackage.id
+      || entry.tarball?.name !== `latchway-${expectedPackage.id}-${version}.tgz`
+      || !/^[0-9a-f]{64}$/u.test(entry.tarball?.sha256 ?? "")
+      || !/^[0-9a-f]{128}$/u.test(entry.tarball?.sha512 ?? "")
+      || !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(entry.tarball?.integrity ?? "")
+      || !Array.isArray(entry.evidence)
+      || entry.evidence.length !== 4
+    ) {
+      throw new Error(`The npm registry evidence for ${String(entry?.package)} is incomplete.`);
+    }
+    const evidence = entry.evidence.map(({ name, bytes }) => ({
+      name,
+      bytes: bytes.byteLength,
+      sha256: sha256(bytes),
+    })).sort((left, right) => left.name.localeCompare(right.name));
+    if (new Set(evidence.map(({ name }) => name)).size !== evidence.length) {
+      throw new Error(`The npm registry evidence for ${entry.package} contains duplicate files.`);
+    }
+    if (JSON.stringify(evidence.map(({ name }) => name)) !== JSON.stringify(expectedEvidenceNames)) {
+      throw new Error(`The npm registry evidence closure for ${entry.package} is unexpected.`);
+    }
+    return {
+      id: entry.id,
+      package: entry.package,
+      version: entry.version,
+      tarball: entry.tarball,
+      evidence,
+    };
+  });
   return {
-    schema_version: 1,
-    kind: "latchway_npm_registry_evidence_manifest",
-    package: packageName,
-    version: packageVersion,
-    tarball,
-    evidence: assets,
+    schema_version: 2,
+    kind: "latchway_npm_registry_package_set_evidence_manifest",
+    version,
+    package_count: normalized.length,
+    publish_order: publishOrder,
+    packages: normalized,
   };
 }
 
@@ -120,6 +172,7 @@ export function buildAdoptionRecord({
   currentRunID,
   currentRunAttempt,
   publishPerformed,
+  manifestName = "npm-registry-evidence-manifest.json",
 }) {
   const binding = {
     repository: repositoryURL,
@@ -147,7 +200,7 @@ export function buildAdoptionRecord({
       mode: publishPerformed ? "published" : "adopted_existing",
     },
     registry_evidence_manifest: {
-      file: "npm-registry-evidence-manifest.json",
+      file: manifestName,
       sha256: manifestSHA256,
     },
   };

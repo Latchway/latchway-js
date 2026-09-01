@@ -1,28 +1,54 @@
 import { appendFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ARTIFACTS_PATH, fetchJSON, packageVersionURL, readRootManifest } from "./release-utils.mjs";
+import {
+  ARTIFACTS_PATH,
+  fetchBytes,
+  fetchJSON,
+  packageVersionURL,
+  readReleasePackages,
+} from "./release-utils.mjs";
 
-const manifest = await readRootManifest();
+const packages = await readReleasePackages();
 const evidence = JSON.parse(await readFile(join(ARTIFACTS_PATH, "package-evidence.json"), "utf8"));
-const { response, value } = await fetchJSON(packageVersionURL(manifest.name, manifest.version), {
-  maximumBytes: 2 * 1024 * 1024,
-});
-
-let publishRequired;
-if (response.status === 404) {
-  publishRequired = true;
-} else if (response.status === 200) {
-  if (value.name !== manifest.name || value.version !== manifest.version ||
-      value.dist?.integrity !== evidence.integrity || value.dist?.shasum !== evidence.sha1) {
-    throw new Error("This npm version already exists but does not match the verified release archive.");
-  }
-  publishRequired = false;
-} else {
-  throw new Error(`npm registry availability check failed with HTTP ${response.status}.`);
+if (!Array.isArray(evidence.packages) || evidence.packages.length !== packages.length) {
+  throw new Error("Package-set evidence is incomplete.");
 }
 
-const output = `publish_required=${String(publishRequired)}\n`;
+const publishState = {};
+for (const [index, package_] of packages.entries()) {
+  const packageEvidence = evidence.packages[index];
+  if (packageEvidence?.package !== package_.name || packageEvidence.tarball !== package_.archiveName) {
+    throw new Error(`Package-set evidence does not bind ${package_.name}.`);
+  }
+  const { response, value } = await fetchJSON(packageVersionURL(package_.name, package_.manifest.version), {
+    maximumBytes: 2 * 1024 * 1024,
+  });
+  if (response.status === 404) {
+    publishState[package_.name] = true;
+    continue;
+  }
+  if (
+    response.status !== 200
+    || value.name !== package_.name
+    || value.version !== package_.manifest.version
+    || value.dist?.integrity !== packageEvidence.integrity
+    || value.dist?.shasum !== packageEvidence.sha1
+  ) {
+    throw new Error(`${package_.name}@${package_.manifest.version} already exists with different metadata.`);
+  }
+  const result = await fetchBytes(value.dist.tarball, {
+    maximumBytes: 10 * 1024 * 1024,
+    accept: "application/octet-stream",
+  });
+  const localBytes = await readFile(join(ARTIFACTS_PATH, package_.archiveName));
+  if (result.response.status !== 200 || !localBytes.equals(result.bytes)) {
+    throw new Error(`${package_.name}@${package_.manifest.version} exists with different archive bytes.`);
+  }
+  publishState[package_.name] = false;
+}
+
+const output = `publish_state=${JSON.stringify(publishState)}\n`;
 if (typeof process.env.GITHUB_OUTPUT === "string") {
   await appendFile(process.env.GITHUB_OUTPUT, output, { mode: 0o600 });
 } else {
