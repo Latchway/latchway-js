@@ -12,10 +12,13 @@
     {"path": "frameworks/openai.ts", "kind": "framework", "source": {"file": "packages/openai/src/index.ts", "start_line": 1, "end_line": 71}},
     {"path": "frameworks/vercel-ai.ts", "kind": "framework", "source": {"file": "packages/vercel-ai/src/index.ts", "start_line": 1, "end_line": 78}},
     {"path": "frameworks/langchain.ts", "kind": "framework", "source": {"file": "packages/langchain/src/index.ts", "start_line": 1, "end_line": 103}},
-    {"path": "release-notes.md", "kind": "release_notes", "source": {"file": "CHANGELOG.md", "start_line": 1, "end_line": 70}}
+    {"path": "release-notes.md", "kind": "release_notes", "source": {"file": "CHANGELOG.md", "start_line": 1, "end_line": 79}}
   ],
   "supported_versions": [
     {"name": "@latchway/client", "version": "1.0.0", "source": {"file": "package.json", "start_line": 1, "end_line": 13}},
+    {"name": "@latchway/openai", "version": "1.0.0", "source": {"file": "packages/openai/package.json", "start_line": 1, "end_line": 4}},
+    {"name": "@latchway/vercel-ai", "version": "1.0.0", "source": {"file": "packages/vercel-ai/package.json", "start_line": 1, "end_line": 4}},
+    {"name": "@latchway/langchain", "version": "1.0.0", "source": {"file": "packages/langchain/package.json", "start_line": 1, "end_line": 4}},
     {"name": "Node.js", "version": "24.19.0", "source": {"file": "package.json", "start_line": 10, "end_line": 14}},
     {"name": "Web browser matrix", "version": "1.56.0", "source": {"file": "package.json", "start_line": 88, "end_line": 95}},
     {"name": "openai minimum", "version": "7.8.0", "source": {"file": "conformance/framework-versions.json", "start_line": 5, "end_line": 11}},
@@ -32,7 +35,10 @@
     {"file": "src/index.ts", "pattern": "(?m)^\\s{2}(?P<name>[A-Za-z][A-Za-z0-9_]*),?$"},
     {"file": "src/index.ts", "pattern": "(?m)^export (?:type )?\\{ (?P<name>[A-Za-z][A-Za-z0-9_]*)"},
     {"file": "src/index.ts", "pattern": "(?m)^export (?:type )?\\{ [A-Za-z][A-Za-z0-9_]*, (?P<name>[A-Za-z][A-Za-z0-9_]*)"},
-    {"glob": "src/*.ts", "pattern": "(?m)^export (?:const|function|class|interface|type|enum) (?P<name>[A-Za-z][A-Za-z0-9_]*)"}
+    {"glob": "src/*.ts", "pattern": "(?m)^export (?:const|function|class|interface|type|enum) (?P<name>[A-Za-z][A-Za-z0-9_]*)"},
+    {"file": "packages/openai/src/index.ts", "pattern": "(?m)^export (?:const|function|class|interface|type|enum) (?P<name>[A-Za-z][A-Za-z0-9_]*)"},
+    {"file": "packages/vercel-ai/src/index.ts", "pattern": "(?m)^export (?:const|function|class|interface|type|enum) (?P<name>[A-Za-z][A-Za-z0-9_]*)"},
+    {"file": "packages/langchain/src/index.ts", "pattern": "(?m)^export (?:const|function|class|interface|type|enum) (?P<name>[A-Za-z][A-Za-z0-9_]*)"}
   ],
   "errors": [
     {"file": "src/errors.ts", "start_line": 3, "end_line": 71, "pattern": "(?m)^\\s*\\| \\\"(?P<name>[a-z][a-z0-9_]*)\\\""}
