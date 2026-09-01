@@ -45,6 +45,7 @@ jobs:
           name: latchway-js-package-tests-${{ github.run_id }}-${{ github.run_attempt }}
           path: .artifacts/
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14
 
   pinned-core-conformance:

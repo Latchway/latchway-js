@@ -81,6 +81,15 @@ for (const [name, source] of [["ci.yml", continuousIntegration], ["release.yml",
   }
 }
 for (const required of [
+  "path: .artifacts/",
+  "if-no-files-found: error",
+  "include-hidden-files: true",
+]) {
+  if (!continuousIntegration.includes(required)) {
+    throw new Error(`ci.yml is missing the hidden evidence-upload control: ${required}`);
+  }
+}
+for (const required of [
   "profile: [minimum, latest]",
   "pnpm framework:verify-profile ${{ matrix.profile }}",
   "pnpm framework:install-profile newest-compatible",
