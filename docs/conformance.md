@@ -4,11 +4,12 @@ Unit conformance consumes the DPoP, attestation-binding, and Installation
 Family vectors from draft core contract 1.0.0. `pnpm verify:contracts` checks
 their byte hashes and the pinned manifest. Tests cover proof signatures and
 claims, non-exportable keys,
-IndexedDB cloning and failure, one-tab and multi-tab refresh races, nonce retry,
-streaming, cancellation, origin rejection, provider adapters, stable errors,
-strict CSP, contract route/method enforcement, redirect failure, non-replayable
-bodies, component/family grant validation, public-key-only child provisioning,
-and scoped component/family revocation.
+IndexedDB cloning and failure, simultaneous multi-tab first use, expired-lease
+recovery, one-tab and multi-tab refresh races, nonce retry, streaming,
+cancellation, origin rejection, provider adapters, stable errors, strict CSP,
+contract route/method enforcement, redirect failure, non-replayable bodies,
+component/family grant validation, public-key-only child provisioning, and
+scoped component/family revocation.
 
 The source-side Web release gate is a real-browser matrix, not a Node Fetch
 simulation. Playwright runs the same loopback-only conformance server under
@@ -16,7 +17,8 @@ Chromium, Firefox, and WebKit. The server verifies each ES256 proof and access
 token hash, enforces an exact origin and CORS preflight allowlist, never calls
 an AI provider, and never retains credentials in test output. Each engine must
 pass first bootstrap, non-exportable WebCrypto persistence, IndexedDB document
-restoration, streaming, cancellation, explicit and automatic refresh,
+restoration, simultaneous two-tab bootstrap onto one key/session, abandoned
+lease recovery, streaming, cancellation, explicit and automatic refresh,
 two-tab refresh leasing, origin rejection, preflight, redirect failure,
 storage-cleared recovery, strict CSP, revoked-component rejection, expired
 trust re-attestation, installation revocation, and published-shape plain ESM.

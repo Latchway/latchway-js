@@ -13,6 +13,7 @@ import {
 
 const gatewayOrigin = "http://127.0.0.1:4174";
 const applicationID = "app_01J00000000000000000000000";
+const persistenceStores = ["installations", "sessions", "leases"] as const;
 const clients = new Map<string, LatchwayClient>();
 const cspViolations: string[] = [];
 
@@ -128,7 +129,35 @@ async function inspectPersistence(databaseName: string) {
       exportRejected,
       sessionPresent: session !== undefined,
       thumbprint: typeof installation.thumbprint === "string" ? installation.thumbprint : null,
+      sessionGeneration: isRecord(session) && typeof session.generation === "number" ? session.generation : null,
+      sessionJkt: isRecord(session) && isRecord(session.installation) &&
+          typeof session.installation.dpop_jkt === "string"
+        ? session.installation.dpop_jkt
+        : null,
     };
+  } finally {
+    database.close();
+  }
+}
+
+async function abandonMutationLease(databaseName: string, lifetimeMilliseconds: number) {
+  if (!Number.isSafeInteger(lifetimeMilliseconds) || lifetimeMilliseconds < 100 || lifetimeMilliseconds > 5_000) {
+    throw new Error("The abandoned lease lifetime is outside the test bound.");
+  }
+  const database = await openDatabase(databaseName);
+  const expiresAt = Date.now() + lifetimeMilliseconds;
+  try {
+    await writeStore(database, "leases", { owner: "abandoned-browser-page", expiresAt });
+    return { expiresAt };
+  } finally {
+    database.close();
+  }
+}
+
+async function mutationLeasePresent(databaseName: string): Promise<boolean> {
+  const database = await openDatabase(databaseName);
+  try {
+    return await readStore(database, "leases") !== undefined;
   } finally {
     database.close();
   }
@@ -182,18 +211,36 @@ function safeError(error: unknown) {
 async function openDatabase(databaseName: string): Promise<IDBDatabase> {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName, 1);
+    request.onupgradeneeded = () => {
+      for (const name of persistenceStores) {
+        if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name);
+      }
+    };
     request.onsuccess = () => { resolve(request.result); };
     request.onerror = () => { reject(request.error ?? new Error("IndexedDB open failed.")); };
   });
 }
 
 async function readStore(database: IDBDatabase, name: string): Promise<unknown> {
-  const scope = `${gatewayOrigin}|${applicationID}|development|web`;
   return new Promise<unknown>((resolve, reject) => {
-    const request = database.transaction(name, "readonly").objectStore(name).get(scope);
+    const request = database.transaction(name, "readonly").objectStore(name).get(persistenceScope());
     request.onsuccess = () => { resolve(request.result as unknown); };
     request.onerror = () => { reject(request.error ?? new Error("IndexedDB read failed.")); };
   });
+}
+
+async function writeStore(database: IDBDatabase, name: string, value: unknown): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(name, "readwrite");
+    transaction.objectStore(name).put(value, persistenceScope());
+    transaction.oncomplete = () => { resolve(); };
+    transaction.onerror = () => { reject(transaction.error ?? new Error("IndexedDB write failed.")); };
+    transaction.onabort = () => { reject(transaction.error ?? new Error("IndexedDB write aborted.")); };
+  });
+}
+
+function persistenceScope(): string {
+  return `${gatewayOrigin}|${applicationID}|development|web`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -201,12 +248,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const harness = {
+  abandonMutationLease,
   cancel,
   cspViolations: () => [...cspViolations],
   deletePersistence,
   diagnostics,
   diagnosticsError,
   inspectPersistence,
+  mutationLeasePresent,
   prepare: (databaseName: string) => { void client(databaseName); },
   quickstartFactories,
   refresh,

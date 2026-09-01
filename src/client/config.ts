@@ -116,10 +116,11 @@ function parseBaseURL(value: string, allowInsecureHTTP: boolean): URL {
   if (url.pathname !== "/") {
     throw new LatchwayError("client_configuration_invalid", "baseURL must identify the gateway origin without a path prefix.");
   }
-  if (url.protocol !== "https:" && !(allowInsecureHTTP && url.protocol === "http:")) {
+  const loopback = new Set(["localhost", "127.0.0.1", "[::1]"]).has(url.hostname);
+  if (url.protocol !== "https:" && !(allowInsecureHTTP && loopback && url.protocol === "http:")) {
     throw new LatchwayError(
       "client_configuration_invalid",
-      "baseURL must use HTTPS. Local conformance may opt into HTTP with allowInsecureHTTP.",
+      "baseURL must use HTTPS. Local conformance may opt into exact loopback HTTP with allowInsecureHTTP.",
     );
   }
   return new URL(url.origin);

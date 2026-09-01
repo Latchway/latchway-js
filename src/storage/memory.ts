@@ -37,14 +37,14 @@ export class MemoryStateStore implements StateStore {
     delete this.state.session;
   }
 
-  async tryAcquireRefreshLease(owner: string, expiresAt: number): Promise<boolean> {
+  async tryAcquireMutationLease(owner: string, expiresAt: number): Promise<boolean> {
     const lease = this.state.lease;
     if (lease !== undefined && lease.expiresAt > Date.now() && lease.owner !== owner) return false;
     this.state.lease = { owner, expiresAt };
     return true;
   }
 
-  async releaseRefreshLease(owner: string): Promise<void> {
+  async releaseMutationLease(owner: string): Promise<void> {
     if (this.state.lease?.owner === owner) delete this.state.lease;
   }
 }

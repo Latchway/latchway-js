@@ -46,7 +46,7 @@ export class IndexedDBStateStore implements StateStore {
     await this.delete(sessions);
   }
 
-  async tryAcquireRefreshLease(owner: string, expiresAt: number): Promise<boolean> {
+  async tryAcquireMutationLease(owner: string, expiresAt: number): Promise<boolean> {
     const database = await this.database();
     return new Promise<boolean>((resolve, reject) => {
       const transaction = database.transaction(leases, "readwrite");
@@ -67,7 +67,7 @@ export class IndexedDBStateStore implements StateStore {
     });
   }
 
-  async releaseRefreshLease(owner: string): Promise<void> {
+  async releaseMutationLease(owner: string): Promise<void> {
     const database = await this.database();
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(leases, "readwrite");

@@ -35,9 +35,9 @@ signal remains connected. A streaming request body is not replayed if a nonce
 or session rotation is required; it fails with
 `transport_request_not_replayable`.
 
-In a browser worker, IndexedDB storage is origin-scoped and can participate in
-the same refresh lease as pages using the same client scope. This is web key
-possession, not a claim of native app or device attestation. An independently
-configured Installation Family component needs its own key and one-time
-component bootstrap flow; do not copy a root private key or rotating refresh
-token into a worker.
+In a browser worker, IndexedDB storage is origin-scoped and participates in the
+same renewable key/session mutation lease as pages using the same client scope.
+This is web key possession, not a claim of native app or device attestation. An
+independently configured Installation Family component needs its own key and
+one-time component bootstrap flow; do not copy a root private key or rotating
+refresh token into a worker.

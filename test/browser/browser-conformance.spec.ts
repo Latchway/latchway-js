@@ -42,6 +42,16 @@ interface SafeErrorResult {
   documentationURL: string | null;
 }
 
+interface PersistenceInspection {
+  privateKeyExtractable: boolean;
+  privateKeyUsages: string[];
+  exportRejected: boolean;
+  sessionPresent: boolean;
+  thumbprint: string | null;
+  sessionGeneration: number | null;
+  sessionJkt: string | null;
+}
+
 test.beforeEach(async ({ request }) => {
   const response = await request.post(`${gatewayOrigin}/__control/reset`);
   expect(response.ok()).toBe(true);
@@ -89,13 +99,7 @@ test("bootstraps once, persists a non-exportable WebCrypto key, restores Indexed
     keyPersistence: "indexeddb",
     sessionPersistence: "indexeddb",
   });
-  const persisted = await invoke<{
-    privateKeyExtractable: boolean;
-    privateKeyUsages: string[];
-    exportRejected: boolean;
-    sessionPresent: boolean;
-    thumbprint: string | null;
-  }>(page, "inspectPersistence", [databaseName]);
+  const persisted = await invoke<PersistenceInspection>(page, "inspectPersistence", [databaseName]);
   expect(persisted).toMatchObject({
     privateKeyExtractable: false,
     privateKeyUsages: ["sign"],
@@ -112,6 +116,67 @@ test("bootstraps once, persists a non-exportable WebCrypto key, restores Indexed
   expect(server.counters.challenges).toBe(1);
   expect(server.counters.exchanges).toBe(1);
   expect(server.challengeJkts).toEqual([persisted.thumbprint]);
+});
+
+test("coordinates simultaneous first use onto one persisted key and session", async ({
+  context,
+  page,
+  request,
+}, testInfo) => {
+  const databaseName = testDatabase(testInfo.project.name, "simultaneous-bootstrap");
+  await setMode(request, { challengeDelayMilliseconds: 125 });
+  await openHarness(page);
+  const secondPage = await context.newPage();
+  await openHarness(secondPage);
+
+  await Promise.all([
+    invoke<SafeDiagnostics>(page, "diagnostics", [databaseName]),
+    invoke<SafeDiagnostics>(secondPage, "diagnostics", [databaseName]),
+  ]);
+
+  const firstPersistence = await invoke<PersistenceInspection>(page, "inspectPersistence", [databaseName]);
+  const secondPersistence = await invoke<PersistenceInspection>(secondPage, "inspectPersistence", [databaseName]);
+  expect(firstPersistence).toEqual(secondPersistence);
+  expect(firstPersistence).toMatchObject({
+    sessionPresent: true,
+    sessionGeneration: 1,
+    sessionJkt: firstPersistence.thumbprint,
+  });
+  const server = await serverState(request);
+  expect(server.counters.challenges).toBe(1);
+  expect(server.counters.exchanges).toBe(1);
+  expect(server.challengeJkts).toEqual([firstPersistence.thumbprint]);
+
+  await page.close();
+  await secondPage.close();
+  const restoredPage = await context.newPage();
+  await openHarness(restoredPage);
+  await invoke<SafeDiagnostics>(restoredPage, "diagnostics", [databaseName]);
+  expect(await invoke<PersistenceInspection>(restoredPage, "inspectPersistence", [databaseName]))
+    .toEqual(firstPersistence);
+  const restoredServer = await serverState(request);
+  expect(restoredServer.counters.challenges).toBe(1);
+  expect(restoredServer.counters.exchanges).toBe(1);
+});
+
+test("recovers after the browser page holding a mutation lease disappears", async ({
+  context,
+  page,
+  request,
+}, testInfo) => {
+  const databaseName = testDatabase(testInfo.project.name, "abandoned-lease");
+  await openHarness(page);
+  const abandoned = await invoke<{ expiresAt: number }>(page, "abandonMutationLease", [databaseName, 300]);
+  await page.close();
+
+  const recoveredPage = await context.newPage();
+  await openHarness(recoveredPage);
+  await invoke<SafeDiagnostics>(recoveredPage, "diagnostics", [databaseName]);
+  expect(Date.now()).toBeGreaterThanOrEqual(abandoned.expiresAt);
+  expect(await invoke<boolean>(recoveredPage, "mutationLeasePresent", [databaseName])).toBe(false);
+  const server = await serverState(request);
+  expect(server.counters.challenges).toBe(1);
+  expect(server.counters.exchanges).toBe(1);
 });
 
 test("performs an exact CORS preflight and preserves streamed response chunks", async ({ page, request }, testInfo) => {

@@ -22,12 +22,12 @@ export interface StoredSession {
 export interface StateStore {
   readonly persistenceKind: "indexeddb" | "memory";
   readonly supportsSharedLease: boolean;
-  loadInstallation(): Promise<InstallationKeyRecord | undefined>;
+  loadInstallation(): Promise<unknown>;
   saveInstallation(value: InstallationKeyRecord): Promise<void>;
   clearInstallation(): Promise<void>;
-  loadSession(): Promise<StoredSession | undefined>;
+  loadSession(): Promise<unknown>;
   saveSession(value: StoredSession): Promise<void>;
   clearSession(): Promise<void>;
-  tryAcquireRefreshLease(owner: string, expiresAt: number): Promise<boolean>;
-  releaseRefreshLease(owner: string): Promise<void>;
+  tryAcquireMutationLease(owner: string, expiresAt: number): Promise<boolean>;
+  releaseMutationLease(owner: string): Promise<void>;
 }

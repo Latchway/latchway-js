@@ -20,7 +20,7 @@ export class AdaptiveStateStore implements StateStore {
     return this.primary?.supportsSharedLease ?? false;
   }
 
-  loadInstallation(): Promise<InstallationKeyRecord | undefined> {
+  loadInstallation(): Promise<unknown> {
     return this.run((store) => store.loadInstallation());
   }
 
@@ -32,7 +32,7 @@ export class AdaptiveStateStore implements StateStore {
     return this.run((store) => store.clearInstallation());
   }
 
-  loadSession(): Promise<StoredSession | undefined> {
+  loadSession(): Promise<unknown> {
     return this.run((store) => store.loadSession());
   }
 
@@ -44,12 +44,12 @@ export class AdaptiveStateStore implements StateStore {
     return this.run((store) => store.clearSession());
   }
 
-  tryAcquireRefreshLease(owner: string, expiresAt: number): Promise<boolean> {
-    return this.run((store) => store.tryAcquireRefreshLease(owner, expiresAt));
+  tryAcquireMutationLease(owner: string, expiresAt: number): Promise<boolean> {
+    return this.run((store) => store.tryAcquireMutationLease(owner, expiresAt));
   }
 
-  releaseRefreshLease(owner: string): Promise<void> {
-    return this.run((store) => store.releaseRefreshLease(owner));
+  releaseMutationLease(owner: string): Promise<void> {
+    return this.run((store) => store.releaseMutationLease(owner));
   }
 
   private async run<T>(operation: (store: StateStore) => Promise<T>): Promise<T> {

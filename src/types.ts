@@ -84,6 +84,7 @@ export interface LatchwayOptions {
   installation?: Partial<InstallationMetadata>;
   persistence?: PersistenceOptions;
   fetch?: FetchImplementation;
+  /** Allows HTTP only on localhost, 127.0.0.1, or [::1] for local conformance. */
   allowInsecureHTTP?: boolean;
 }
 

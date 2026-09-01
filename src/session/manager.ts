@@ -16,7 +16,12 @@ import { PROTOCOL_VERSION, SDK_KIND, SDK_VERSION } from "../version.js";
 import { isRecord, parseSessionChallenge, parseSessionGrant, type SessionGrant } from "./wire.js";
 
 const refreshLeewayMilliseconds = 30_000;
-const refreshLeaseMilliseconds = 10_000;
+const mutationLeaseMilliseconds = 10_000;
+const mutationLeaseRenewalMilliseconds = 3_000;
+
+interface MutationLease {
+  renew(): Promise<void>;
+}
 
 export interface SessionManagerOptions {
   baseURL: URL;
@@ -49,24 +54,33 @@ export class SessionManager {
   }
 
   async key(): Promise<InstallationKeyRecord> {
-    this.keyPromise ??= this.loadOrCreateKey();
-    return this.keyPromise;
+    const existing = this.keyPromise;
+    if (existing !== undefined) return existing;
+    const pending = this.withMutationLease((lease) => this.loadOrCreateKeyUnderLease(lease));
+    this.keyPromise = pending;
+    try {
+      return await pending;
+    } catch (error) {
+      if (this.keyPromise === pending) this.keyPromise = undefined;
+      throw error;
+    }
   }
 
   async session(): Promise<StoredSession> {
-    this.sessionPromise ??= this.loadOrCreateSession().finally(() => {
-      this.sessionPromise = undefined;
-    });
-    return this.sessionPromise;
+    const existing = this.sessionPromise;
+    if (existing !== undefined) return existing;
+    const pending = this.withMutationLease((lease) => this.loadOrCreateSessionUnderLease(lease));
+    this.sessionPromise = pending;
+    try {
+      return await pending;
+    } finally {
+      if (this.sessionPromise === pending) this.sessionPromise = undefined;
+    }
   }
 
   async refresh(): Promise<StoredSession> {
-    const existing = await this.options.store.loadSession();
-    if (existing === undefined || existing.refreshExpiresAt <= this.now()) {
-      await this.options.store.clearSession();
-      return this.session();
-    }
-    return this.refreshCoordinated(existing, true);
+    const observed = await this.options.store.loadSession();
+    return this.withMutationLease((lease) => this.refreshUnderLease(lease, observed));
   }
 
   async proof(method: string, url: string | URL, accessToken?: string): Promise<string> {
@@ -86,38 +100,58 @@ export class SessionManager {
   }
 
   async clearSession(): Promise<void> {
-    await this.options.store.clearSession();
+    await this.withMutationLease(async (lease) => {
+      await lease.renew();
+      await this.options.store.clearSession();
+      this.sessionPromise = undefined;
+    });
   }
 
   async clearInstallation(): Promise<void> {
-    await Promise.all([this.options.store.clearSession(), this.options.store.clearInstallation()]);
-    this.keyPromise = undefined;
-    this.nonce = undefined;
+    await this.withMutationLease(async (lease) => {
+      await lease.renew();
+      await Promise.all([this.options.store.clearSession(), this.options.store.clearInstallation()]);
+      this.keyPromise = undefined;
+      this.sessionPromise = undefined;
+      this.nonce = undefined;
+    });
   }
 
-  private async loadOrCreateKey(): Promise<InstallationKeyRecord> {
+  private async loadOrCreateKeyUnderLease(lease: MutationLease): Promise<InstallationKeyRecord> {
     const existing = await this.options.store.loadInstallation();
-    if (existing !== undefined && await this.isValidStoredKey(existing)) return existing;
+    if (existing !== undefined && await this.isValidStoredKey(existing)) {
+      const restored = existing as InstallationKeyRecord;
+      this.keyPromise = Promise.resolve(restored);
+      return restored;
+    }
+    this.keyPromise = undefined;
     if (existing !== undefined) {
+      await lease.renew();
       await Promise.all([this.options.store.clearInstallation(), this.options.store.clearSession()]);
     }
     const created = await generateInstallationKey(this.options.runtimeCrypto);
+    await lease.renew();
     await this.options.store.saveInstallation(created);
+    this.keyPromise = Promise.resolve(created);
     return created;
   }
 
-  private async loadOrCreateSession(): Promise<StoredSession> {
+  private async loadOrCreateSessionUnderLease(lease: MutationLease): Promise<StoredSession> {
+    const key = await this.loadOrCreateKeyUnderLease(lease);
     const existing = await this.options.store.loadSession();
-    const key = existing === undefined ? undefined : await this.key();
-    if (existing !== undefined && key !== undefined && isValidStoredSession(existing, key.thumbprint, this.options.platform)) {
+    if (existing !== undefined && isValidStoredSession(existing, key.thumbprint, this.options.platform)) {
       this.clockOffsetMilliseconds = existing.clockOffsetMilliseconds;
       if (existing.accessExpiresAt > this.now() + refreshLeewayMilliseconds) return existing;
-      if (existing.refreshExpiresAt > this.now()) return this.refreshCoordinated(existing, false);
+      if (existing.refreshExpiresAt > this.now()) {
+        return this.refreshStoredSessionUnderLease(existing, key, lease);
+      }
+      await lease.renew();
       await this.options.store.clearSession();
     } else if (existing !== undefined) {
+      await lease.renew();
       await this.options.store.clearSession();
     }
-    return this.establish();
+    return this.establishUnderLease(1, key, lease);
   }
 
   private async isValidStoredKey(candidate: unknown): Promise<boolean> {
@@ -146,49 +180,47 @@ export class SessionManager {
     );
   }
 
-  private async refreshCoordinated(initial: StoredSession, force: boolean): Promise<StoredSession> {
-    const owner = randomID(this.options.runtimeCrypto);
-    let deadline = Date.now() + refreshLeaseMilliseconds;
-    for (;;) {
-      const acquired = await this.options.store.tryAcquireRefreshLease(owner, deadline);
-      if (acquired) break;
-      await delay(75);
-      const current = await this.options.store.loadSession();
-      if (current !== undefined && current.generation > initial.generation &&
-          current.accessExpiresAt > this.now() + (force ? 0 : refreshLeewayMilliseconds)) {
-        this.clockOffsetMilliseconds = current.clockOffsetMilliseconds;
-        return current;
+  private async refreshUnderLease(lease: MutationLease, observed: unknown): Promise<StoredSession> {
+    const key = await this.loadOrCreateKeyUnderLease(lease);
+    const current = await this.options.store.loadSession();
+    if (current !== undefined && isValidStoredSession(current, key.thumbprint, this.options.platform)) {
+      this.clockOffsetMilliseconds = current.clockOffsetMilliseconds;
+      if (persistedSessionChanged(observed, current) && current.accessExpiresAt > this.now()) return current;
+      if (current.refreshExpiresAt > this.now()) {
+        return this.refreshStoredSessionUnderLease(current, key, lease);
       }
-      if (Date.now() >= deadline) deadline = Date.now() + refreshLeaseMilliseconds;
+      await lease.renew();
+      await this.options.store.clearSession();
+    } else if (current !== undefined) {
+      await lease.renew();
+      await this.options.store.clearSession();
     }
+    return this.establishUnderLease(1, key, lease);
+  }
 
+  private async refreshStoredSessionUnderLease(
+    existing: StoredSession,
+    key: InstallationKeyRecord,
+    lease: MutationLease,
+  ): Promise<StoredSession> {
     try {
-      const current = await this.options.store.loadSession();
-      if (current === undefined || current.refreshExpiresAt <= this.now()) {
-        return this.establish(initial.generation + 1);
+      return await this.performRefreshUnderLease(existing, key, lease);
+    } catch (error) {
+      if (error instanceof LatchwayError && new Set([
+        "identity_reauthentication_required", "attestation_required", "attestation_stale",
+        "attestation_step_up_required",
+      ]).has(error.code)) {
+        return this.establishUnderLease(existing.generation + 1, key, lease);
       }
-      if (current.generation > initial.generation && current.accessExpiresAt > this.now()) {
-        this.clockOffsetMilliseconds = current.clockOffsetMilliseconds;
-        return current;
-      }
-      try {
-        return await this.performRefresh(current);
-      } catch (error) {
-        if (error instanceof LatchwayError && new Set([
-          "identity_reauthentication_required", "attestation_required", "attestation_stale",
-          "attestation_step_up_required",
-        ]).has(error.code)) {
-          return this.establish(current.generation + 1);
-        }
-        throw error;
-      }
-    } finally {
-      await this.options.store.releaseRefreshLease(owner);
+      throw error;
     }
   }
 
-  private async establish(generation = 1): Promise<StoredSession> {
-    const key = await this.key();
+  private async establishUnderLease(
+    generation: number,
+    key: InstallationKeyRecord,
+    lease: MutationLease,
+  ): Promise<StoredSession> {
     const identityToken = await this.identityToken();
     const challengeURL = this.endpoint(clientPaths.createSessionChallenge);
     const challengeResponse = await this.sendDPoPJSON(challengeURL, "POST", {
@@ -237,16 +269,30 @@ export class SessionManager {
         ...(this.options.installation.deviceModel === undefined ? {} : { device_model: this.options.installation.deviceModel }),
       },
     });
-    return this.persistGrant(parseSessionGrant(await parseJSON(exchangeResponse)), generation);
+    return this.persistGrantUnderLease(
+      parseSessionGrant(await parseJSON(exchangeResponse)),
+      generation,
+      key,
+      lease,
+    );
   }
 
-  private async performRefresh(existing: StoredSession): Promise<StoredSession> {
+  private async performRefreshUnderLease(
+    existing: StoredSession,
+    key: InstallationKeyRecord,
+    lease: MutationLease,
+  ): Promise<StoredSession> {
     const refreshURL = this.endpoint(clientPaths.refreshSession);
     try {
       const response = await this.sendDPoPJSON(refreshURL, "POST", {
         refresh_token: existing.refreshToken,
       });
-      return this.persistGrant(parseSessionGrant(await parseJSON(response)), existing.generation + 1);
+      return this.persistGrantUnderLease(
+        parseSessionGrant(await parseJSON(response)),
+        existing.generation + 1,
+        key,
+        lease,
+      );
     } catch (error) {
       if (error instanceof LatchwayError && new Set([
         "identity_reauthentication_required", "attestation_required", "attestation_stale",
@@ -254,14 +300,19 @@ export class SessionManager {
         "installation_family_revoked", "component_revoked", "component_key_replaced",
         "component_delegation_expired", "component_parent_trust_expired",
       ]).has(error.code)) {
+        await lease.renew();
         await this.options.store.clearSession();
       }
       throw error;
     }
   }
 
-  private async persistGrant(grant: SessionGrant, generation: number): Promise<StoredSession> {
-    const key = await this.key();
+  private async persistGrantUnderLease(
+    grant: SessionGrant,
+    generation: number,
+    key: InstallationKeyRecord,
+    lease: MutationLease,
+  ): Promise<StoredSession> {
     if (grant.installation.dpop_jkt !== key.thumbprint || grant.installation.platform !== this.options.platform ||
         grant.installation.status !== "active") {
       throw new LatchwayError("protocol_response_invalid", "The session grant is not bound to this installation key and platform.");
@@ -287,8 +338,73 @@ export class SessionManager {
       generation,
       clockOffsetMilliseconds: this.clockOffsetMilliseconds,
     };
+    await lease.renew();
     await this.options.store.saveSession(stored);
     return stored;
+  }
+
+  private async withMutationLease<T>(operation: (lease: MutationLease) => Promise<T>): Promise<T> {
+    const owner = randomID(this.options.runtimeCrypto);
+    for (;;) {
+      const acquired = await this.options.store.tryAcquireMutationLease(
+        owner,
+        Date.now() + mutationLeaseMilliseconds,
+      );
+      if (acquired) break;
+      await delay(75);
+    }
+
+    let stopped = false;
+    let renewalTimer: ReturnType<typeof setTimeout> | undefined;
+    let renewal: Promise<void> | undefined;
+    const renew = async (): Promise<void> => {
+      const acquired = await this.options.store.tryAcquireMutationLease(
+        owner,
+        Date.now() + mutationLeaseMilliseconds,
+      );
+      if (!acquired) {
+        throw new LatchwayError(
+          "storage_unavailable",
+          "The shared browser state mutation lease was lost before the operation completed.",
+        );
+      }
+    };
+    const scheduleRenewal = (): void => {
+      if (stopped || !this.options.store.supportsSharedLease) return;
+      renewalTimer = setTimeout(() => {
+        if (stopped) return;
+        renewal = renew()
+          .catch(() => {})
+          .finally(() => {
+            renewal = undefined;
+            scheduleRenewal();
+          });
+      }, mutationLeaseRenewalMilliseconds);
+    };
+    scheduleRenewal();
+
+    let completed = false;
+    let result: T | undefined;
+    let operationFailure: unknown;
+    try {
+      result = await operation({ renew });
+      await renew();
+      completed = true;
+    } catch (error) {
+      operationFailure = error;
+    }
+    stopped = true;
+    if (renewalTimer !== undefined) clearTimeout(renewalTimer);
+    if (renewal !== undefined) await renewal;
+    let releaseFailure: unknown;
+    try {
+      await this.options.store.releaseMutationLease(owner);
+    } catch (error) {
+      releaseFailure = error;
+    }
+    if (!completed) throw operationFailure;
+    if (releaseFailure !== undefined) throw releaseFailure;
+    return result as T;
   }
 
   private async sendDPoPJSON(url: URL, method: string, body: Readonly<Record<string, unknown>>): Promise<Response> {
@@ -422,6 +538,12 @@ function isValidStoredSession(value: unknown, thumbprint: string, platform: Plat
     }
   }
   return true;
+}
+
+function persistedSessionChanged(observed: unknown, current: StoredSession): boolean {
+  return !isRecord(observed) || observed.generation !== current.generation ||
+    observed.accessToken !== current.accessToken || observed.refreshToken !== current.refreshToken ||
+    !isRecord(observed.installation) || observed.installation.dpop_jkt !== current.installation.dpop_jkt;
 }
 
 function delay(milliseconds: number): Promise<void> {

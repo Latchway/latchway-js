@@ -6,6 +6,7 @@ import { createNodeLatchwayClient } from "../src/node.js";
 import type { LatchwayClient, LatchwayFetchInit, LatchwayOptions, Platform } from "../src/types.js";
 import { base64urlDecode, decodeUTF8 } from "../src/encoding.js";
 import { jwkThumbprint, type P256PublicJWK } from "../src/dpop/key.js";
+import { IndexedDBStateStore } from "../src/storage/indexeddb.js";
 
 const identityToken = "identity-token-0123456789";
 
@@ -116,7 +117,7 @@ describe("Latchway fetch client", () => {
 
   it("fails closed when a custom fetch reports a followed or cross-origin redirect", async () => {
     for (const destination of [
-      { redirected: true, url: "http://gateway.example.test/v1/responses" },
+      { redirected: true, url: "http://127.0.0.1/v1/responses" },
       { redirected: false, url: "https://other.example/v1/responses" },
     ]) {
       const gateway = new MockGateway();
@@ -418,6 +419,94 @@ describe("Latchway fetch client", () => {
     expect(gateway.challengeCalls).toBe(0);
   });
 
+  it("allows insecure HTTP only for exact loopback hosts", () => {
+    const gateway = new MockGateway();
+    for (const baseURL of [
+      "http://localhost:8080",
+      "http://LOCALHOST:8080",
+      "http://127.0.0.1:8080",
+      "http://[::1]:8080",
+    ]) {
+      expect(createLatchwayClient({
+        ...baseOptions(gateway),
+        baseURL,
+        persistence: { mode: "memory" },
+        attestationProviders: [debugProvider()],
+      }).gatewayURL).toBe(new URL(baseURL).origin);
+    }
+    for (const baseURL of [
+      "http://gateway.example.test",
+      "http://192.168.1.10:8080",
+      "http://127.0.0.2:8080",
+      "http://0.0.0.0:8080",
+      "http://[::]:8080",
+      "http://localhost.:8080",
+    ]) {
+      expect(() => createLatchwayClient({
+        ...baseOptions(gateway),
+        baseURL,
+        persistence: { mode: "memory" },
+        attestationProviders: [debugProvider()],
+      })).toThrow(expect.objectContaining({ code: "client_configuration_invalid" }));
+    }
+    expect(() => createLatchwayClient({
+      ...baseOptions(gateway),
+      baseURL: "https://gateway.example.test",
+      allowInsecureHTTP: false,
+      persistence: { mode: "memory" },
+      attestationProviders: [debugProvider()],
+    })).not.toThrow();
+    expect(gateway.challengeCalls).toBe(0);
+  });
+
+  it("coordinates simultaneous IndexedDB first use onto one key and session", async () => {
+    vi.stubGlobal("indexedDB", new IDBFactory());
+    const gateway = new MockGateway();
+    gateway.challengeDelayMilliseconds = 75;
+    const databaseName = `latchway-test-${crypto.randomUUID()}`;
+    const first = makeBrowserClient(gateway, { mode: "required", databaseName });
+    const second = makeBrowserClient(gateway, { mode: "required", databaseName });
+
+    await Promise.all([
+      first.fetch("/v1/responses", { method: "POST", body: "{}", latchwayFeature: "assistant" }),
+      second.fetch("/v1/responses", { method: "POST", body: "{}", latchwayFeature: "assistant" }),
+    ]);
+
+    expect(gateway.challengeCalls).toBe(1);
+    expect(gateway.exchangeCalls).toBe(1);
+    expect(new Set(gateway.protectedAuthorizations).size).toBe(1);
+    const proofThumbprints = await Promise.all(gateway.protectedProofs.map(async (proof) =>
+      jwkThumbprint(globalThis.crypto, decodeHeader(proof).jwk)));
+    expect(new Set(proofThumbprints).size).toBe(1);
+
+    const restored = makeBrowserClient(gateway, { mode: "required", databaseName });
+    await restored.fetch("/v1/responses", { method: "POST", body: "{}", latchwayFeature: "assistant" });
+    expect(gateway.challengeCalls).toBe(1);
+    expect(gateway.exchangeCalls).toBe(1);
+    expect(new Set(gateway.protectedAuthorizations).size).toBe(1);
+  });
+
+  it("recovers an owner-safe IndexedDB mutation lease after expiry", async () => {
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const factory = new IDBFactory();
+    const databaseName = `latchway-lease-${crypto.randomUUID()}`;
+    const scope = "scope";
+    const first = new IndexedDBStateStore(factory, databaseName, scope);
+    const second = new IndexedDBStateStore(factory, databaseName, scope);
+    const third = new IndexedDBStateStore(factory, databaseName, scope);
+
+    await expect(first.tryAcquireMutationLease("owner-a", now + 100)).resolves.toBe(true);
+    await expect(second.tryAcquireMutationLease("owner-b", now + 100)).resolves.toBe(false);
+    now += 101;
+    await expect(second.tryAcquireMutationLease("owner-b", now + 1_000)).resolves.toBe(true);
+    await first.releaseMutationLease("owner-a");
+    await expect(third.tryAcquireMutationLease("owner-c", now + 1_000)).resolves.toBe(false);
+    await second.releaseMutationLease("owner-b");
+    await expect(third.tryAcquireMutationLease("owner-c", now + 1_000)).resolves.toBe(true);
+    await third.releaseMutationLease("owner-c");
+  });
+
   it("coordinates refresh-token rotation between IndexedDB-backed tabs", async () => {
     let now = Date.now();
     vi.spyOn(Date, "now").mockImplementation(() => now);
@@ -537,7 +626,7 @@ describe("Latchway fetch client", () => {
     const client = makeBrowserClient(new MockGateway(), { mode: "memory" });
     await expect(client.authorize(new Request("https://other.example/v1/responses"), "assistant"))
       .rejects.toBeInstanceOf(LatchwayError);
-    const request = new Request("http://gateway.example.test/v1/responses", { method: "POST", body: "{}" });
+    const request = new Request("http://127.0.0.1/v1/responses", { method: "POST", body: "{}" });
     await request.text();
     await expect(client.authorize(request, "assistant")).rejects.toMatchObject({
       code: "transport_request_not_replayable",
@@ -557,7 +646,7 @@ function makeBrowserClient(gateway: MockGateway, persistence: NonNullable<Latchw
 
 function baseOptions(gateway: MockGateway): Omit<LatchwayOptions, "attestationProviders"> {
   return {
-    baseURL: "http://gateway.example.test",
+    baseURL: "http://127.0.0.1",
     applicationID: "app_01J00000000000000000000000",
     environment: "test",
     identityProvider: "custom_jwt",
@@ -604,12 +693,14 @@ class MockGateway {
   revokedComponents: string[] = [];
   lastProtectedHeaders: Headers | undefined;
   protectedProofs: string[] = [];
+  protectedAuthorizations: string[] = [];
   protectedResponseDestination: { redirected: boolean; url: string } | undefined;
   platform: Platform = "web";
   private jkt = "";
   private nonceIssued = false;
   private sessionExpirationIssued = false;
   private generation = 0;
+  challengeDelayMilliseconds = 0;
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -618,6 +709,9 @@ class MockGateway {
     const url = new URL(request.url);
     if (url.pathname === "/client/v1/session-challenges") {
       this.challengeCalls += 1;
+      if (this.challengeDelayMilliseconds > 0) {
+        await new Promise((resolve) => { setTimeout(resolve, this.challengeDelayMilliseconds); });
+      }
       const challengeProof = request.headers.get("DPoP");
       expect(challengeProof).toBeTruthy();
       expect(request.headers.get("Authorization")).toBeNull();
@@ -714,6 +808,7 @@ class MockGateway {
     this.lastProtectedHeaders = new Headers(request.headers);
     const proof = request.headers.get("DPoP") ?? "";
     this.protectedProofs.push(proof);
+    this.protectedAuthorizations.push(request.headers.get("Authorization") ?? "");
     if (this.expireSessionOnce && !this.sessionExpirationIssued) {
       this.sessionExpirationIssued = true;
       return this.problem("session_expired", 401, { "DPoP-Nonce": MockGateway.nonce });

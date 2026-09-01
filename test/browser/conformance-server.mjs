@@ -66,6 +66,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 function createState() {
   return {
     mode: {
+      challengeDelayMilliseconds: 0,
       componentRevokedOnce: false,
       denyOrigin: false,
       redirectChallenge: false,
@@ -200,6 +201,10 @@ async function dispatchGateway(request, response, url, origin) {
     }
     state.counters.challenges += 1;
     state.challengeJkts.push(proof.jkt);
+    if (Number.isSafeInteger(state.mode.challengeDelayMilliseconds) &&
+        state.mode.challengeDelayMilliseconds > 0 && state.mode.challengeDelayMilliseconds <= 1_000) {
+      await delay(state.mode.challengeDelayMilliseconds);
+    }
     const challengeID = `chl_${String(state.counters.challenges).padStart(20, "a")}`;
     state.challenges.set(challengeID, proof.jkt);
     const now = Date.now();

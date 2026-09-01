@@ -122,7 +122,7 @@ export class FrameworkGatewayFixture {
 
 export function createFrameworkClient(gateway: FrameworkGatewayFixture): LatchwayClient {
   return createLatchwayClient({
-    baseURL: "http://gateway.example.test",
+    baseURL: "https://gateway.example.test",
     applicationID: "app_01J00000000000000000000000",
     environment: "test",
     identityProvider: "custom_jwt",
@@ -136,7 +136,6 @@ export function createFrameworkClient(gateway: FrameworkGatewayFixture): Latchwa
     })],
     installation: { appVersion: "1.0.0-conformance" },
     persistence: { mode: "memory" },
-    allowInsecureHTTP: true,
     fetch: gateway.fetch,
   });
 }

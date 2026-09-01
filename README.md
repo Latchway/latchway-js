@@ -99,8 +99,9 @@ persistence: { mode: "allow-memory" }
 
 This fallback creates a new installation after navigation and is reported by
 `diagnostics()`. It is not silently enabled. The SDK never uses localStorage.
-An IndexedDB lease serializes refresh-token rotation across tabs; an in-process
-single-flight handles concurrent requests in one tab.
+A renewable, crash-expiring IndexedDB lease serializes first key creation,
+session establishment, rotation, and local revocation cleanup across tabs. An
+in-process single-flight handles concurrent requests in one client instance.
 
 Browser key possession and Firebase App Check or Turnstile signals are useful
 web risk controls, not hardware-backed native application attestation. See

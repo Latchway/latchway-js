@@ -49,14 +49,16 @@ Persistent mode fails closed if IndexedDB or CryptoKey structured cloning is
 unavailable. `allow-memory` is an explicit application decision and is visible
 in diagnostics. Node conformance mode always uses a memory-only software key.
 
-Refresh is single-flight in one client. IndexedDB read/write transactions hold
-a short refresh lease across tabs. A losing tab polls the newly rotated session
-record and never submits the stale refresh token. Leases expire after a bounded
-period so crashed tabs cannot permanently block refresh. The refresh body
-contains only the rotating refresh token and is DPoP-bound to its endpoint.
-Identity reauthentication and attestation expiry or step-up clear the old
-session and start a fresh challenge; unbound identity and attestation material
-is never sent to the refresh endpoint.
+Session work is single-flight in one client. A renewable IndexedDB mutation
+lease serializes first key creation, session establishment, refresh, and local
+revocation cleanup across tabs. A losing tab re-reads the committed key and
+session under the lease, so it neither overwrites first-use state nor submits a
+stale refresh token. Every persisted mutation revalidates lease ownership.
+Leases expire after a bounded period so a crashed or closed tab cannot
+permanently block the namespace. The refresh body contains only the rotating
+refresh token and is DPoP-bound to its endpoint. Identity reauthentication and
+attestation expiry or step-up clear the old session and start a fresh challenge;
+unbound identity and attestation material is never sent to the refresh endpoint.
 
 ## Installation Family and session flow
 
