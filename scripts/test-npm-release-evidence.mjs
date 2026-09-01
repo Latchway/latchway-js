@@ -247,6 +247,7 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
   assert.match(releaseJob, /test "\$\{#expected\[@\]\}" = 35/u);
   assert.match(releaseJob, /npm-release-adoption-\(client\|openai\|vercel-ai\|langchain\)/u);
   assert.equal((workflow.match(/if: needs\.github-draft\.outputs\.release_state == 'draft'/gu) ?? []).length, 2);
+  assert.doesNotMatch(releaseJob, /all\([^;\n]+\s+as\s+\$[A-Za-z_][A-Za-z0-9_]*\s*;/u);
   const reconciler = await readFile(new URL("reconcile-github-release.py", import.meta.url), "utf8");
   for (const control of [
     "repos/{repository}/immutable-releases",

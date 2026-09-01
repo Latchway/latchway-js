@@ -286,6 +286,9 @@ for (const marker of [
 if ((release.match(/if: needs\.github-draft\.outputs\.release_state == 'draft'/gu) ?? []).length !== 2) {
   throw new Error("Artifact attestations must be skipped on immutable read-only release retries.");
 }
+if (/all\([^;\n]+\s+as\s+\$[A-Za-z_][A-Za-z0-9_]*\s*;/u.test(releaseJob)) {
+  throw new Error("Release jq all(generator; condition) expressions use invalid generator bindings.");
+}
 const secretReferences = [...release.matchAll(/\$\{\{\s*secrets\.([A-Z0-9_]+)\s*\}\}/gu)]
   .map((match) => match[1]);
 if (secretReferences.length !== 2 || secretReferences.some((name) =>

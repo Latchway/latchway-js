@@ -1149,7 +1149,7 @@ jobs:
               ($allow_draft or .draft == false) and
               ((.draft == true and .immutable == false) or (.draft == false and .immutable == true)) and
               ([.assets[].name] | length) == ([.assets[].name] | unique | length) and
-              all($release.assets[].name as $name; ($fixed | index($name)) != null or
+              all($release.assets[].name; . as $name | ($fixed | index($name)) != null or
                 ($name | test("^npm-release-adoption-(client|openai|vercel-ai|langchain)-[1-9][0-9]*-[1-9][0-9]*\\.json$")))
             ' "$RUNNER_TEMP/release.json" >/dev/null
           }
@@ -1189,8 +1189,8 @@ jobs:
           validate_release true
           jq --exit-status --argjson fixed "$fixed_names" '. as $release |
             ([$release.assets[].name] - $fixed | all(test("^npm-release-adoption-(client|openai|vercel-ai|langchain)-[1-9][0-9]*-[1-9][0-9]*\\.json$"))) and
-            all($fixed[] as $name; ($release.assets | map(.name) | index($name)) != null) and
-            all(["client", "openai", "vercel-ai", "langchain"][] as $id;
+            all($fixed[]; . as $name | ($release.assets | map(.name) | index($name)) != null) and
+            all(["client", "openai", "vercel-ai", "langchain"][]; . as $id |
               any($release.assets[].name; test("^npm-release-adoption-" + $id + "-[1-9][0-9]*-[1-9][0-9]*\\.json$")))
           ' "$RUNNER_TEMP/release.json" >/dev/null
           if [[ "$(jq --raw-output .draft "$RUNNER_TEMP/release.json")" == true ]]; then
@@ -1200,8 +1200,8 @@ jobs:
           lookup_release
           validate_release false
           jq --exit-status --argjson fixed "$fixed_names" '. as $release |
-            all($fixed[] as $name; ($release.assets | map(.name) | index($name)) != null) and
-            all(["client", "openai", "vercel-ai", "langchain"][] as $id;
+            all($fixed[]; . as $name | ($release.assets | map(.name) | index($name)) != null) and
+            all(["client", "openai", "vercel-ai", "langchain"][]; . as $id |
               any($release.assets[].name; test("^npm-release-adoption-" + $id + "-[1-9][0-9]*-[1-9][0-9]*\\.json$")))
           ' "$RUNNER_TEMP/release.json" >/dev/null
 
