@@ -214,6 +214,13 @@ interactive two-factor confirmation. A foreign version, any other tag, a
 different tag target, manifest, or archive fails before the helper invokes
 either publication or tag removal.
 
+npm's public packument omits the `files` allowlist even though that field is
+present inside the published `package.json`. The helper accepts only that one
+metadata omission and only for the fixed `["LICENSE", "README.md"]` bootstrap
+allowlist. It still downloads the registry archive and requires every byte to
+match the reviewed local archive before it removes any tag, so an omitted
+packument field cannot hide a changed package or extra file.
+
 After the last create, the script fetches and revalidates the complete
 five-package registry closure and writes
 `.artifacts/npm-namespace-bootstrap/completed.json`. Absence of that record means

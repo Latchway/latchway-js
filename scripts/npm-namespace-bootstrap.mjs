@@ -750,6 +750,14 @@ function assertRegistryIdentity(packument, definition, manifest) {
     throw new Error(`${definition.name} registry version manifest is missing.`);
   }
   for (const [field, expected] of Object.entries(manifest)) {
+    if (field === "files" && versionManifest[field] === undefined &&
+        JSON.stringify(expected) === JSON.stringify(["LICENSE", "README.md"])) {
+      // npm omits the package.json files allowlist from the public packument.
+      // inspectRegistryState still requires the downloaded registry archive to
+      // be byte-identical, so the reviewed package.json and three-file closure
+      // remain the authority before any recovery mutation.
+      continue;
+    }
     if (JSON.stringify(versionManifest[field]) !== JSON.stringify(expected)) {
       throw new Error(`${definition.name} registry manifest field ${field} differs from the reviewed identity.`);
     }

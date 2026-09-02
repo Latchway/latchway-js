@@ -389,6 +389,9 @@ test("registry reconciliation removes only the exact npm first-publish latest al
   const latestNames = new Set();
   const registry = await registryFixture(output, inspection, initiallyPresent, {
     mutatePackument: (definition, packument) => {
+      if (definition.name === "@latchway/client") {
+        delete packument.versions[BOOTSTRAP_VERSION].files;
+      }
       if (latestNames.has(definition.name)) {
         packument["dist-tags"].latest = BOOTSTRAP_VERSION;
       }
@@ -520,7 +523,23 @@ test("registry reconciliation rejects foreign tags, versions, identity, and arch
     waitImplementation,
   }), /repository differs/u);
 
+  const wrongFiles = await registryFixture(output, inspection, allNames, {
+    mutatePackument: (_definition, packument) => {
+      packument.versions[BOOTSTRAP_VERSION].files = ["LICENSE", "README.md", "index.js"];
+    },
+  });
+  await assert.rejects(() => reconcileBootstrapRegistry(output, {
+    fetchImplementation: wrongFiles.fetch,
+    publish,
+    removeUnexpectedLatest,
+    sourceIdentity,
+    waitImplementation,
+  }), /manifest field files differs/u);
+
   const archive = await registryFixture(output, inspection, allNames, {
+    mutatePackument: (_definition, packument) => {
+      delete packument.versions[BOOTSTRAP_VERSION].files;
+    },
     mutateArchive: (definition, bytes) => definition.name === "@latchway/client" ?
       Buffer.concat([bytes, Buffer.from("changed")]) : bytes,
   });
