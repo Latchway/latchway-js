@@ -27,6 +27,8 @@ import {
   ARTIFACTS_PATH,
   REGISTRY_URL,
   ROOT_PATH,
+  SCOPE_REGISTRY_ARGUMENT,
+  SCOPE_REGISTRY_CONFIG,
   artifactNameForPackage,
   expectedPublishedManifest,
   fetchBytes,
@@ -105,6 +107,7 @@ for (const [index, package_] of packages.entries()) {
     "--json",
     "--include-attestations",
     `--registry=${REGISTRY_URL}`,
+    SCOPE_REGISTRY_ARGUMENT,
   ], ROOT_PATH, 2 * 1024 * 1024, `${package_.name} npm view`);
   const npmView = assertSafeRetainedOutput(npmViewBytes, `${package_.name} npm view output`, 2 * 1024 * 1024);
   assertNpmView(package_, packageEvidence, npmView);
@@ -224,7 +227,7 @@ for (const [index, package_] of packages.entries()) {
       },
     },
     registry_signature_verification: {
-      command: `npm audit signatures --json --registry=${REGISTRY_URL}`,
+      command: `npm audit signatures --json --registry=${REGISTRY_URL} ${SCOPE_REGISTRY_ARGUMENT}`,
       output: {
         file: artifactNameForPackage(package_.id, "audit-signatures"),
         ...evidenceReferences[artifactNameForPackage(package_.id, "audit-signatures")],
@@ -450,7 +453,7 @@ async function verifyCleanRegistryConsumer(package_, evidence) {
   const consumer = await mkdtemp(join(tmpdir(), `latchway-registry-consumer-${package_.id}-`));
   try {
     const npmrc = join(consumer, ".npmrc");
-    await writeFile(npmrc, `registry=${REGISTRY_URL}\naudit=false\nfund=false\nupdate-notifier=false\n`, { mode: 0o600 });
+    await writeFile(npmrc, `registry=${REGISTRY_URL}\n${SCOPE_REGISTRY_CONFIG}\naudit=false\nfund=false\nupdate-notifier=false\n`, { mode: 0o600 });
     const publishedManifest = expectedPublishedManifest(package_);
     const dependencies = { [package_.name]: package_.manifest.version };
     if (package_.id !== "client") dependencies["@latchway/client"] = package_.manifest.version;
@@ -472,6 +475,7 @@ async function verifyCleanRegistryConsumer(package_, evidence) {
       "--save-exact",
       "--engine-strict=false",
       `--registry=${REGISTRY_URL}`,
+      SCOPE_REGISTRY_ARGUMENT,
     ], consumer, `${package_.name} clean registry install`, npmrc);
     const lock = readBoundedStrictJSONFileSync(
       join(consumer, "package-lock.json"),
@@ -503,7 +507,13 @@ async function verifyCleanRegistryConsumer(package_, evidence) {
       throw new Error(`${package_.name} clean registry ESM consumer failed.`);
     }
     const auditBytes = runNpmCaptured(
-      ["audit", "signatures", "--json", `--registry=${REGISTRY_URL}`],
+      [
+        "audit",
+        "signatures",
+        "--json",
+        `--registry=${REGISTRY_URL}`,
+        SCOPE_REGISTRY_ARGUMENT,
+      ],
       consumer,
       2 * 1024 * 1024,
       `${package_.name} npm audit signatures`,
@@ -577,6 +587,8 @@ function sanitizedEnvironment(userconfig, cache) {
     const normalized = name.toLowerCase();
     return normalized !== "node_auth_token"
       && normalized !== "npm_token"
+      && normalized !== "npm_config_registry"
+      && normalized !== "npm_config_@latchway:registry"
       && !(normalized.startsWith("npm_config_") && normalized.includes("auth"));
   }));
   const isolatedConfig = userconfig ?? join(tmpdir(), "latchway-empty-release.npmrc");

@@ -48,6 +48,7 @@ if (userconfig === cache || userconfig.startsWith(`${cache}${sep}`)) {
 await mkdir(cache, { recursive: true, mode: 0o700 });
 await writeFile(userconfig, [
   "registry=https://registry.npmjs.org/",
+  "@latchway:registry=https://registry.npmjs.org/",
   "fund=false",
   "update-notifier=false",
   "",

@@ -46,9 +46,9 @@ Before the first automated release, configure these external controls:
      workflow run and attempt and expire after exactly 600 seconds.
    - `npm` contains no registry token. It protects only trusted npm publication
      and the resulting registry-evidence job; it has no environment secrets.
-   - `github-release` contains no custom credential. It protects draft mutation
-     and the final GitHub-token/OIDC release publication jobs; it has no
-     environment secrets.
+   - `github-release` contains no custom credential. It protects promotion's
+     annotated-tag mutation, draft mutation, and the final GitHub-token/OIDC
+     release publication job; it has no environment secrets.
 
    Do not duplicate an environment secret into another environment. In
    particular, the administration token must never enter the `npm` or
@@ -76,7 +76,8 @@ Before the first automated release, configure these external controls:
    release drafts; do not upload, replace, or remove draft assets manually. The
    per-commit workflow concurrency group prevents overlapping dispatches for the
    same promoted commit. The protected `github-release` environment limits who
-   may mutate the draft, while `npm` separately limits registry publication. The
+   may create the annotated tag or mutate the draft/final release, while `npm`
+   separately limits registry publication. The
    pre-publish draft gate can validate only release
    metadata and allowed asset-name shape because registry evidence does not exist
    until publication verification completes. The final no-checkout reconciler
@@ -150,8 +151,11 @@ pnpm run namespace:bootstrap --publish \
 ```
 
 Do not run that command as part of ordinary release preparation. It always
-passes `--access=public`, `--tag=bootstrap`, the public npm registry, and
-`--ignore-scripts`; it never publishes under `latest`. Before any publish, it
+passes `--access=public`, `--tag=bootstrap`, `--registry` and the explicit
+`--@latchway:registry` override for `https://registry.npmjs.org/`, and
+`--ignore-scripts`; it never publishes under `latest`. The two literal registry
+pins prevent a hostile scoped environment or user npm configuration from
+redirecting a scoped package operation. Before any publish, it
 checks every package record. An absent name is created, while an existing name
 is adopted only if its sole version, sole `bootstrap` dist-tag, manifest,
 repository identity, integrity, shasum, and downloaded tarball bytes exactly
@@ -170,11 +174,13 @@ public result independently, and keep the short-lived interactive session only
 through trusted-publisher setup and verification:
 
 ```bash
-npm view @latchway/client dist-tags versions repository --json
-npm view @latchway/openai dist-tags versions repository --json
-npm view @latchway/vercel-ai dist-tags versions repository --json
-npm view @latchway/langchain dist-tags versions repository --json
-npm view @latchway/react-native dist-tags versions repository --json
+npm_registry='https://registry.npmjs.org/'
+npm_scope_registry='--@latchway:registry=https://registry.npmjs.org/'
+npm view @latchway/client dist-tags versions repository --json --registry="$npm_registry" "$npm_scope_registry"
+npm view @latchway/openai dist-tags versions repository --json --registry="$npm_registry" "$npm_scope_registry"
+npm view @latchway/vercel-ai dist-tags versions repository --json --registry="$npm_registry" "$npm_scope_registry"
+npm view @latchway/langchain dist-tags versions repository --json --registry="$npm_registry" "$npm_scope_registry"
+npm view @latchway/react-native dist-tags versions repository --json --registry="$npm_registry" "$npm_scope_registry"
 ```
 
 Once all five records exist, use npm 11.15.0 or newer (the reviewed 11.17.0
@@ -185,11 +191,11 @@ package trusts `Latchway/latchway-react-native-sdk`. Every publisher is limited
 to environment `npm` and the publish action:
 
 ```bash
-npm trust github @latchway/client --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes
-npm trust github @latchway/openai --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes
-npm trust github @latchway/vercel-ai --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes
-npm trust github @latchway/langchain --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes
-npm trust github @latchway/react-native --repository Latchway/latchway-react-native-sdk --file release.yml --environment npm --allow-publish --yes
+npm trust github @latchway/client --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
+npm trust github @latchway/openai --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
+npm trust github @latchway/vercel-ai --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
+npm trust github @latchway/langchain --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
+npm trust github @latchway/react-native --repository Latchway/latchway-react-native-sdk --file release.yml --environment npm --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
 ```
 
 This setup requires each package record to exist and the configuring npm account
@@ -202,11 +208,11 @@ publishing; use the authenticated npm 11.15.0-or-newer CLI session.
 Verify every exact configuration, then end the short-lived interactive session:
 
 ```bash
-npm trust list @latchway/client --json
-npm trust list @latchway/openai --json
-npm trust list @latchway/vercel-ai --json
-npm trust list @latchway/langchain --json
-npm trust list @latchway/react-native --json
+npm trust list @latchway/client --json --registry="$npm_registry" "$npm_scope_registry"
+npm trust list @latchway/openai --json --registry="$npm_registry" "$npm_scope_registry"
+npm trust list @latchway/vercel-ai --json --registry="$npm_registry" "$npm_scope_registry"
+npm trust list @latchway/langchain --json --registry="$npm_registry" "$npm_scope_registry"
+npm trust list @latchway/react-native --json --registry="$npm_registry" "$npm_scope_registry"
 npm logout --registry=https://registry.npmjs.org/
 ```
 

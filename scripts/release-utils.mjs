@@ -26,6 +26,8 @@ import {
 export const ROOT_PATH = fileURLToPath(new URL("..", import.meta.url));
 export const ARTIFACTS_PATH = fileURLToPath(new URL("../.artifacts/", import.meta.url));
 export const REGISTRY_URL = "https://registry.npmjs.org/";
+export const SCOPE_REGISTRY_ARGUMENT = `--@latchway:registry=${REGISTRY_URL}`;
+export const SCOPE_REGISTRY_CONFIG = `@latchway:registry=${REGISTRY_URL}`;
 
 export const RELEASE_PACKAGE_DEFINITIONS = Object.freeze([
   Object.freeze({
@@ -313,7 +315,7 @@ export async function runReleaseSetConsumerSmoke(packageArchives, { typescript, 
     const npmrc = join(consumer, ".npmrc");
     await writeFile(
       npmrc,
-      `registry=${REGISTRY_URL}\naudit=false\nfund=false\nupdate-notifier=false\n`,
+      `registry=${REGISTRY_URL}\n${SCOPE_REGISTRY_CONFIG}\naudit=false\nfund=false\nupdate-notifier=false\n`,
       { mode: 0o600 },
     );
     const dependencies = Object.fromEntries(
@@ -342,7 +344,7 @@ export async function runReleaseSetConsumerSmoke(packageArchives, { typescript, 
       "--engine-strict=false",
     ];
     if (peerSource === "reviewed") installArguments.push("--offline", "--legacy-peer-deps");
-    else installArguments.push(`--registry=${REGISTRY_URL}`);
+    else installArguments.push(`--registry=${REGISTRY_URL}`, SCOPE_REGISTRY_ARGUMENT);
     runNpm(installArguments, consumer, npmrc);
     if (peerSource === "reviewed") await linkReviewedPeerDependencies(consumer);
 
@@ -563,6 +565,8 @@ function runNpm(arguments_, cwd, userconfig) {
     const normalized = name.toLowerCase();
     return normalized !== "node_auth_token"
       && normalized !== "npm_token"
+      && normalized !== "npm_config_registry"
+      && normalized !== "npm_config_@latchway:registry"
       && !(normalized.startsWith("npm_config_") && normalized.includes("auth"));
   }));
   environment.NPM_CONFIG_USERCONFIG = userconfig;

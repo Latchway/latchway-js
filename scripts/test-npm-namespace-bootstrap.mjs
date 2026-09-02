@@ -11,6 +11,7 @@ import {
   BOOTSTRAP_PACKAGES,
   BOOTSTRAP_NPM_VERSION,
   BOOTSTRAP_REGISTRY,
+  BOOTSTRAP_SCOPE_REGISTRY_ARGUMENT,
   BOOTSTRAP_TAG,
   BOOTSTRAP_VERSION,
   PUBLISH_CONFIRMATION,
@@ -124,9 +125,39 @@ test("bootstrap inventory and publish command fix all five inert identities", ()
     "--access=public",
     "--tag=bootstrap",
     `--registry=${BOOTSTRAP_REGISTRY}`,
+    BOOTSTRAP_SCOPE_REGISTRY_ARGUMENT,
     "--ignore-scripts",
   ]);
+  assert.equal(
+    BOOTSTRAP_SCOPE_REGISTRY_ARGUMENT,
+    `--@latchway:registry=${BOOTSTRAP_REGISTRY}`,
+  );
   assert.equal(publishArguments("archive.tgz").some((argument) => argument.includes("latest")), false);
+});
+
+test("the scoped npmjs CLI pin overrides hostile environment and user config", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "latchway-npm-bootstrap-hostile-config-"));
+  const userConfig = join(root, "npmrc");
+  await writeFile(userConfig, "@latchway:registry=https://example.invalid/\n", { mode: 0o600 });
+  context.after(async () => rm(root, { force: true, recursive: true }));
+  const environment = {
+    ...process.env,
+    NPM_CONFIG_USERCONFIG: userConfig,
+    "npm_config_@latchway:registry": "https://another.invalid/",
+  };
+  const result = spawnSync(
+    "npm",
+    [
+      "config",
+      "get",
+      "@latchway:registry",
+      `--registry=${BOOTSTRAP_REGISTRY}`,
+      BOOTSTRAP_SCOPE_REGISTRY_ARGUMENT,
+    ],
+    { cwd: ROOT_PATH, encoding: "utf8", env: environment, shell: false },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), BOOTSTRAP_REGISTRY);
 });
 
 test("CLI requires an explicit mode and exact publication confirmation", async (context) => {
@@ -392,10 +423,19 @@ test("documentation pins npm trust coordinates while release workflows exclude b
   ]) {
     assert.match(documentation, new RegExp(
       `npm trust github ${name.replace("/", "\\/")} --repository ${repository.replace("/", "\\/")} ` +
-      "--file release\\.yml --environment npm --allow-publish --yes",
+      "--file release\\.yml --environment npm --allow-publish --yes " +
+      '--registry="\\$npm_registry" "\\$npm_scope_registry"',
       "u",
     ));
   }
+  assert.match(
+    documentation,
+    /npm view @latchway\/client[^\n]+--registry="\$npm_registry" "\$npm_scope_registry"/u,
+  );
+  assert.match(
+    documentation,
+    /npm trust list @latchway\/react-native[^\n]+--registry="\$npm_registry" "\$npm_scope_registry"/u,
+  );
   assert.match(documentation, /npm 11\.15\.0 or newer/u);
   assert.doesNotMatch(documentation, /namespace:bootstrap -- --/u);
   const workflow = await readFile(join(ROOT_PATH, ".github", "workflows", "release.yml"), "utf8");

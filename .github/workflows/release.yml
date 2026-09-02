@@ -177,6 +177,7 @@ jobs:
     needs: verify-promotion
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    environment: github-release
     permissions:
       contents: write
     outputs:
@@ -186,6 +187,14 @@ jobs:
       core_tag: ${{ needs.verify-promotion.outputs.core_tag }}
       report_sha256: ${{ needs.verify-promotion.outputs.report_sha256 }}
     steps:
+      - name: Require exact github-release environment policy sentinel
+        shell: bash
+        env:
+          EXPECTED_POLICY_ID: latchway-release-controls-v1:latchway-js:github-release
+          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}
+        run: |
+          set -Eeuo pipefail
+          test "$OBSERVED_POLICY_ID" = "$EXPECTED_POLICY_ID"
       - name: Create or verify evidence-gated annotated SDK tag using fixed API calls
         shell: bash
         env:
@@ -1086,7 +1095,8 @@ jobs:
                 .settings.enabled == true and .settings.enforced_by_owner == true
               ' "$policy" >/dev/null
               "$LATCHWAY_NPM_CLI" publish "$archive" --provenance --access public \
-                --registry=https://registry.npmjs.org/
+                --registry=https://registry.npmjs.org/ \
+                --@latchway:registry=https://registry.npmjs.org/
               publish_performed=true
             fi
             publish_state=$(jq --compact-output --null-input --argjson current "$publish_state" \

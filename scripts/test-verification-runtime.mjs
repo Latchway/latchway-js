@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -28,8 +28,37 @@ test("tokenless registry runtime rejects OIDC and creates isolated npm paths", a
     });
     assert.equal(
       await readFile(environment.NPM_CONFIG_USERCONFIG, "utf8"),
-      "registry=https://registry.npmjs.org/\nfund=false\nupdate-notifier=false\n",
+      "registry=https://registry.npmjs.org/\n" +
+        "@latchway:registry=https://registry.npmjs.org/\n" +
+        "fund=false\nupdate-notifier=false\n",
     );
+
+    const hostileUserConfig = join(root, "hostile.npmrc");
+    await writeFile(
+      hostileUserConfig,
+      "registry=https://default.invalid/\n@latchway:registry=https://scope.invalid/\n",
+      { mode: 0o600 },
+    );
+    const registryResolution = spawnSync(
+      "npm",
+      [
+        "config",
+        "get",
+        "@latchway:registry",
+        "--registry=https://registry.npmjs.org/",
+        "--@latchway:registry=https://registry.npmjs.org/",
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NPM_CONFIG_USERCONFIG: hostileUserConfig,
+          "npm_config_@latchway:registry": "https://environment.invalid/",
+        },
+      },
+    );
+    assert.equal(registryResolution.status, 0, registryResolution.stderr);
+    assert.equal(registryResolution.stdout.trim(), "https://registry.npmjs.org/");
 
     const oidcRoot = await mkdtemp(join(tmpdir(), "latchway-js-verification-oidc-"));
     try {

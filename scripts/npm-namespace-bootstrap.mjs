@@ -21,6 +21,8 @@ import { TextDecoder } from "node:util";
 export const BOOTSTRAP_VERSION = "0.0.0-bootstrap.0";
 export const BOOTSTRAP_TAG = "bootstrap";
 export const BOOTSTRAP_REGISTRY = "https://registry.npmjs.org/";
+export const BOOTSTRAP_SCOPE_REGISTRY_ARGUMENT =
+  `--@latchway:registry=${BOOTSTRAP_REGISTRY}`;
 export const BOOTSTRAP_NPM_VERSION = "11.17.0";
 export const PUBLISH_CONFIRMATION = "publish-five-latchway-bootstrap-packages";
 
@@ -121,6 +123,7 @@ export function publishArguments(archive) {
     "--access=public",
     `--tag=${BOOTSTRAP_TAG}`,
     `--registry=${BOOTSTRAP_REGISTRY}`,
+    BOOTSTRAP_SCOPE_REGISTRY_ARGUMENT,
     "--ignore-scripts",
   ];
 }

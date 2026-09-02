@@ -577,6 +577,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('closure=("$root"/*)', publication)
         self.assertIn("sha512sum --check --strict", publication)
         self.assertIn('"$LATCHWAY_NPM_CLI" publish "$archive"', publication)
+        self.assertRegex(
+            publication,
+            r'"\$LATCHWAY_NPM_CLI" publish "\$archive"[^\n]*\\\n'
+            r"\s*--registry=https://registry\.npmjs\.org/ \\\n"
+            r"\s*--@latchway:registry=https://registry\.npmjs\.org/",
+        )
         for forbidden in ("npm install", "npm exec"):
             self.assertNotIn(forbidden, publication)
         self.assertNotRegex(publication, r"(?m)^\s*npx\s")
@@ -598,6 +604,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
             for index, match in enumerate(headers)
         }
         policies = {
+            "promote": (
+                "github-release",
+                "latchway-release-controls-v1:latchway-js:github-release",
+            ),
             "authorize-release": (
                 "release-administration",
                 "latchway-release-controls-v1:latchway-js:release-administration",

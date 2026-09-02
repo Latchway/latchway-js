@@ -42,7 +42,12 @@ if (typeof userconfig !== "string" || typeof runnerTemp !== "string" || runnerTe
   throw new Error("The publish job must use an isolated npm user configuration under RUNNER_TEMP.");
 }
 await mkdir(dirname(userconfig), { recursive: true });
-await writeFile(userconfig, "registry=https://registry.npmjs.org/\nprovenance=true\n", {
+await writeFile(userconfig, [
+  "registry=https://registry.npmjs.org/",
+  "@latchway:registry=https://registry.npmjs.org/",
+  "provenance=true",
+  "",
+].join("\n"), {
   flag: "wx",
   mode: 0o600,
 });

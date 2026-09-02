@@ -150,6 +150,7 @@ for (const forbidden of [
 }
 const jobHeaders = [...release.matchAll(/^ {2}([a-z0-9_-]+):$/gmu)];
 const expectedReleaseEnvironments = new Map([
+  ["promote", "github-release"],
   ["authorize-release", "release-administration"],
   ["github-draft", "github-release"],
   ["npm-publish", "npm"],
@@ -177,6 +178,7 @@ for (const [index, header] of jobHeaders.entries()) {
   }
 }
 const expectedPolicySentinels = new Map([
+  ["promote", "latchway-release-controls-v1:latchway-js:github-release"],
   ["authorize-release", "latchway-release-controls-v1:latchway-js:release-administration"],
   ["github-draft", "latchway-release-controls-v1:latchway-js:github-release"],
   ["npm-publish", "latchway-release-controls-v1:latchway-js:npm"],
@@ -389,6 +391,8 @@ for (const marker of [
   "archive_sha1=$(sha1sum \"$archive\"",
   ".sha256 == $sha256 and .sha512 == $sha512 and .integrity == $integrity",
   "\"$LATCHWAY_NPM_CLI\" publish \"$archive\"",
+  "--registry=https://registry.npmjs.org/",
+  "--@latchway:registry=https://registry.npmjs.org/",
   "package_names=('@latchway/client' '@latchway/openai' '@latchway/vercel-ai' '@latchway/langchain')",
   "publish_required=()",
   "publish_state=$(jq --compact-output",

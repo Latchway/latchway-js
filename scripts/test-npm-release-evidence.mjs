@@ -420,6 +420,23 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
     /for index in "\$\{!package_names\[@\]\}"; do/gu,
   ) ?? []).length, 2);
   assert.doesNotMatch(npmPublishJob, /npm install|npm exec/u);
+  assert.match(
+    npmPublishJob,
+    /"\$LATCHWAY_NPM_CLI" publish "\$archive" --provenance --access public \\\n+\s*--registry=https:\/\/registry\.npmjs\.org\/ \\\n+\s*--@latchway:registry=https:\/\/registry\.npmjs\.org\//u,
+  );
+  const publishedVerifier = await readFile(
+    new URL("./verify-published.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(publishedVerifier, /SCOPE_REGISTRY_ARGUMENT/u);
+  assert.match(
+    publishedVerifier,
+    /registry=\$\{REGISTRY_URL\}\\n\$\{SCOPE_REGISTRY_CONFIG\}\\naudit=false/u,
+  );
+  assert.match(
+    publishedVerifier,
+    /normalized !== "npm_config_@latchway:registry"/u,
+  );
   assert.doesNotMatch(npmPublishJob, /(?:^|\n)\s*npx\s/u);
   assert.ok(
     npmPublishJob.indexOf("sha512sum --check --strict")
@@ -552,6 +569,8 @@ test("release workflow drafts before npm and publishes GitHub only after evidenc
 test("protected release jobs fail closed on missing, wrong, late, or fallback sentinels", async () => {
   const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
   const policies = new Map([
+    ["promote", ["github-release",
+      "latchway-release-controls-v1:latchway-js:github-release"]],
     ["authorize-release", ["release-administration",
       "latchway-release-controls-v1:latchway-js:release-administration"]],
     ["github-draft", ["github-release",
