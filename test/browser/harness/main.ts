@@ -15,6 +15,10 @@ const gatewayOrigin = "http://127.0.0.1:4174";
 const applicationID = "app_01J00000000000000000000000";
 const persistenceStores = ["installations", "sessions", "leases"] as const;
 const clients = new Map<string, LatchwayClient>();
+const cancellations = new Map<string, {
+  controller: AbortController;
+  completion: Promise<ReturnType<typeof cancelledResult> | ReturnType<typeof safeErrorResult>>;
+}>();
 const cspViolations: string[] = [];
 
 document.addEventListener("securitypolicyviolation", (event) => {
@@ -56,23 +60,41 @@ async function revokeInstallation(databaseName: string): Promise<void> {
   await client(databaseName).revokeCurrentInstallation();
 }
 
-async function cancel(databaseName: string) {
-  const controller = new AbortController();
-  const pending = streamHabitAssistant(client(databaseName), "cancel", controller.signal);
-  globalThis.setTimeout(() => { controller.abort(new DOMException("cancelled by conformance", "AbortError")); }, 75);
-  try {
-    await pending;
-    return {
-      rejected: false,
-      name: null,
-      code: null,
-      requestID: null,
-      retryable: false,
-      documentationURL: null,
-    };
-  } catch (error) {
-    return { rejected: true, ...safeError(error) };
+function beginCancellation(databaseName: string): void {
+  if (cancellations.has(databaseName)) {
+    throw new Error(`A cancellation operation is already active for ${databaseName}.`);
   }
+  const controller = new AbortController();
+  const completion = streamHabitAssistant(client(databaseName), "cancel", controller.signal).then(
+    cancelledResult,
+    safeErrorResult,
+  );
+  cancellations.set(databaseName, { controller, completion });
+}
+
+async function finishCancellation(databaseName: string) {
+  const cancellation = cancellations.get(databaseName);
+  if (cancellation === undefined) {
+    throw new Error(`No cancellation operation is active for ${databaseName}.`);
+  }
+  cancellations.delete(databaseName);
+  cancellation.controller.abort(new DOMException("cancelled by conformance", "AbortError"));
+  return cancellation.completion;
+}
+
+function cancelledResult() {
+  return {
+    rejected: false,
+    name: null,
+    code: null,
+    requestID: null,
+    retryable: false,
+    documentationURL: null,
+  };
+}
+
+function safeErrorResult(error: unknown) {
+  return { rejected: true, ...safeError(error) };
 }
 
 async function diagnosticsError(databaseName: string) {
@@ -249,11 +271,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const harness = {
   abandonMutationLease,
-  cancel,
+  beginCancellation,
   cspViolations: () => [...cspViolations],
   deletePersistence,
   diagnostics,
   diagnosticsError,
+  finishCancellation,
   inspectPersistence,
   mutationLeasePresent,
   prepare: (databaseName: string) => { void client(databaseName); },

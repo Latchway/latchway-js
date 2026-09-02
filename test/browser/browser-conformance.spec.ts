@@ -203,7 +203,13 @@ test("performs an exact CORS preflight and preserves streamed response chunks", 
 test("propagates AbortSignal cancellation through a live response stream", async ({ page, request }, testInfo) => {
   const databaseName = testDatabase(testInfo.project.name, "cancellation");
   await openHarness(page);
-  const result = await invoke<SafeErrorResult>(page, "cancel", [databaseName]);
+  await invoke<unknown>(page, "beginCancellation", [databaseName]);
+  let result: SafeErrorResult | undefined;
+  try {
+    await expect.poll(async () => (await serverState(request)).counters.streamChunks).toBe(1);
+  } finally {
+    result = await invoke<SafeErrorResult>(page, "finishCancellation", [databaseName]);
+  }
   expect(result).toMatchObject({ rejected: true, name: "AbortError" });
   await expect.poll(async () => (await serverState(request)).counters.streamCancellations).toBe(1);
 });
