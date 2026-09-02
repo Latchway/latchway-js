@@ -54,6 +54,21 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe.each<JavaScriptFrameworkID>(["openai-js", "vercel-ai-sdk", "langchain-js"])(
+  "common framework logger safety: %s",
+  (framework) => {
+    it("[FW-BEH-107] keeps session and identity sentinels out of framework console output", async () => {
+      const output = captureConsoleOutput();
+      const gateway = new FrameworkGatewayFixture(() => latchwayProblem("quota_exceeded"));
+
+      await captureError(() => exerciseFrameworkFailure(framework, gateway));
+
+      const serialized = output.join("\n");
+      for (const fragment of secretFragments) expect(serialized).not.toContain(fragment);
+    });
+  },
+);
+
 describe("OpenAI JavaScript conformance", () => {
   const framework = "openai-js";
 
@@ -1035,6 +1050,43 @@ function expectFrameworkError(error: unknown, status: number, code: string): voi
 function expectRedacted(error: unknown): void {
   const serialized = serializedError(error);
   for (const fragment of secretFragments) expect(serialized).not.toContain(fragment);
+}
+
+function captureConsoleOutput(): string[] {
+  const output: string[] = [];
+  for (const method of ["debug", "info", "log", "warn", "error"] as const) {
+    vi.spyOn(console, method).mockImplementation((...values: unknown[]) => {
+      output.push(values.map((value) => serializedError(value)).join(" "));
+    });
+  }
+  return output;
+}
+
+async function exerciseFrameworkFailure(
+  framework: JavaScriptFrameworkID,
+  gateway: FrameworkGatewayFixture,
+): Promise<unknown> {
+  const latchway = createFrameworkClient(gateway);
+  switch (framework) {
+    case "openai-js":
+      return createLatchwayOpenAI({
+        latchway,
+        feature: "assistant",
+        clientOptions: { maxRetries: 0 },
+      }).responses.create({ model: "latchway", input: "logger conformance" });
+    case "vercel-ai-sdk":
+      return generateText({
+        model: createLatchwayProvider({ client: latchway }).responses("assistant"),
+        prompt: "logger conformance",
+        maxRetries: 0,
+      });
+    case "langchain-js":
+      return createLatchwayChatOpenAI({
+        latchway,
+        feature: "assistant",
+        chatOptions: { maxRetries: 0 },
+      }).invoke("logger conformance");
+  }
 }
 
 async function captureError(action: () => Promise<unknown>): Promise<unknown> {

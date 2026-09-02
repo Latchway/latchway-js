@@ -14,6 +14,9 @@ concurrency:
   group: js-framework-compatibility-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  FRAMEWORK_CORE_COMMIT: d4693ee36bf8a018a027fb75e5e2ac2fb6b58d50
+
 jobs:
   pinned-profiles:
     name: Pinned ${{ matrix.profile }} framework profile
@@ -38,19 +41,11 @@ jobs:
           node-version: 24.19.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Resolve the locked core source
-        id: core
-        shell: bash
-        run: |
-          set -euo pipefail
-          commit=$(awk '$1 == "core_commit:" {print $2}' contract.lock)
-          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
-          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
-      - name: Check out the locked canonical registry and case validator
+      - name: Check out the canonical framework conformance checkpoint
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: Latchway/latchway
-          ref: ${{ steps.core.outputs.commit }}
+          ref: ${{ env.FRAMEWORK_CORE_COMMIT }}
           path: _core
           persist-credentials: false
       - name: Validate the complete JavaScript registry report
@@ -126,19 +121,11 @@ jobs:
           node-version: 24.19.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Resolve the locked core source
-        id: core
-        shell: bash
-        run: |
-          set -euo pipefail
-          commit=$(awk '$1 == "core_commit:" {print $2}' contract.lock)
-          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
-          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
-      - name: Check out the locked canonical registry and case validator
+      - name: Check out the canonical framework conformance checkpoint
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: Latchway/latchway
-          ref: ${{ steps.core.outputs.commit }}
+          ref: ${{ env.FRAMEWORK_CORE_COMMIT }}
           path: _core
           persist-credentials: false
       - name: Validate the complete JavaScript registry report

@@ -1,41 +1,194 @@
 {
-  "schema_version": 1,
-  "manifest_sha256": "32cd1df9365e04cc684fa63ac0798feec37f44ef1a95898f91935108bb58ef9a",
+  "schema_version": 2,
+  "manifest_sha256": "24d09b398d0ae1afd265ff77683847874110636174a4a313ebe62648cb33bbed",
   "repository": "latchway-js",
   "integrations": [
     {
       "id": "openai-js",
       "support": "experimental",
       "pass": {
-        "FW-AUTH-001": ["test/framework-adapters.test.ts#FW-AUTH-001"],
-        "FW-REQ-001": ["test/framework-adapters.test.ts#FW-REQ-001"],
-        "FW-REQ-002": ["test/framework-adapters.test.ts#FW-REQ-002"],
-        "FW-REQ-003": ["test/framework-adapters.test.ts#FW-REQ-003"],
-        "FW-REQ-004": ["test/framework-adapters.test.ts#FW-REQ-004"],
-        "FW-REQ-005": ["test/framework-adapters.test.ts#FW-REQ-005"],
-        "FW-REQ-006": ["test/framework-adapters.test.ts#FW-REQ-006"],
-        "FW-REQ-007": ["test/framework-adapters.test.ts#FW-REQ-007"],
-        "FW-BEH-001": ["test/framework-adapters.test.ts#FW-BEH-001"],
-        "FW-BEH-002": ["test/framework-adapters.test.ts#FW-BEH-002"],
-        "FW-BEH-003": ["test/framework-adapters.test.ts#FW-BEH-003"],
-        "FW-BEH-004": ["test/framework-adapters.test.ts#FW-BEH-004"],
-        "FW-BEH-005": ["test/framework-adapters.test.ts#FW-BEH-005"],
-        "FW-BEH-006": ["test/framework-adapters.test.ts#FW-BEH-006"],
-        "FW-SEC-001": ["test/framework-adapters.test.ts#FW-SEC-001"],
-        "FW-SEC-002": ["test/framework-adapters.test.ts#FW-SEC-002"],
-        "FW-SEC-003": ["test/framework-adapters.test.ts#FW-SEC-003"],
-        "FW-SEC-004": ["test/framework-adapters.test.ts#FW-SEC-004"],
-        "FW-OAI-001": ["test/framework-adapters.test.ts#FW-OAI-001"],
-        "FW-OAI-002": ["test/framework-adapters.test.ts#FW-OAI-002"]
+        "FW-AUTH-001": [
+          "test/framework-adapters.test.ts#FW-AUTH-001"
+        ],
+        "FW-REQ-001": [
+          "test/framework-adapters.test.ts#FW-REQ-001"
+        ],
+        "FW-REQ-002": [
+          "test/framework-adapters.test.ts#FW-REQ-002"
+        ],
+        "FW-REQ-003": [
+          "test/framework-adapters.test.ts#FW-REQ-003"
+        ],
+        "FW-REQ-004": [
+          "test/framework-adapters.test.ts#FW-REQ-004"
+        ],
+        "FW-REQ-005": [
+          "test/framework-adapters.test.ts#FW-REQ-005"
+        ],
+        "FW-REQ-006": [
+          "test/framework-adapters.test.ts#FW-REQ-006"
+        ],
+        "FW-REQ-007": [
+          "test/framework-adapters.test.ts#FW-REQ-007"
+        ],
+        "FW-BEH-001": [
+          "test/framework-adapters.test.ts#FW-BEH-001"
+        ],
+        "FW-BEH-002": [
+          "test/framework-adapters.test.ts#FW-BEH-002"
+        ],
+        "FW-BEH-003": [
+          "test/framework-adapters.test.ts#FW-BEH-003"
+        ],
+        "FW-BEH-004": [
+          "test/framework-adapters.test.ts#FW-BEH-004"
+        ],
+        "FW-BEH-005": [
+          "test/framework-adapters.test.ts#FW-BEH-005"
+        ],
+        "FW-BEH-006": [
+          "test/framework-adapters.test.ts#FW-BEH-006"
+        ],
+        "FW-SEC-001": [
+          "test/framework-adapters.test.ts#FW-SEC-001"
+        ],
+        "FW-SEC-002": [
+          "test/framework-adapters.test.ts#FW-SEC-002"
+        ],
+        "FW-SEC-003": [
+          "test/framework-adapters.test.ts#FW-SEC-003"
+        ],
+        "FW-SEC-004": [
+          "test/framework-adapters.test.ts#FW-SEC-004"
+        ],
+        "FW-AUTH-101": [
+          "conformance/common-framework-evidence.json#FW-AUTH-101"
+        ],
+        "FW-AUTH-102": [
+          "conformance/common-framework-evidence.json#FW-AUTH-102"
+        ],
+        "FW-AUTH-103": [
+          "conformance/common-framework-evidence.json#FW-AUTH-103"
+        ],
+        "FW-AUTH-104": [
+          "conformance/common-framework-evidence.json#FW-AUTH-104"
+        ],
+        "FW-AUTH-105": [
+          "conformance/common-framework-evidence.json#FW-AUTH-105"
+        ],
+        "FW-AUTH-106": [
+          "conformance/common-framework-evidence.json#FW-AUTH-106"
+        ],
+        "FW-REQ-101": [
+          "conformance/common-framework-evidence.json#FW-REQ-101"
+        ],
+        "FW-REQ-102": [
+          "conformance/common-framework-evidence.json#FW-REQ-102"
+        ],
+        "FW-REQ-103": [
+          "conformance/common-framework-evidence.json#FW-REQ-103"
+        ],
+        "FW-REQ-104": [
+          "conformance/common-framework-evidence.json#FW-REQ-104"
+        ],
+        "FW-REQ-105": [
+          "conformance/common-framework-evidence.json#FW-REQ-105"
+        ],
+        "FW-REQ-106": [
+          "conformance/common-framework-evidence.json#FW-REQ-106"
+        ],
+        "FW-REQ-107": [
+          "conformance/common-framework-evidence.json#FW-REQ-107"
+        ],
+        "FW-REQ-108": [
+          "conformance/common-framework-evidence.json#FW-REQ-108"
+        ],
+        "FW-REQ-109": [
+          "conformance/common-framework-evidence.json#FW-REQ-109"
+        ],
+        "FW-BEH-101": [
+          "conformance/common-framework-evidence.json#FW-BEH-101"
+        ],
+        "FW-BEH-102": [
+          "conformance/common-framework-evidence.json#FW-BEH-102"
+        ],
+        "FW-BEH-103": [
+          "conformance/common-framework-evidence.json#FW-BEH-103"
+        ],
+        "FW-BEH-104": [
+          "conformance/common-framework-evidence.json#FW-BEH-104"
+        ],
+        "FW-BEH-105": [
+          "conformance/common-framework-evidence.json#FW-BEH-105"
+        ],
+        "FW-BEH-106": [
+          "conformance/common-framework-evidence.json#FW-BEH-106"
+        ],
+        "FW-SEC-101": [
+          "conformance/common-framework-evidence.json#FW-SEC-101"
+        ],
+        "FW-SEC-102": [
+          "conformance/common-framework-evidence.json#FW-SEC-102"
+        ],
+        "FW-SEC-103": [
+          "conformance/common-framework-evidence.json#FW-SEC-103"
+        ],
+        "FW-SEC-104": [
+          "conformance/common-framework-evidence.json#FW-SEC-104"
+        ],
+        "FW-SEC-105": [
+          "conformance/common-framework-evidence.json#FW-SEC-105"
+        ],
+        "FW-OAI-001": [
+          "test/framework-adapters.test.ts#FW-OAI-001"
+        ],
+        "FW-OAI-002": [
+          "test/framework-adapters.test.ts#FW-OAI-002"
+        ],
+        "FW-BEH-107": [
+          "conformance/common-framework-evidence.json#FW-BEH-107"
+        ]
       },
       "not_applicable": [
         {
-          "case_ids": ["FW-VAI-001", "FW-VAI-002", "FW-VAI-003", "FW-VAI-004"],
+          "case_ids": [
+            "FW-VAI-001",
+            "FW-VAI-002",
+            "FW-VAI-003",
+            "FW-VAI-004"
+          ],
           "reason": "These cases exercise Vercel AI SDK middleware rather than the official OpenAI client."
         },
         {
-          "case_ids": ["FW-LC-001", "FW-LC-002", "FW-LC-003"],
+          "case_ids": [
+            "FW-LC-001",
+            "FW-LC-002",
+            "FW-LC-003"
+          ],
           "reason": "These cases exercise LangChain batch APIs rather than the official OpenAI client."
+        },
+        {
+          "case_ids": [
+            "FW-SEC-106"
+          ],
+          "reason": "This JavaScript integration has no React Native native bridge.",
+          "evidence": [
+            "AGENTS.md"
+          ]
+        }
+      ],
+      "pending": [
+        {
+          "case_ids": [
+            "FW-AUTH-107",
+            "FW-AUTH-108",
+            "FW-AUTH-109"
+          ],
+          "reason": "DPoP replay, wrong-URI, and wrong-method rejection require a real gateway enforcement boundary and are not claimed by the local framework fixture.",
+          "blocker": "hosted",
+          "evidence": [
+            "docs/conformance.md"
+          ]
         }
       ]
     },
@@ -43,37 +196,192 @@
       "id": "vercel-ai-sdk",
       "support": "experimental",
       "pass": {
-        "FW-AUTH-001": ["test/framework-adapters.test.ts#FW-AUTH-001"],
-        "FW-REQ-001": ["test/framework-adapters.test.ts#FW-REQ-001"],
-        "FW-REQ-002": ["test/framework-adapters.test.ts#FW-REQ-002"],
-        "FW-REQ-003": ["test/framework-adapters.test.ts#FW-REQ-003"],
-        "FW-REQ-004": ["test/framework-adapters.test.ts#FW-REQ-004"],
-        "FW-REQ-005": ["test/framework-adapters.test.ts#FW-REQ-005"],
-        "FW-REQ-006": ["test/framework-adapters.test.ts#FW-REQ-006"],
-        "FW-REQ-007": ["test/framework-adapters.test.ts#FW-REQ-007"],
-        "FW-BEH-001": ["test/framework-adapters.test.ts#FW-BEH-001"],
-        "FW-BEH-002": ["test/framework-adapters.test.ts#FW-BEH-002"],
-        "FW-BEH-003": ["test/framework-adapters.test.ts#FW-BEH-003"],
-        "FW-BEH-004": ["test/framework-adapters.test.ts#FW-BEH-004"],
-        "FW-BEH-005": ["test/framework-adapters.test.ts#FW-BEH-005"],
-        "FW-BEH-006": ["test/framework-adapters.test.ts#FW-BEH-006"],
-        "FW-SEC-001": ["test/framework-adapters.test.ts#FW-SEC-001"],
-        "FW-SEC-002": ["test/framework-adapters.test.ts#FW-SEC-002"],
-        "FW-SEC-003": ["test/framework-adapters.test.ts#FW-SEC-003"],
-        "FW-SEC-004": ["test/framework-adapters.test.ts#FW-SEC-004"],
-        "FW-VAI-001": ["test/framework-adapters.test.ts#FW-VAI-001"],
-        "FW-VAI-002": ["test/framework-adapters.test.ts#FW-VAI-002"],
-        "FW-VAI-003": ["test/framework-adapters.test.ts#FW-VAI-003"],
-        "FW-VAI-004": ["test/framework-adapters.test.ts#FW-VAI-004"]
+        "FW-AUTH-001": [
+          "test/framework-adapters.test.ts#FW-AUTH-001"
+        ],
+        "FW-REQ-001": [
+          "test/framework-adapters.test.ts#FW-REQ-001"
+        ],
+        "FW-REQ-002": [
+          "test/framework-adapters.test.ts#FW-REQ-002"
+        ],
+        "FW-REQ-003": [
+          "test/framework-adapters.test.ts#FW-REQ-003"
+        ],
+        "FW-REQ-004": [
+          "test/framework-adapters.test.ts#FW-REQ-004"
+        ],
+        "FW-REQ-005": [
+          "test/framework-adapters.test.ts#FW-REQ-005"
+        ],
+        "FW-REQ-006": [
+          "test/framework-adapters.test.ts#FW-REQ-006"
+        ],
+        "FW-REQ-007": [
+          "test/framework-adapters.test.ts#FW-REQ-007"
+        ],
+        "FW-BEH-001": [
+          "test/framework-adapters.test.ts#FW-BEH-001"
+        ],
+        "FW-BEH-002": [
+          "test/framework-adapters.test.ts#FW-BEH-002"
+        ],
+        "FW-BEH-003": [
+          "test/framework-adapters.test.ts#FW-BEH-003"
+        ],
+        "FW-BEH-004": [
+          "test/framework-adapters.test.ts#FW-BEH-004"
+        ],
+        "FW-BEH-005": [
+          "test/framework-adapters.test.ts#FW-BEH-005"
+        ],
+        "FW-BEH-006": [
+          "test/framework-adapters.test.ts#FW-BEH-006"
+        ],
+        "FW-SEC-001": [
+          "test/framework-adapters.test.ts#FW-SEC-001"
+        ],
+        "FW-SEC-002": [
+          "test/framework-adapters.test.ts#FW-SEC-002"
+        ],
+        "FW-SEC-003": [
+          "test/framework-adapters.test.ts#FW-SEC-003"
+        ],
+        "FW-SEC-004": [
+          "test/framework-adapters.test.ts#FW-SEC-004"
+        ],
+        "FW-AUTH-101": [
+          "conformance/common-framework-evidence.json#FW-AUTH-101"
+        ],
+        "FW-AUTH-102": [
+          "conformance/common-framework-evidence.json#FW-AUTH-102"
+        ],
+        "FW-AUTH-103": [
+          "conformance/common-framework-evidence.json#FW-AUTH-103"
+        ],
+        "FW-AUTH-104": [
+          "conformance/common-framework-evidence.json#FW-AUTH-104"
+        ],
+        "FW-AUTH-105": [
+          "conformance/common-framework-evidence.json#FW-AUTH-105"
+        ],
+        "FW-AUTH-106": [
+          "conformance/common-framework-evidence.json#FW-AUTH-106"
+        ],
+        "FW-REQ-101": [
+          "conformance/common-framework-evidence.json#FW-REQ-101"
+        ],
+        "FW-REQ-102": [
+          "conformance/common-framework-evidence.json#FW-REQ-102"
+        ],
+        "FW-REQ-103": [
+          "conformance/common-framework-evidence.json#FW-REQ-103"
+        ],
+        "FW-REQ-104": [
+          "conformance/common-framework-evidence.json#FW-REQ-104"
+        ],
+        "FW-REQ-105": [
+          "conformance/common-framework-evidence.json#FW-REQ-105"
+        ],
+        "FW-REQ-106": [
+          "conformance/common-framework-evidence.json#FW-REQ-106"
+        ],
+        "FW-REQ-107": [
+          "conformance/common-framework-evidence.json#FW-REQ-107"
+        ],
+        "FW-REQ-108": [
+          "conformance/common-framework-evidence.json#FW-REQ-108"
+        ],
+        "FW-REQ-109": [
+          "conformance/common-framework-evidence.json#FW-REQ-109"
+        ],
+        "FW-BEH-101": [
+          "conformance/common-framework-evidence.json#FW-BEH-101"
+        ],
+        "FW-BEH-102": [
+          "conformance/common-framework-evidence.json#FW-BEH-102"
+        ],
+        "FW-BEH-103": [
+          "conformance/common-framework-evidence.json#FW-BEH-103"
+        ],
+        "FW-BEH-104": [
+          "conformance/common-framework-evidence.json#FW-BEH-104"
+        ],
+        "FW-BEH-105": [
+          "conformance/common-framework-evidence.json#FW-BEH-105"
+        ],
+        "FW-BEH-106": [
+          "conformance/common-framework-evidence.json#FW-BEH-106"
+        ],
+        "FW-SEC-101": [
+          "conformance/common-framework-evidence.json#FW-SEC-101"
+        ],
+        "FW-SEC-102": [
+          "conformance/common-framework-evidence.json#FW-SEC-102"
+        ],
+        "FW-SEC-103": [
+          "conformance/common-framework-evidence.json#FW-SEC-103"
+        ],
+        "FW-SEC-104": [
+          "conformance/common-framework-evidence.json#FW-SEC-104"
+        ],
+        "FW-SEC-105": [
+          "conformance/common-framework-evidence.json#FW-SEC-105"
+        ],
+        "FW-VAI-001": [
+          "test/framework-adapters.test.ts#FW-VAI-001"
+        ],
+        "FW-VAI-002": [
+          "test/framework-adapters.test.ts#FW-VAI-002"
+        ],
+        "FW-VAI-003": [
+          "test/framework-adapters.test.ts#FW-VAI-003"
+        ],
+        "FW-VAI-004": [
+          "test/framework-adapters.test.ts#FW-VAI-004"
+        ],
+        "FW-BEH-107": [
+          "conformance/common-framework-evidence.json#FW-BEH-107"
+        ]
       },
       "not_applicable": [
         {
-          "case_ids": ["FW-OAI-001", "FW-OAI-002"],
+          "case_ids": [
+            "FW-OAI-001",
+            "FW-OAI-002"
+          ],
           "reason": "These cases exercise official OpenAI client-only surfaces rather than Vercel AI middleware."
         },
         {
-          "case_ids": ["FW-LC-001", "FW-LC-002", "FW-LC-003"],
+          "case_ids": [
+            "FW-LC-001",
+            "FW-LC-002",
+            "FW-LC-003"
+          ],
           "reason": "These cases exercise LangChain batch APIs rather than Vercel AI middleware."
+        },
+        {
+          "case_ids": [
+            "FW-SEC-106"
+          ],
+          "reason": "This JavaScript integration has no React Native native bridge.",
+          "evidence": [
+            "AGENTS.md"
+          ]
+        }
+      ],
+      "pending": [
+        {
+          "case_ids": [
+            "FW-AUTH-107",
+            "FW-AUTH-108",
+            "FW-AUTH-109"
+          ],
+          "reason": "DPoP replay, wrong-URI, and wrong-method rejection require a real gateway enforcement boundary and are not claimed by the local framework fixture.",
+          "blocker": "hosted",
+          "evidence": [
+            "docs/conformance.md"
+          ]
         }
       ]
     },
@@ -81,39 +389,193 @@
       "id": "langchain-js",
       "support": "experimental",
       "pass": {
-        "FW-AUTH-001": ["test/framework-adapters.test.ts#FW-AUTH-001"],
-        "FW-REQ-002": ["test/framework-adapters.test.ts#FW-REQ-002"],
-        "FW-REQ-003": ["test/framework-adapters.test.ts#FW-REQ-003"],
-        "FW-REQ-004": ["test/framework-adapters.test.ts#FW-REQ-004"],
-        "FW-REQ-005": ["test/framework-adapters.test.ts#FW-REQ-005"],
-        "FW-REQ-006": ["test/framework-adapters.test.ts#FW-REQ-006"],
-        "FW-REQ-007": ["test/framework-adapters.test.ts#FW-REQ-007"],
-        "FW-BEH-001": ["test/framework-adapters.test.ts#FW-BEH-001"],
-        "FW-BEH-002": ["test/framework-adapters.test.ts#FW-BEH-002"],
-        "FW-BEH-003": ["test/framework-adapters.test.ts#FW-BEH-003"],
-        "FW-BEH-004": ["test/framework-adapters.test.ts#FW-BEH-004"],
-        "FW-BEH-005": ["test/framework-adapters.test.ts#FW-BEH-005"],
-        "FW-BEH-006": ["test/framework-adapters.test.ts#FW-BEH-006"],
-        "FW-SEC-001": ["test/framework-adapters.test.ts#FW-SEC-001"],
-        "FW-SEC-002": ["test/framework-adapters.test.ts#FW-SEC-002"],
-        "FW-SEC-003": ["test/framework-adapters.test.ts#FW-SEC-003"],
-        "FW-SEC-004": ["test/framework-adapters.test.ts#FW-SEC-004"],
-        "FW-LC-001": ["test/framework-adapters.test.ts#FW-LC-001"],
-        "FW-LC-002": ["test/framework-adapters.test.ts#FW-LC-002"],
-        "FW-LC-003": ["test/framework-adapters.test.ts#FW-LC-003"]
+        "FW-AUTH-001": [
+          "test/framework-adapters.test.ts#FW-AUTH-001"
+        ],
+        "FW-REQ-002": [
+          "test/framework-adapters.test.ts#FW-REQ-002"
+        ],
+        "FW-REQ-003": [
+          "test/framework-adapters.test.ts#FW-REQ-003"
+        ],
+        "FW-REQ-004": [
+          "test/framework-adapters.test.ts#FW-REQ-004"
+        ],
+        "FW-REQ-005": [
+          "test/framework-adapters.test.ts#FW-REQ-005"
+        ],
+        "FW-REQ-006": [
+          "test/framework-adapters.test.ts#FW-REQ-006"
+        ],
+        "FW-REQ-007": [
+          "test/framework-adapters.test.ts#FW-REQ-007"
+        ],
+        "FW-BEH-001": [
+          "test/framework-adapters.test.ts#FW-BEH-001"
+        ],
+        "FW-BEH-002": [
+          "test/framework-adapters.test.ts#FW-BEH-002"
+        ],
+        "FW-BEH-003": [
+          "test/framework-adapters.test.ts#FW-BEH-003"
+        ],
+        "FW-BEH-004": [
+          "test/framework-adapters.test.ts#FW-BEH-004"
+        ],
+        "FW-BEH-005": [
+          "test/framework-adapters.test.ts#FW-BEH-005"
+        ],
+        "FW-BEH-006": [
+          "test/framework-adapters.test.ts#FW-BEH-006"
+        ],
+        "FW-SEC-001": [
+          "test/framework-adapters.test.ts#FW-SEC-001"
+        ],
+        "FW-SEC-002": [
+          "test/framework-adapters.test.ts#FW-SEC-002"
+        ],
+        "FW-SEC-003": [
+          "test/framework-adapters.test.ts#FW-SEC-003"
+        ],
+        "FW-SEC-004": [
+          "test/framework-adapters.test.ts#FW-SEC-004"
+        ],
+        "FW-AUTH-101": [
+          "conformance/common-framework-evidence.json#FW-AUTH-101"
+        ],
+        "FW-AUTH-102": [
+          "conformance/common-framework-evidence.json#FW-AUTH-102"
+        ],
+        "FW-AUTH-103": [
+          "conformance/common-framework-evidence.json#FW-AUTH-103"
+        ],
+        "FW-AUTH-104": [
+          "conformance/common-framework-evidence.json#FW-AUTH-104"
+        ],
+        "FW-AUTH-105": [
+          "conformance/common-framework-evidence.json#FW-AUTH-105"
+        ],
+        "FW-AUTH-106": [
+          "conformance/common-framework-evidence.json#FW-AUTH-106"
+        ],
+        "FW-REQ-101": [
+          "conformance/common-framework-evidence.json#FW-REQ-101"
+        ],
+        "FW-REQ-102": [
+          "conformance/common-framework-evidence.json#FW-REQ-102"
+        ],
+        "FW-REQ-103": [
+          "conformance/common-framework-evidence.json#FW-REQ-103"
+        ],
+        "FW-REQ-104": [
+          "conformance/common-framework-evidence.json#FW-REQ-104"
+        ],
+        "FW-REQ-105": [
+          "conformance/common-framework-evidence.json#FW-REQ-105"
+        ],
+        "FW-REQ-106": [
+          "conformance/common-framework-evidence.json#FW-REQ-106"
+        ],
+        "FW-REQ-107": [
+          "conformance/common-framework-evidence.json#FW-REQ-107"
+        ],
+        "FW-REQ-108": [
+          "conformance/common-framework-evidence.json#FW-REQ-108"
+        ],
+        "FW-REQ-109": [
+          "conformance/common-framework-evidence.json#FW-REQ-109"
+        ],
+        "FW-BEH-101": [
+          "conformance/common-framework-evidence.json#FW-BEH-101"
+        ],
+        "FW-BEH-102": [
+          "conformance/common-framework-evidence.json#FW-BEH-102"
+        ],
+        "FW-BEH-103": [
+          "conformance/common-framework-evidence.json#FW-BEH-103"
+        ],
+        "FW-BEH-104": [
+          "conformance/common-framework-evidence.json#FW-BEH-104"
+        ],
+        "FW-BEH-105": [
+          "conformance/common-framework-evidence.json#FW-BEH-105"
+        ],
+        "FW-BEH-106": [
+          "conformance/common-framework-evidence.json#FW-BEH-106"
+        ],
+        "FW-SEC-101": [
+          "conformance/common-framework-evidence.json#FW-SEC-101"
+        ],
+        "FW-SEC-102": [
+          "conformance/common-framework-evidence.json#FW-SEC-102"
+        ],
+        "FW-SEC-103": [
+          "conformance/common-framework-evidence.json#FW-SEC-103"
+        ],
+        "FW-SEC-104": [
+          "conformance/common-framework-evidence.json#FW-SEC-104"
+        ],
+        "FW-SEC-105": [
+          "conformance/common-framework-evidence.json#FW-SEC-105"
+        ],
+        "FW-LC-001": [
+          "test/framework-adapters.test.ts#FW-LC-001"
+        ],
+        "FW-LC-002": [
+          "test/framework-adapters.test.ts#FW-LC-002"
+        ],
+        "FW-LC-003": [
+          "test/framework-adapters.test.ts#FW-LC-003"
+        ],
+        "FW-BEH-107": [
+          "conformance/common-framework-evidence.json#FW-BEH-107"
+        ]
       },
       "not_applicable": [
         {
-          "case_ids": ["FW-REQ-001"],
+          "case_ids": [
+            "FW-REQ-001"
+          ],
           "reason": "The LangChain registry row uses Chat Completions and embeddings; it does not claim Responses support."
         },
         {
-          "case_ids": ["FW-OAI-001", "FW-OAI-002"],
+          "case_ids": [
+            "FW-OAI-001",
+            "FW-OAI-002"
+          ],
           "reason": "These cases exercise official OpenAI client-only surfaces rather than LangChain."
         },
         {
-          "case_ids": ["FW-VAI-001", "FW-VAI-002", "FW-VAI-003", "FW-VAI-004"],
+          "case_ids": [
+            "FW-VAI-001",
+            "FW-VAI-002",
+            "FW-VAI-003",
+            "FW-VAI-004"
+          ],
           "reason": "These cases exercise Vercel AI middleware rather than LangChain batch APIs."
+        },
+        {
+          "case_ids": [
+            "FW-SEC-106"
+          ],
+          "reason": "This JavaScript integration has no React Native native bridge.",
+          "evidence": [
+            "AGENTS.md"
+          ]
+        }
+      ],
+      "pending": [
+        {
+          "case_ids": [
+            "FW-AUTH-107",
+            "FW-AUTH-108",
+            "FW-AUTH-109"
+          ],
+          "reason": "DPoP replay, wrong-URI, and wrong-method rejection require a real gateway enforcement boundary and are not claimed by the local framework fixture.",
+          "blocker": "hosted",
+          "evidence": [
+            "docs/conformance.md"
+          ]
         }
       ]
     }

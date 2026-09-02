@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "cases": {
+    "FW-AUTH-101": ["test/framework-adapters.test.ts#FW-AUTH-001", "test/client.test.ts#exchangeCalls"],
+    "FW-AUTH-102": ["test/dpop.test.ts#createDPoPProof", "test/client.test.ts#lastProtectedHeaders"],
+    "FW-AUTH-103": ["test/framework-adapters.test.ts#FW-BEH-006"],
+    "FW-AUTH-104": ["test/framework-adapters.test.ts#FW-AUTH-001", "test/client.test.ts#identityRefreshOnce"],
+    "FW-AUTH-105": ["test/framework-adapters.test.ts#FW-AUTH-001", "test/client.test.ts#revokeCurrentInstallationFamily"],
+    "FW-AUTH-106": ["test/framework-adapters.test.ts#FW-AUTH-001", "test/browser/browser-conformance.spec.ts#component_revoked"],
+    "FW-REQ-101": ["test/framework-adapters.test.ts#FW-REQ-001", "test/framework-adapters.test.ts#FW-REQ-002"],
+    "FW-REQ-102": ["test/framework-adapters.test.ts#FW-AUTH-001"],
+    "FW-REQ-103": ["test/framework-adapters.test.ts#FW-SEC-001"],
+    "FW-REQ-104": ["test/framework-adapters.test.ts#FW-REQ-004"],
+    "FW-REQ-105": ["test/framework-adapters.test.ts#FW-REQ-006"],
+    "FW-REQ-106": ["test/framework-adapters.test.ts#FW-REQ-007"],
+    "FW-REQ-107": ["test/framework-adapters.test.ts#FW-REQ-001", "test/framework-adapters.test.ts#FW-REQ-002"],
+    "FW-REQ-108": ["test/framework-adapters.test.ts#FW-REQ-005"],
+    "FW-REQ-109": ["test/framework-adapters.test.ts#FW-REQ-005"],
+    "FW-BEH-101": ["test/framework-adapters.test.ts#FW-BEH-001"],
+    "FW-BEH-102": ["test/framework-adapters.test.ts#FW-BEH-002"],
+    "FW-BEH-103": ["test/framework-adapters.test.ts#FW-AUTH-001", "test/framework-adapters.test.ts#FW-REQ-004"],
+    "FW-BEH-104": ["test/framework-adapters.test.ts#FW-BEH-005"],
+    "FW-BEH-105": ["test/framework-adapters.test.ts#FW-BEH-004"],
+    "FW-BEH-106": ["test/framework-adapters.test.ts#FW-BEH-003"],
+    "FW-BEH-107": ["test/framework-adapters.test.ts#FW-BEH-107"],
+    "FW-SEC-101": ["test/framework-adapters.test.ts#FW-SEC-002", "test/client.test.ts#transport_destination_not_allowed"],
+    "FW-SEC-102": ["test/framework-adapters.test.ts#FW-SEC-001"],
+    "FW-SEC-103": ["test/framework-adapters.test.ts#FW-SEC-002", "test/browser/browser-conformance.spec.ts#redirectTargets"],
+    "FW-SEC-104": ["test/framework-adapters.test.ts#FW-SEC-001"],
+    "FW-SEC-105": ["test/framework-adapters.test.ts#FW-AUTH-001", "test/dpop.test.ts#privateKey.extractable", "test/browser/browser-conformance.spec.ts#keyPersistence"]
+  }
+}
