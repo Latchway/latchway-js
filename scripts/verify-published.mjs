@@ -70,7 +70,18 @@ const expectedReleaseTag = requiredEnvironment(
 );
 const expectedRepository = requiredEnvironment("GITHUB_REPOSITORY", /^Latchway\/latchway-js$/u);
 const expectedRef = requiredEnvironment("GITHUB_REF", /^refs\/heads\/main$/u);
-const expectedEvent = requiredEnvironment("GITHUB_EVENT_NAME", /^repository_dispatch$/u);
+const expectedEvent = process.env.EXPECTED_PROVENANCE_EVENT === undefined
+  ? requiredEnvironment("GITHUB_EVENT_NAME", /^repository_dispatch$/u)
+  : requiredEnvironment("EXPECTED_PROVENANCE_EVENT", /^(?:repository_dispatch|workflow_dispatch)$/u);
+const expectedWorkflowPath = process.env.EXPECTED_PROVENANCE_WORKFLOW_PATH === undefined
+  ? WORKFLOW_PATH
+  : requiredEnvironment(
+    "EXPECTED_PROVENANCE_WORKFLOW_PATH",
+    /^\.github\/workflows\/(?:release|single-maintainer-release)\.yml$/u,
+  );
+if (requiredEnvironment("GITHUB_EVENT_NAME", /^(?:repository_dispatch|workflow_dispatch)$/u) !== expectedEvent) {
+  throw new Error("The publication event does not match the expected npm provenance event.");
+}
 const currentRunID = Number(requiredEnvironment("GITHUB_RUN_ID", /^[1-9]\d*$/u));
 const currentRunAttempt = Number(requiredEnvironment("GITHUB_RUN_ATTEMPT", /^[1-9]\d*$/u));
 const producerRunID = Number(requiredEnvironment("PUBLISH_PRODUCER_RUN_ID", /^[1-9]\d*$/u));
@@ -140,8 +151,9 @@ for (const [index, package_] of packages.entries()) {
     expectedRepositoryURL,
     expectedCommit,
     expectedEvent,
+    expectedWorkflowPath,
   });
-  verifyWorkflowCertificate(provenance, expectedRepositoryURL);
+  verifyWorkflowCertificate(provenance, expectedRepositoryURL, expectedWorkflowPath);
   requireCurrentPublicationOrigin(provenanceOrigin, {
     publishPerformed: publishState[package_.name],
     currentRunID,
@@ -256,7 +268,7 @@ const postPublishEvidence = {
   source: {
     repository: expectedRepositoryURL,
     commit: expectedCommit,
-    workflow: WORKFLOW_PATH,
+    workflow: expectedWorkflowPath,
     ref: SOURCE_REF,
   },
   release_tag: expectedReleaseTag,
@@ -284,6 +296,7 @@ for (const { package_, provenanceOrigin, tarball } of adoptionInputs) {
     currentRunID,
     currentRunAttempt,
     publishPerformed: publishState[package_.name],
+    workflowPath: expectedWorkflowPath,
   });
   const adoptionName = `npm-release-adoption-${package_.id}-${currentRunID}-${currentRunAttempt}.json`;
   await writeFile(join(ARTIFACTS_PATH, adoptionName), jsonBytes(adoption), { mode: 0o600 });
@@ -435,7 +448,7 @@ function decodeStatement(attestation) {
   return parseStrictJSONBytes(bytes, "The npm attestation statement", MAXIMUM_STATEMENT_BYTES);
 }
 
-function verifyWorkflowCertificate(attestation, repositoryURL) {
+function verifyWorkflowCertificate(attestation, repositoryURL, workflowPath) {
   const certificateBytes = attestation?.bundle?.verificationMaterial?.certificate?.rawBytes;
   if (typeof certificateBytes !== "string") throw new Error("The provenance bundle is missing its signing certificate.");
   const certificate = new X509Certificate(decodeBase64Strict(
@@ -443,7 +456,7 @@ function verifyWorkflowCertificate(attestation, repositoryURL) {
     "The provenance signing certificate",
     MAXIMUM_CERTIFICATE_BYTES,
   ));
-  const expectedIdentity = `URI:${repositoryURL}/${WORKFLOW_PATH}@${SOURCE_REF}`;
+  const expectedIdentity = `URI:${repositoryURL}/${workflowPath}@${SOURCE_REF}`;
   if (certificate.subjectAltName !== expectedIdentity) {
     throw new Error("The provenance signing certificate has an unexpected workflow identity.");
   }

@@ -7,6 +7,7 @@ import argparse
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -127,6 +128,25 @@ class MaintainerReleaseTests(unittest.TestCase):
         )
         self.assertIn("independent_human_review", intent["deferred_evidence"])
         self.assertIn("fully_evidence_gated", intent["forbidden_claims"])
+        self.assertEqual(intent["workflow"]["owner_run_id"], 123)
+        self.assertEqual(intent["transaction"]["id"], result["transaction_id"])
+        self.assertEqual(result["core_commit"], "a" * 40)
+        self.assertEqual(result["core_bundle_sha256"], "b" * 64)
+        self.assertIn("Transaction owner: https://github.com/Latchway/latchway-js/actions/runs/123", intent["github_release"]["body"])
+
+    def test_rerun_attempt_preserves_transaction_bytes_but_new_run_cannot_adopt(self) -> None:
+        first = MODULE.verify(self.arguments(run_attempt="1"))
+        first_bytes = (Path(self.temporary.name) / "intent.json").read_bytes()
+        second_path = Path(self.temporary.name) / "intent-rerun.json"
+        second = MODULE.verify(self.arguments(run_attempt="2", intent_output=second_path))
+        self.assertEqual(first["transaction_id"], second["transaction_id"])
+        self.assertEqual(first["intent_sha256"], second["intent_sha256"])
+        self.assertEqual(first_bytes, second_path.read_bytes())
+
+        other_path = Path(self.temporary.name) / "intent-other-run.json"
+        other = MODULE.verify(self.arguments(run_id="124", intent_output=other_path))
+        self.assertNotEqual(first["transaction_id"], other["transaction_id"])
+        self.assertNotEqual(first_bytes, other_path.read_bytes())
 
     def test_rejects_wrong_confirmation_ref_version_or_commit(self) -> None:
         cases = (
@@ -157,7 +177,8 @@ class MaintainerReleaseTests(unittest.TestCase):
     def test_workflow_preserves_full_gate_and_selected_trusted_publisher_tuple(self) -> None:
         repository = SCRIPT.parents[1]
         workflow = (repository / ".github/workflows/single-maintainer-release.yml").read_text(encoding="utf-8")
-        self.assertIn("--rawfile body", workflow)
+        core_verifier = (repository / "scripts/verify-public-core-release.sh").read_text(encoding="utf-8")
+        release_surface = workflow + core_verifier
         documentation = (repository / "docs/releasing.md").read_text(encoding="utf-8")
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("needs: [intent, verify]", workflow)
@@ -175,6 +196,59 @@ class MaintainerReleaseTests(unittest.TestCase):
             ),
             5,
         )
+        self.assertIn("javascript-single-maintainer-v1", workflow)
+        self.assertIn("actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT", workflow)
+        self.assertIn("bash scripts/verify-public-core-release.sh", workflow)
+        self.assertIn("compare/$locked_core_commit...$core_commit", core_verifier)
+        self.assertIn(".merge_base_commit.sha == $locked", core_verifier)
+        self.assertIn("Refuse a new dispatch or rerun-all after any v1 mutation", workflow)
+        self.assertIn("--signer-workflow \"$core_repository/.github/workflows/single-maintainer-release.yml\"", core_verifier)
+        self.assertIn("$core_repository/.github/workflows/release.yml", release_surface)
+        self.assertIn("$core_repository/.github/workflows/deployment-evidence.yml", release_surface)
+        self.assertIn("core-release-gate.json", workflow)
+        self.assertIn("EXPECTED_PROVENANCE_WORKFLOW_PATH: .github/workflows/single-maintainer-release.yml", workflow)
+        self.assertIn("EXPECTED_PROVENANCE_EVENT: workflow_dispatch", workflow)
+        self.assertIn("single-maintainer-npm-adoption.json", workflow)
+        self.assertIn("gh release upload \"$RELEASE_TAG\" \"$asset\"", workflow)
+        self.assertNotIn("--clobber", workflow)
+        self.assertEqual(workflow.count("retention-days: 90"), 4)
+        self.assertEqual(
+            workflow.count("Require exact single-maintainer-v1 environment policy sentinel"),
+            5,
+        )
+        self.assertEqual(
+            workflow.count("latchway-release-controls-v1:latchway-js:single-maintainer-v1"),
+            5,
+        )
+        self.assertIn("Every environment-bearing job checks\nthat sentinel as its first step", documentation)
+        self.assertIn("Re-run failed jobs", documentation)
+        self.assertIn("never use **Re-run all jobs**", documentation)
+        draft = workflow.index("Stage or adopt exact recoverable transaction draft")
+        registry_mutation = workflow.index('"$LATCHWAY_NPM_CLI" publish "$archive"')
+        registry_verification = workflow.index("node scripts/verify-published.mjs")
+        finalization = workflow.index("Upload or adopt exact bytes then publish once")
+        self.assertLess(draft, registry_mutation)
+        self.assertLess(registry_mutation, registry_verification)
+        self.assertLess(registry_verification, finalization)
+
+    def test_workflow_never_interpolates_dispatch_input_inside_shell(self) -> None:
+        workflow = (SCRIPT.parents[1] / ".github/workflows/single-maintainer-release.yml").read_text(encoding="utf-8")
+        lines = workflow.splitlines()
+        run_bodies: list[str] = []
+        for index, line in enumerate(lines):
+            match = re.match(r"^(\s*)run:\s*(.*)$", line)
+            if match is None:
+                continue
+            indentation = len(match.group(1))
+            body = [match.group(2)]
+            for following in lines[index + 1 :]:
+                if following.strip() and len(following) - len(following.lstrip()) <= indentation:
+                    break
+                body.append(following)
+            run_bodies.append("\n".join(body))
+        self.assertTrue(run_bodies)
+        for body in run_bodies:
+            self.assertNotIn("${{ inputs.", body)
 
     def git(self, *arguments: str) -> str:
         return subprocess.run(["git", "-C", str(self.root), *arguments], check=True, capture_output=True, text=True).stdout.strip()

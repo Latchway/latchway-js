@@ -25,9 +25,78 @@ for (const name of entries) {
 }
 
 const release = await readFile(new URL("release.yml", workflows), "utf8");
+const singleMaintainerRelease = await readFile(new URL("single-maintainer-release.yml", workflows), "utf8");
+const publicCoreVerifier = await readFile(new URL("verify-public-core-release.sh", import.meta.url), "utf8");
+const singleMaintainerSurface = singleMaintainerRelease + publicCoreVerifier;
 const continuousIntegration = await readFile(new URL("ci.yml", workflows), "utf8");
 const frameworkCompatibility = await readFile(new URL("framework-compatibility.yml", workflows), "utf8");
 const releaseDocumentation = await readFile(new URL("../docs/releasing.md", import.meta.url), "utf8");
+for (const required of [
+  "group: javascript-single-maintainer-v1",
+  "actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT",
+  "bash scripts/verify-public-core-release.sh",
+  "compare/$locked_core_commit...$core_commit",
+  ".merge_base_commit.sha == $locked",
+  "Refuse a new dispatch or rerun-all after any v1 mutation",
+  "--signer-workflow \"$core_repository/.github/workflows/single-maintainer-release.yml\"",
+  "$core_repository/.github/workflows/release.yml",
+  "$core_repository/.github/workflows/deployment-evidence.yml",
+  "core-release-gate.json",
+  "Stage or adopt exact recoverable transaction draft",
+  "EXPECTED_PROVENANCE_EVENT: workflow_dispatch",
+  "EXPECTED_PROVENANCE_WORKFLOW_PATH: .github/workflows/single-maintainer-release.yml",
+  "node scripts/verify-published.mjs",
+  "single-maintainer-npm-adoption.json",
+  "Upload or adopt exact bytes then publish once",
+  "(.assets | length) == 32",
+]) {
+  if (!singleMaintainerSurface.includes(required)) {
+    throw new Error(`single-maintainer-release.yml is missing the fail-closed control: ${required}`);
+  }
+}
+if ((singleMaintainerRelease.match(/retention-days: 90/gu) ?? []).length !== 4) {
+  throw new Error("single-maintainer-release.yml must retain all four transaction artifacts for 90 days.");
+}
+if (!releaseDocumentation.includes("Re-run failed jobs")
+  || !releaseDocumentation.includes("never use **Re-run all jobs**")) {
+  throw new Error("Single-maintainer recovery must use only Re-run failed jobs after mutation.");
+}
+for (const forbidden of ["--clobber", "secrets.NPM_TOKEN", "secrets.NODE_AUTH_TOKEN"]) {
+  if (singleMaintainerRelease.includes(forbidden)) {
+    throw new Error(`single-maintainer-release.yml must not contain ${forbidden}.`);
+  }
+}
+const singleDraft = singleMaintainerRelease.indexOf("Stage or adopt exact recoverable transaction draft");
+const singleNpm = singleMaintainerRelease.indexOf('"$LATCHWAY_NPM_CLI" publish "$archive"');
+const singleRegistryGate = singleMaintainerRelease.indexOf("node scripts/verify-published.mjs");
+const singleFinalize = singleMaintainerRelease.indexOf("Upload or adopt exact bytes then publish once");
+if (!(singleDraft >= 0 && singleDraft < singleNpm && singleNpm < singleRegistryGate
+  && singleRegistryGate < singleFinalize)) {
+  throw new Error("The single-maintainer transaction must stage, publish, verify, then finalize in order.");
+}
+const singleSentinel = "    steps:\n"
+  + "      - name: Require exact single-maintainer-v1 environment policy sentinel\n"
+  + "        shell: bash\n"
+  + "        env:\n"
+  + "          EXPECTED_POLICY_ID: latchway-release-controls-v1:latchway-js:single-maintainer-v1\n"
+  + "          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_CONTROL_POLICY_ID }}\n"
+  + "        run: |\n"
+  + "          set -Eeuo pipefail\n"
+  + "          test \"$OBSERVED_POLICY_ID\" = \"$EXPECTED_POLICY_ID\"\n";
+const singleJobHeaders = [...singleMaintainerRelease.matchAll(/^ {2}([a-z0-9_-]+):$/gmu)];
+let protectedSingleJobs = 0;
+for (const [index, header] of singleJobHeaders.entries()) {
+  const end = singleJobHeaders[index + 1]?.index ?? singleMaintainerRelease.length;
+  const block = singleMaintainerRelease.slice(header.index, end);
+  if (!block.includes("    environment: single-maintainer-v1\n")) continue;
+  protectedSingleJobs += 1;
+  if (block.indexOf(singleSentinel) !== block.indexOf("    steps:\n")) {
+    throw new Error(`${header[1]} must check the exact single-maintainer environment sentinel first.`);
+  }
+}
+if (protectedSingleJobs !== 5) {
+  throw new Error("Exactly five single-maintainer jobs must use the protected environment sentinel.");
+}
 for (const required of [
   "repository_dispatch:",
   "latchway_release_promoted",

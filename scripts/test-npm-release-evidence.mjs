@@ -173,6 +173,59 @@ test("provenance rejects repository, commit, and workflow substitutions", () => 
   }
 });
 
+test("single-maintainer provenance binds the additive workflow and dispatch event", () => {
+  const workflowPath = ".github/workflows/single-maintainer-release.yml";
+  const statement = provenanceStatement(`${repository}/actions/runs/41/attempts/2`, {
+    workflow: "single-maintainer-release.yml",
+    event: "workflow_dispatch",
+  });
+  const origin = verifyProvenanceStatement(statement, {
+    packageName: "@latchway/client",
+    packageVersion: "1.0.0",
+    sha512,
+    expectedRepositoryURL: repository,
+    expectedCommit: commit,
+    expectedEvent: "workflow_dispatch",
+    expectedWorkflowPath: workflowPath,
+  });
+  assert.deepEqual(origin, {
+    invocation_id: `${repository}/actions/runs/41/attempts/2`,
+    run_id: 41,
+    run_attempt: 2,
+  });
+  const adoption = buildAdoptionRecord({
+    packageName: "@latchway/client",
+    packageVersion: "1.0.0",
+    releaseTag: "v1.0.0",
+    repositoryURL: repository,
+    sourceCommit: commit,
+    provenanceOrigin: origin,
+    tarball: {
+      name: "client.tgz",
+      bytes: 123,
+      sha256: "d".repeat(64),
+      sha512: "e".repeat(128),
+      integrity: `sha512-${Buffer.from("e".repeat(128), "hex").toString("base64")}`,
+    },
+    manifestSHA256: "f".repeat(64),
+    currentRunID: 41,
+    currentRunAttempt: 2,
+    publishPerformed: true,
+    workflowPath,
+  });
+  assert.equal(adoption.source.workflow, workflowPath);
+  assert.equal(adoption.provenance.workflow, workflowPath);
+  assert.equal(adoption.adoption.workflow, workflowPath);
+  assert.throws(() => verifyProvenanceStatement(statement, {
+    packageName: "@latchway/client",
+    packageVersion: "1.0.0",
+    sha512,
+    expectedRepositoryURL: repository,
+    expectedCommit: commit,
+    expectedEvent: "workflow_dispatch",
+  }), /provenance/u);
+});
+
 test("retained output is strict bounded JSON and rejects encoded credentials", () => {
   assert.deepEqual(assertSafeRetainedOutput(Buffer.from('{"ok":true}\n'), "test", 64), { ok: true });
   assert.throws(
@@ -842,7 +895,7 @@ function provenanceStatement(invocation, overrides = {}) {
           uri: `git+${repository}@${resolvedCommit}`,
           digest: { gitCommit: resolvedCommit },
         }],
-        internalParameters: { github: { event_name: "repository_dispatch" } },
+        internalParameters: { github: { event_name: overrides.event ?? "repository_dispatch" } },
       },
       runDetails: {
         builder: { id: "https://github.com/actions/runner/github-hosted" },

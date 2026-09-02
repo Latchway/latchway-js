@@ -176,6 +176,7 @@ export function verifyProvenanceStatement(statement, {
   expectedRepositoryURL,
   expectedCommit,
   expectedEvent,
+  expectedWorkflowPath = WORKFLOW_PATH,
 }) {
   verifySubject(statement, PROVENANCE_TYPE, "https://in-toto.io/Statement/v1", {
     packageName, packageVersion, sha512,
@@ -187,7 +188,7 @@ export function verifyProvenanceStatement(statement, {
   const origin = parseProvenanceOrigin(runDetails?.metadata?.invocationId, expectedRepositoryURL);
   if (
     workflow?.repository !== expectedRepositoryURL
-    || workflow?.path !== WORKFLOW_PATH
+    || workflow?.path !== expectedWorkflowPath
     || workflow?.ref !== SOURCE_REF
     || github?.event_name !== expectedEvent
     || !Array.isArray(resolved)
@@ -317,11 +318,12 @@ export function buildAdoptionRecord({
   currentRunAttempt,
   publishPerformed,
   manifestName = "npm-registry-evidence-manifest.json",
+  workflowPath = WORKFLOW_PATH,
 }) {
   const binding = {
     repository: repositoryURL,
     commit: sourceCommit,
-    workflow: WORKFLOW_PATH,
+    workflow: workflowPath,
     ref: SOURCE_REF,
   };
   return {

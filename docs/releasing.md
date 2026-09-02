@@ -19,19 +19,61 @@ and the confirmation phrase
 `single_maintainer_v1`, `release_qualified: false`, the deferred evidence, and
 the forbidden stronger claims before doing any work.
 
-The complete dependency scan, test, browser, build, reproducibility, archive
-allowlist, consumer, and documentation gates pass before the workflow creates
-the public annotated tag. Publication then uses the deterministic reviewed
-archives, npm trusted publishing with provenance, byte-for-byte adoption of an
-existing version, and an exact GitHub release whose title and notes retain the
-deferred-assurance label. This path does not claim independent review,
-owner-enforced immutable releases, full evidence gating, or release-qualified
-status.
+Before creating any JavaScript tag, the workflow downloads the exact public
+`Latchway/latchway` `v1.0.0` release and requires the
+`single_maintainer_v1` core record. It checks the release's closed 15-asset
+set and checksums with the verifier stored at the selected JavaScript commit.
+The released candidate may be newer than the `contract.lock` core checkpoint,
+but GitHub's comparison must report it as `ahead` or `identical` with that
+checkpoint as the merge base. The workflow verifies the annotated core tag and
+public release metadata, authenticates the public core record and `SHA256SUMS`
+to core's `single-maintainer-release.yml`, and authenticates the candidate,
+Docker Compose, and Google Cloud Run evidence to their exact core workflows,
+`main` ref, and released candidate commit. The resulting
+`core-release-gate.json` records both revisions and is retained with the
+JavaScript release inputs.
 
-Create a `single-maintainer-v1` GitHub environment restricted to `main`. It
-contains no npm token and does not require an independent reviewer. For this
-launch profile, configure each JavaScript package's one npm trusted publisher
-as organization `Latchway`, repository `latchway-js`, workflow file
+The complete dependency scan, test, browser, build, reproducibility, archive
+allowlist, consumer, and documentation gates then pass before the workflow
+creates the JavaScript annotated tag. The tag and draft carry a deterministic
+transaction ID derived from the repository, workflow, exact source commit,
+`v1.0.0`, and the GitHub run ID. A failed job may be resumed only by using
+GitHub's **Re-run failed jobs** operation on that same run. After any tag,
+draft, or registry mutation, never use **Re-run all jobs** and never start a
+fresh dispatch: the successful owner-binding jobs must remain successful while
+only the failed job and its dependents resume. A rerun-all or fresh dispatch
+fails the early v1 owner guard rather than adopting or altering the earlier
+transaction.
+
+The exact GitHub draft is staged before the first npm mutation. Every fixed
+asset is uploaded only when absent; an existing asset is adopted only after its
+digest or downloaded bytes match. npm publication uses the deterministic
+reviewed archives and trusted publishing. A tokenless follow-up installs each
+published package into a clean consumer and verifies registry bytes, npm
+signatures, the Sigstore publish attestation, and SLSA provenance bound to
+`Latchway/latchway-js`, the exact source commit, `refs/heads/main`,
+`workflow_dispatch`, and `.github/workflows/single-maintainer-release.yml`.
+Only after that gate does the workflow add the registry evidence to the draft,
+re-download or digest-check the complete 32-asset closure, attest it, and
+finalize the release. Existing `1.0.0` versions are therefore not considered
+adopted merely because their tarball bytes match. This path does not claim
+independent review, owner-enforced immutable releases, full evidence gating, or
+release-qualified status.
+
+The four transaction artifacts (intent, core gate, deterministic release
+inputs, and registry evidence) are retained for 90 days. Reruns never use
+`--clobber`, move a tag, replace an asset, or weaken a mismatched transaction.
+
+Create a `single-maintainer-v1` GitHub environment restricted to `main`. Define
+the environment-scoped variable `LATCHWAY_RELEASE_CONTROL_POLICY_ID` there with
+the exact value
+`latchway-release-controls-v1:latchway-js:single-maintainer-v1`; do not define
+it at repository or organization scope. Every environment-bearing job checks
+that sentinel as its first step, before an action, credential, OIDC request, or
+mutation. The environment contains no npm token and does not require an
+independent reviewer. For this launch profile, configure each JavaScript
+package's one npm trusted publisher as organization `Latchway`, repository
+`latchway-js`, workflow file
 `single-maintainer-release.yml`, environment `single-maintainer-v1`, and the
 publish action. npm permits only one trusted publisher per package: while this
 tuple is active, strict `release.yml` cannot publish. Moving to `strict_full`
@@ -47,9 +89,20 @@ gh workflow run single-maintainer-release.yml --ref main \
   -f confirmation=publish-v1.0.0-with-deferred-assurance
 ```
 
-## Registry and repository setup
+Dispatch only after the public core `v1.0.0` single-maintainer release exists
+with its exact Docker Compose and Cloud Run evidence. If a dispatch reaches
+any mutation and later fails, use **Re-run failed jobs** on that owner run; do
+not use rerun-all and do not start a new dispatch for recovery.
 
-Before the first automated release, configure these external controls:
+## Strict full registry and repository setup
+
+These controls belong to the later `strict_full` migration, not the
+`single_maintainer_v1` launch above. Apply them only when an independent
+reviewer is available and all four npm packages are deliberately moved from
+the `single-maintainer-release.yml` trusted-publisher tuple back to
+`release.yml` with environment `npm`. npm supports only one trusted publisher
+per package, so configuring this section during the launch profile would
+disable its publication workflow.
 
 1. Install an active ruleset for `refs/tags/v*` that allows tag creation only
    through the GitHub Actions integration used by `release.yml` and denies tag

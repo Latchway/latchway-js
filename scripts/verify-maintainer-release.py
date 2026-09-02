@@ -318,7 +318,46 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
     if coordinates.get("core_commit", contract["core_commit"]) != contract["core_commit"]:
         raise Rejected("maintainer_release_core_lock_mismatch")
     run_id = positive_run_number(arguments.run_id)
-    run_attempt = positive_run_number(arguments.run_attempt)
+    # A GitHub Actions rerun keeps the run ID and increments only the attempt.
+    # Validate the attempt, but deliberately keep it out of the immutable
+    # transaction record.  That makes a failed attempt resumable while a fresh
+    # dispatch (which has a different run ID) cannot adopt its tag or draft.
+    positive_run_number(arguments.run_attempt)
+    transaction_id = hashlib.sha256(
+        "\0".join(
+            (
+                arguments.repository_name,
+                ".github/workflows/single-maintainer-release.yml",
+                str(run_id),
+                arguments.release_commit,
+                TAG,
+            )
+        ).encode("utf-8")
+    ).hexdigest()
+    owner_url = f"https://github.com/{arguments.repository_name}/actions/runs/{run_id}"
+    tag_message = "\n".join(
+        (
+            "Latchway JavaScript SDKs v1.0.0",
+            "",
+            "Release profile: single_maintainer_v1",
+            "Assurance: deferred; not release-qualified or independently reviewed",
+            f"Transaction owner: {owner_url}",
+            f"Transaction ID: {transaction_id}",
+        )
+    )
+    release_body = "\n".join(
+        (
+            "Published with the `single_maintainer_v1` profile.",
+            "",
+            "The exact public Latchway core v1.0.0 release, including Docker Compose and Google Cloud Run evidence, was verified before this transaction began.",
+            "npm archives are accepted only with byte-identical registry data, registry signatures, and provenance bound to this repository, workflow, source commit, and main ref.",
+            "External platform/device/provider evidence and independent human review remain deferred.",
+            "This release is not `release_qualified`, fully evidence-gated, or independently reviewed.",
+            "",
+            f"Transaction owner: {owner_url}",
+            f"Transaction ID: {transaction_id}",
+        )
+    )
     intent = {
         "schema_version": 1,
         "kind": "latchway_single_maintainer_release_intent",
@@ -344,8 +383,20 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
         "workflow": {
             "file": ".github/workflows/single-maintainer-release.yml",
             "event": "workflow_dispatch",
-            "run_id": run_id,
-            "run_attempt": run_attempt,
+            "owner_run_id": run_id,
+        },
+        "transaction": {
+            "id": transaction_id,
+            "owner_repository": arguments.repository_name,
+            "owner_workflow": ".github/workflows/single-maintainer-release.yml",
+            "owner_run_id": run_id,
+            "source_commit": arguments.release_commit,
+            "tag": TAG,
+        },
+        "github_release": {
+            "title": "Latchway JavaScript SDKs 1.0.0 — single-maintainer v1",
+            "body": release_body,
+            "tag_message": tag_message,
         },
         "maintainer_confirmation": "accepted_exact_phrase",
         "deferred_evidence": DEFERRED_EVIDENCE,
@@ -363,8 +414,11 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
     return {
         "commit": arguments.release_commit,
         "core_tag": contract["core_release"],
+        "core_commit": contract["core_commit"],
+        "core_bundle_sha256": contract["bundle_sha256"],
         "intent_sha256": digest,
         "tag": TAG,
+        "transaction_id": transaction_id,
         "version": VERSION,
         **coordinates,
     }
