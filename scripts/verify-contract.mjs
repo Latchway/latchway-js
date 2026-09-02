@@ -4,8 +4,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 const expected = {
   contract: "1.0.0",
   release: "v1.0.0",
-  commit: "437708fb56d45196720b5769f2f59b0ee51f521d",
-  bundle: "14cd2d8ddc8c4b85b8ab002359b373772d599a4eaaa8e95b9b0b793c684215c6",
+  commit: "9a89edfd3d420dd2e0974950e334df35c8edab64",
+  bundle: "fbadedf640ea4524a981a1f0f4472a873abcd4ac53c7f0f87bdee6f2ba7fa5c5",
   protocol: 2,
   minimumServer: "1.0.0",
   maximumTestedServer: "1.0.x",
@@ -22,7 +22,7 @@ const fixtureHashes = new Map([
   ["attestation-binding-v1.json", "aaadef1172dffc3e600029e03259ff636a969cd4f925544fdccfb2c704b03659"],
   ["component-attestation-binding-v2.json", "8411308998cdffccf286892b94a6c759cbcf63b92e4727144d3a755dcd7c13d4"],
   ["dpop-v1.json", "b639e22dcd1c1a18e1292a044d96ec043c3be1e0271aacd6904bca39253bc5d4"],
-  ["installation-family-v2.json", "87ea67542983a406ef7257476429b8d23e36a90c1b448142a5728632e63395f3"],
+  ["installation-family-v2.json", "7ea657c5ca1de6d0ab1507b6187a1a6920fcf7486a6c6da178727df0efc5257d"],
   ["protocol-version.json", "4a6cf9f271bc9e83648eacf05f250f8fab24fc215d292a5a721148578f7372b1"],
 ]);
 

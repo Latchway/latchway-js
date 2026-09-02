@@ -93,6 +93,28 @@ describe("Latchway fetch client", () => {
     })).resolves.toMatchObject({ status: 200 });
   });
 
+  it("rejects non-canonical opaque paths before identity or session work", async () => {
+    const gateway = new MockGateway();
+    const client = makeBrowserClient(gateway, { mode: "memory" });
+    for (const path of [
+      "/proxy/assistant/files%2Flatest",
+      "/proxy/assistant/files%5Clatest",
+      "/proxy/assistant/models//latest",
+      "/proxy/assistant/models/",
+      "/proxy/assistant/http:evil.example",
+      "/proxy/assistant/HTTPS:evil.example",
+      "/proxy/assistant/%252e%252e/admin",
+      "/proxy/assistant/%252fadmin",
+    ]) {
+      await expect(client.fetch(path, {
+        method: "GET",
+        latchwayFeature: "assistant",
+      })).rejects.toMatchObject({ code: "transport_destination_not_allowed" });
+    }
+    expect(gateway.challengeCalls).toBe(0);
+    expect(gateway.protectedCalls).toBe(0);
+  });
+
   it("authorizes every declared structured protocol and the feature-scoped opaque route", async () => {
     const gateway = new MockGateway();
     const client = makeBrowserClient(gateway, { mode: "memory" });

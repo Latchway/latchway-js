@@ -25,6 +25,7 @@ const structuredDataPlaneMethods: ReadonlyMap<string, ReadonlySet<string>> = new
 ]);
 
 const opaqueMethods = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+const maximumOpaquePathLength = 2_048;
 
 /**
  * Enforces the public data-plane routes owned by the current contract. Keep
@@ -36,9 +37,17 @@ export function assertAllowedDataPlaneTarget(target: URL, method: string, featur
   if (structuredMethods?.has(normalizedMethod) === true) return;
 
   const opaquePrefix = `/proxy/${encodeURIComponent(feature)}/`;
-  if (target.pathname.startsWith(opaquePrefix) && target.pathname.length > opaquePrefix.length &&
-      opaqueMethods.has(normalizedMethod) && target.search === "") {
-    return;
+  if (target.pathname.startsWith(opaquePrefix) && opaqueMethods.has(normalizedMethod) && target.search === "") {
+    const remaining = target.pathname.slice(opaquePrefix.length);
+    const lowerRemaining = remaining.toLowerCase();
+    if (remaining.length >= 1 && remaining.length <= maximumOpaquePathLength &&
+        remaining.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..") &&
+        !lowerRemaining.includes("%25") && !lowerRemaining.includes("%2e") &&
+        !lowerRemaining.includes("%2f") && !lowerRemaining.includes("%5c") &&
+        !remaining.includes("\\") && !lowerRemaining.startsWith("http:") &&
+        !lowerRemaining.startsWith("https:")) {
+      return;
+    }
   }
   throw new LatchwayError(
     "transport_destination_not_allowed",

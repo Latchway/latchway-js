@@ -73,7 +73,10 @@ worker integrations.
 Before identity lookup or session creation, the transport requires the exact
 gateway origin and a contract-owned data-plane method/path: structured
 Responses, Chat Completions, Embeddings, Anthropic Messages, or that feature's
-opaque `/proxy/{feature}/...` route. Authenticated fetches use
+opaque `/proxy/{feature}/<safe-relative-path>` route. Opaque paths reject empty
+segments, dot aliases, encoded separators or percent escapes that could hide
+them, backslashes, query strings, and absolute-URL-shaped suffixes.
+Authenticated fetches use
 `redirect: "error"`; a custom fetch that nevertheless returns a redirected or
 cross-origin response fails closed.
 
