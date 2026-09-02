@@ -86,7 +86,7 @@ async function readInstalledVersions() {
 
 function validateManifest(value) {
   if (!isRecord(value) || value.schema_version !== 1 || value.support !== "experimental" ||
-      value.contract_bundle_sha256 !== "fbadedf640ea4524a981a1f0f4472a873abcd4ac53c7f0f87bdee6f2ba7fa5c5" ||
+      value.contract_bundle_sha256 !== "0d8eed1d275a2a3783e3d8ba1d8d62ab850faa8dc071a647d777317df8c3e617" ||
       !isRecord(value.profiles) || !isRecord(value.profiles.minimum) ||
       !isRecord(value.profiles.latest) || !isRecord(value.newest_compatible_candidates) ||
       !sameKeys(value.profiles.minimum, packageNames) || !sameKeys(value.profiles.latest, packageNames) ||
