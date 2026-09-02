@@ -20,6 +20,7 @@ import {
   parseArguments,
   publishArguments,
   reconcileBootstrapRegistry,
+  removeUnexpectedLatestArguments,
   sourceMaterialIdentity,
   validateReviewedCheckoutState,
 } from "./npm-namespace-bootstrap.mjs";
@@ -133,6 +134,19 @@ test("bootstrap inventory and publish command fix all five inert identities", ()
     `--@latchway:registry=${BOOTSTRAP_REGISTRY}`,
   );
   assert.equal(publishArguments("archive.tgz").some((argument) => argument.includes("latest")), false);
+  assert.deepEqual(removeUnexpectedLatestArguments("@latchway/client"), [
+    "dist-tag",
+    "rm",
+    "@latchway/client",
+    "latest",
+    `--registry=${BOOTSTRAP_REGISTRY}`,
+    BOOTSTRAP_SCOPE_REGISTRY_ARGUMENT,
+    "--ignore-scripts",
+  ]);
+  assert.throws(
+    () => removeUnexpectedLatestArguments("@attacker/client"),
+    /fixed bootstrap package set/u,
+  );
 });
 
 test("the scoped npmjs CLI pin overrides hostile environment and user config", async (context) => {
@@ -324,6 +338,7 @@ test("registry reconciliation adopts exact entries, creates only missing names, 
       assert.equal(basename(archive).startsWith("latchway-"), true);
       registry.present.add(definition.name);
     },
+    removeUnexpectedLatest: async () => assert.fail("latest must not be removed from an exact record"),
     sourceIdentity,
     waitImplementation: async () => {},
   });
@@ -338,6 +353,7 @@ test("registry reconciliation adopts exact entries, creates only missing names, 
   const rerun = await reconcileBootstrapRegistry(output, {
     fetchImplementation: registry.fetch,
     publish: async () => assert.fail("an exact existing bootstrap package must be adopted"),
+    removeUnexpectedLatest: async () => assert.fail("latest must not be removed from an exact record"),
     sourceIdentity,
     waitImplementation: async () => {},
   });
@@ -357,33 +373,137 @@ test("registry reconciliation accepts a publish collision only when exact bytes 
       registry.present.add(definition.name);
       throw new Error("simulated publish response loss");
     },
+    removeUnexpectedLatest: async () => assert.fail("latest must not be removed from an exact record"),
     sourceIdentity,
     waitImplementation: async () => {},
   });
   assert.equal(completed.package_count, 5);
 });
 
-test("registry reconciliation rejects latest, wrong identity, and non-identical archives before publishing", async (context) => {
+test("registry reconciliation removes only the exact npm first-publish latest alias", async (context) => {
+  const output = await mkdtemp(join(tmpdir(), "latchway-npm-bootstrap-latest-recovery-"));
+  context.after(async () => rm(output, { force: true, recursive: true }));
+  const sourceIdentity = await testSourceIdentity();
+  const inspection = await buildBootstrapArchives(output, TEST_NPM_COMMAND, sourceIdentity);
+  const initiallyPresent = new Set(BOOTSTRAP_PACKAGES.slice(1).map(({ name }) => name));
+  const latestNames = new Set();
+  const registry = await registryFixture(output, inspection, initiallyPresent, {
+    mutatePackument: (definition, packument) => {
+      if (latestNames.has(definition.name)) {
+        packument["dist-tags"].latest = BOOTSTRAP_VERSION;
+      }
+    },
+  });
+  const published = [];
+  const removed = [];
+  const completed = await reconcileBootstrapRegistry(output, {
+    fetchImplementation: registry.fetch,
+    publish: async (definition) => {
+      published.push(definition.name);
+      registry.present.add(definition.name);
+      latestNames.add(definition.name);
+    },
+    removeUnexpectedLatest: async (definition) => {
+      removed.push(definition.name);
+      latestNames.delete(definition.name);
+    },
+    sourceIdentity,
+    waitImplementation: async () => {},
+  });
+  assert.deepEqual(published, ["@latchway/client"]);
+  assert.deepEqual(removed, ["@latchway/client"]);
+  assert.equal(completed.package_count, 5);
+  assert.deepEqual([...latestNames], []);
+
+  latestNames.add("@latchway/client");
+  const resumed = await reconcileBootstrapRegistry(output, {
+    fetchImplementation: registry.fetch,
+    publish: async () => assert.fail("a byte-identical existing record must not be republished"),
+    removeUnexpectedLatest: async (definition) => {
+      removed.push(definition.name);
+      latestNames.delete(definition.name);
+      throw new Error("simulated dist-tag response loss");
+    },
+    sourceIdentity,
+    waitImplementation: async () => {},
+  });
+  assert.deepEqual(resumed, completed);
+  assert.deepEqual(removed, ["@latchway/client", "@latchway/client"]);
+});
+
+test("registry reconciliation rejects foreign tags, versions, identity, and archives before mutation", async (context) => {
   const output = await mkdtemp(join(tmpdir(), "latchway-npm-bootstrap-rejection-"));
   context.after(async () => rm(output, { force: true, recursive: true }));
   const sourceIdentity = await testSourceIdentity();
   const inspection = await buildBootstrapArchives(output, TEST_NPM_COMMAND, sourceIdentity);
   const allNames = new Set(BOOTSTRAP_PACKAGES.map(({ name }) => name));
   let publishCalls = 0;
+  let removalCalls = 0;
   const publish = async () => { publishCalls += 1; };
+  const removeUnexpectedLatest = async () => { removalCalls += 1; };
   const waitImplementation = async () => {};
 
-  const latest = await registryFixture(output, inspection, allNames, {
+  const foreignTag = await registryFixture(output, inspection, allNames, {
     mutatePackument: (_definition, packument) => {
       packument["dist-tags"].latest = BOOTSTRAP_VERSION;
+      packument["dist-tags"].next = BOOTSTRAP_VERSION;
     },
   });
   await assert.rejects(() => reconcileBootstrapRegistry(output, {
-    fetchImplementation: latest.fetch,
+    fetchImplementation: foreignTag.fetch,
     publish,
+    removeUnexpectedLatest,
     sourceIdentity,
     waitImplementation,
-  }), /never latest/u);
+  }), /only an exact singleton latest alias is recoverable/u);
+
+  const wrongLatestTarget = await registryFixture(output, inspection, allNames, {
+    mutatePackument: (_definition, packument) => {
+      packument["dist-tags"].latest = "1.0.0";
+    },
+  });
+  await assert.rejects(() => reconcileBootstrapRegistry(output, {
+    fetchImplementation: wrongLatestTarget.fetch,
+    publish,
+    removeUnexpectedLatest,
+    sourceIdentity,
+    waitImplementation,
+  }), /only an exact singleton latest alias is recoverable/u);
+
+  let clientMetadataReads = 0;
+  const changedBeforeRemoval = await registryFixture(output, inspection, allNames, {
+    mutatePackument: (definition, packument) => {
+      if (definition.name !== "@latchway/client") return;
+      clientMetadataReads += 1;
+      packument["dist-tags"].latest = BOOTSTRAP_VERSION;
+      if (clientMetadataReads > 1) packument["dist-tags"].next = BOOTSTRAP_VERSION;
+    },
+  });
+  await assert.rejects(() => reconcileBootstrapRegistry(output, {
+    fetchImplementation: changedBeforeRemoval.fetch,
+    publish,
+    removeUnexpectedLatest,
+    sourceIdentity,
+    waitImplementation,
+  }), /only an exact singleton latest alias is recoverable/u);
+  assert.equal(clientMetadataReads, 2);
+
+  const foreignVersion = await registryFixture(output, inspection, allNames, {
+    mutatePackument: (_definition, packument) => {
+      packument["dist-tags"].latest = BOOTSTRAP_VERSION;
+      packument.versions["1.0.0"] = globalThis.structuredClone(
+        packument.versions[BOOTSTRAP_VERSION],
+      );
+      packument.versions["1.0.0"].version = "1.0.0";
+    },
+  });
+  await assert.rejects(() => reconcileBootstrapRegistry(output, {
+    fetchImplementation: foreignVersion.fetch,
+    publish,
+    removeUnexpectedLatest,
+    sourceIdentity,
+    waitImplementation,
+  }), /one-version bootstrap closure/u);
 
   const identity = await registryFixture(output, inspection, allNames, {
     mutatePackument: (definition, packument) => {
@@ -395,6 +515,7 @@ test("registry reconciliation rejects latest, wrong identity, and non-identical 
   await assert.rejects(() => reconcileBootstrapRegistry(output, {
     fetchImplementation: identity.fetch,
     publish,
+    removeUnexpectedLatest,
     sourceIdentity,
     waitImplementation,
   }), /repository differs/u);
@@ -406,13 +527,15 @@ test("registry reconciliation rejects latest, wrong identity, and non-identical 
   await assert.rejects(() => reconcileBootstrapRegistry(output, {
     fetchImplementation: archive.fetch,
     publish,
+    removeUnexpectedLatest,
     sourceIdentity,
     waitImplementation,
   }), /not byte-identical/u);
   assert.equal(publishCalls, 0);
+  assert.equal(removalCalls, 0);
 });
 
-test("documentation pins npm trust coordinates while release workflows exclude bootstrap publication", async () => {
+test("documentation pins selected npm trust coordinates while release workflows exclude bootstrap publication", async () => {
   const documentation = await readFile(join(ROOT_PATH, "docs", "releasing.md"), "utf8");
   for (const [name, repository] of [
     ["@latchway/client", "Latchway/latchway-js"],
@@ -423,7 +546,7 @@ test("documentation pins npm trust coordinates while release workflows exclude b
   ]) {
     assert.match(documentation, new RegExp(
       `npm trust github ${name.replace("/", "\\/")} --repository ${repository.replace("/", "\\/")} ` +
-      "--file release\\.yml --environment npm --allow-publish --yes " +
+      "--file single-maintainer-release\\.yml --environment single-maintainer-v1 --allow-publish --yes " +
       '--registry="\\$npm_registry" "\\$npm_scope_registry"',
       "u",
     ));
@@ -437,9 +560,13 @@ test("documentation pins npm trust coordinates while release workflows exclude b
     /npm trust list @latchway\/react-native[^\n]+--registry="\$npm_registry" "\$npm_scope_registry"/u,
   );
   assert.match(documentation, /npm 11\.15\.0 or newer/u);
+  assert.match(documentation, /strict `release\.yml` cannot publish/u);
+  assert.match(documentation, /npm permits only one trusted publisher per package/u);
   assert.doesNotMatch(documentation, /namespace:bootstrap -- --/u);
-  const workflow = await readFile(join(ROOT_PATH, ".github", "workflows", "release.yml"), "utf8");
-  assert.doesNotMatch(workflow, /namespace-bootstrap|0\.0\.0-bootstrap|--tag[= ]bootstrap/u);
+  for (const filename of ["release.yml", "single-maintainer-release.yml"]) {
+    const workflow = await readFile(join(ROOT_PATH, ".github", "workflows", filename), "utf8");
+    assert.doesNotMatch(workflow, /namespace-bootstrap|0\.0\.0-bootstrap|--tag[= ]bootstrap/u);
+  }
 });
 
 async function registryFixture(output, inspection, present, mutations = {}) {

@@ -8,6 +8,45 @@ version, or a GitHub release. Only the verified core-promotion
 `repository_dispatch` may start the release workflow; that workflow owns
 creation or verification of the evidence-bound annotated SDK tag.
 
+## Single-maintainer v1 publication profile
+
+The additive `single-maintainer-release.yml` workflow is the explicit launch
+path when an independent human reviewer and the deferred platform/provider
+evidence are not yet available. It is limited to version `1.0.0`, an exact
+40-character commit selected from `main`, the checked-in released core lock,
+and the confirmation phrase
+`publish-v1.0.0-with-deferred-assurance`. It records
+`single_maintainer_v1`, `release_qualified: false`, the deferred evidence, and
+the forbidden stronger claims before doing any work.
+
+The complete dependency scan, test, browser, build, reproducibility, archive
+allowlist, consumer, and documentation gates pass before the workflow creates
+the public annotated tag. Publication then uses the deterministic reviewed
+archives, npm trusted publishing with provenance, byte-for-byte adoption of an
+existing version, and an exact GitHub release whose title and notes retain the
+deferred-assurance label. This path does not claim independent review,
+owner-enforced immutable releases, full evidence gating, or release-qualified
+status.
+
+Create a `single-maintainer-v1` GitHub environment restricted to `main`. It
+contains no npm token and does not require an independent reviewer. For this
+launch profile, configure each JavaScript package's one npm trusted publisher
+as organization `Latchway`, repository `latchway-js`, workflow file
+`single-maintainer-release.yml`, environment `single-maintainer-v1`, and the
+publish action. npm permits only one trusted publisher per package: while this
+tuple is active, strict `release.yml` cannot publish. Moving to `strict_full`
+later requires deliberate reconfiguration of all four packages back to
+workflow file `release.yml` and environment `npm`; never assume both publishers
+are active.
+
+```bash
+gh workflow run single-maintainer-release.yml --ref main \
+  -f release_profile=single_maintainer_v1 \
+  -f release_commit="$(git rev-parse HEAD)" \
+  -f release_version=1.0.0 \
+  -f confirmation=publish-v1.0.0-with-deferred-assurance
+```
+
 ## Registry and repository setup
 
 Before the first automated release, configure these external controls:
@@ -153,25 +192,38 @@ pnpm run namespace:bootstrap --publish \
 Do not run that command as part of ordinary release preparation. It always
 passes `--access=public`, `--tag=bootstrap`, `--registry` and the explicit
 `--@latchway:registry` override for `https://registry.npmjs.org/`, and
-`--ignore-scripts`; it never publishes under `latest`. The two literal registry
-pins prevent a hostile scoped environment or user npm configuration from
-redirecting a scoped package operation. Before any publish, it
-checks every package record. An absent name is created, while an existing name
-is adopted only if its sole version, sole `bootstrap` dist-tag, manifest,
-repository identity, integrity, shasum, and downloaded tarball bytes exactly
-match the reviewed local archive. This makes a partial prior run resumable: only
-missing names are published, and even a lost publish response is accepted only
-after the exact immutable bytes appear. Any foreign version, tag, manifest, or
-archive fails before another name is changed.
+`--ignore-scripts`; its publish request never selects `latest`. The two literal
+registry pins prevent a hostile scoped environment or user npm configuration
+from redirecting a scoped package operation. Before any publish, it checks every
+package record. An absent name is created, while an existing name is adopted
+only if its sole version, sole `bootstrap` dist-tag, manifest, repository
+identity, integrity, shasum, and downloaded tarball bytes exactly match the
+reviewed local archive. This makes a partial prior run resumable: only missing
+names are published, and even a lost publish response is accepted only after the
+exact immutable bytes appear.
+
+npm may nevertheless materialize a `latest` alias when the very first version
+of a new package is created, even though the fixed publish command requested
+`bootstrap`. The helper recovers only the exact observed singleton case: the
+record must have exactly version `0.0.0-bootstrap.0`, exactly the `bootstrap` and
+`latest` tags both pointing to that version, and the manifest, repository,
+digests, and downloaded archive must already be byte-identical to the reviewed
+local package. It then removes only `latest` with the same fixed npmjs registry
+arguments and revalidates the public record. The removal can request another
+interactive two-factor confirmation. A foreign version, any other tag, a
+different tag target, manifest, or archive fails before the helper invokes
+either publication or tag removal.
 
 After the last create, the script fetches and revalidates the complete
 five-package registry closure and writes
 `.artifacts/npm-namespace-bootstrap/completed.json`. Absence of that record means
 the bootstrap is not complete. Keep `bootstrap` on `0.0.0-bootstrap.0`; do not
-add or move `latest`. The completion record repeats the exact source commit,
-helper and license hashes, and npm version from the inspection. Inspect the
-public result independently, and keep the short-lived interactive session only
-through trusted-publisher setup and verification:
+add or move `latest`. `completed.json` is written only after all five records
+have been fetched again with no `latest` or other tag present. The completion
+record repeats the exact source commit, helper and license hashes, and npm
+version from the inspection. Inspect the public result independently, and keep
+the short-lived interactive session only through trusted-publisher setup and
+verification:
 
 ```bash
 npm_registry='https://registry.npmjs.org/'
@@ -184,18 +236,19 @@ npm view @latchway/react-native dist-tags versions repository --json --registry=
 ```
 
 Once all five records exist, use npm 11.15.0 or newer (the reviewed 11.17.0
-bootstrap toolchain already qualifies) to configure GitHub Actions trusted
-publishing. `--file release.yml` is the workflow filename, not a path.
+bootstrap toolchain already qualifies) to configure the selected
+`single_maintainer_v1` GitHub Actions trusted publishers. `--file
+single-maintainer-release.yml` is the workflow filename, not a path.
 The four JavaScript packages trust `Latchway/latchway-js`; the React Native
 package trusts `Latchway/latchway-react-native-sdk`. Every publisher is limited
-to environment `npm` and the publish action:
+to environment `single-maintainer-v1` and the publish action:
 
 ```bash
-npm trust github @latchway/client --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
-npm trust github @latchway/openai --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
-npm trust github @latchway/vercel-ai --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
-npm trust github @latchway/langchain --repository Latchway/latchway-js --file release.yml --environment npm --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
-npm trust github @latchway/react-native --repository Latchway/latchway-react-native-sdk --file release.yml --environment npm --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
+npm trust github @latchway/client --repository Latchway/latchway-js --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
+npm trust github @latchway/openai --repository Latchway/latchway-js --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
+npm trust github @latchway/vercel-ai --repository Latchway/latchway-js --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
+npm trust github @latchway/langchain --repository Latchway/latchway-js --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
+npm trust github @latchway/react-native --repository Latchway/latchway-react-native-sdk --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
 ```
 
 This setup requires each package record to exist and the configuring npm account
@@ -204,6 +257,11 @@ configuration per package, so a pre-existing configuration must be reviewed and
 removed deliberately rather than overwritten by assumption. A granular access
 token that bypasses two-factor authentication cannot configure trusted
 publishing; use the authenticated npm 11.15.0-or-newer CLI session.
+
+These five commands intentionally select the lower-assurance workflow. They
+make the strict `release.yml` / `npm` tuple inactive. Before a later
+`strict_full` release, explicitly replace each package's publisher with that
+strict tuple and verify all five settings again.
 
 Verify every exact configuration, then end the short-lived interactive session:
 

@@ -128,6 +128,21 @@ export function publishArguments(archive) {
   ];
 }
 
+export function removeUnexpectedLatestArguments(packageName) {
+  if (!BOOTSTRAP_PACKAGES.some((definition) => definition.name === packageName)) {
+    throw new Error("Unexpected-latest recovery is limited to the fixed bootstrap package set.");
+  }
+  return [
+    "dist-tag",
+    "rm",
+    packageName,
+    "latest",
+    `--registry=${BOOTSTRAP_REGISTRY}`,
+    BOOTSTRAP_SCOPE_REGISTRY_ARGUMENT,
+    "--ignore-scripts",
+  ];
+}
+
 export function parseArguments(arguments_) {
   let mode;
   let confirmation;
@@ -288,6 +303,15 @@ export async function publishBootstrapArchives(
           NPM_CONFIG_CACHE: join(temporaryRoot, "npm-cache"),
         });
       },
+      removeUnexpectedLatest: async (definition) => {
+        runNpm(
+          npmCommand,
+          removeUnexpectedLatestArguments(definition.name),
+          safeOutput,
+          "inherit",
+          { NPM_CONFIG_CACHE: join(temporaryRoot, "npm-cache") },
+        );
+      },
       sourceIdentity,
       waitImplementation: wait,
     });
@@ -299,8 +323,11 @@ export async function publishBootstrapArchives(
 export async function reconcileBootstrapRegistry(outputDirectory, options) {
   const safeOutput = assertSafeOutputDirectory(outputDirectory);
   if (typeof options?.fetchImplementation !== "function" || typeof options?.publish !== "function" ||
+      typeof options?.removeUnexpectedLatest !== "function" ||
       typeof options?.waitImplementation !== "function") {
-    throw new Error("Registry reconciliation requires explicit fetch, publish, and wait implementations.");
+    throw new Error(
+      "Registry reconciliation requires explicit fetch, publish, unexpected-latest removal, and wait implementations.",
+    );
   }
   assertSourceIdentityShape(options.sourceIdentity);
   const license = await readFile(LICENSE_PATH);
@@ -319,6 +346,10 @@ export async function reconcileBootstrapRegistry(outputDirectory, options) {
   for (let index = 0; index < localPackages.length; index += 1) {
     if (initialStates[index].state === "verified") continue;
     const package_ = localPackages[index];
+    if (initialStates[index].state === "recoverable-unexpected-latest") {
+      await recoverUnexpectedLatest(package_, options);
+      continue;
+    }
     let publishError;
     try {
       await options.publish(package_.definition, package_.archive);
@@ -326,7 +357,10 @@ export async function reconcileBootstrapRegistry(outputDirectory, options) {
       publishError = error;
     }
     try {
-      await waitForVerifiedRegistryState(package_, options);
+      const publishedState = await waitForCreatedRegistryState(package_, options);
+      if (publishedState.state === "recoverable-unexpected-latest") {
+        await recoverUnexpectedLatest(package_, options);
+      }
     } catch (verificationError) {
       if (publishError !== undefined) {
         throw new AggregateError(
@@ -662,7 +696,7 @@ async function inspectRegistryState(package_, fetchImplementation) {
     await readBoundedResponse(response, MAXIMUM_PACKUMENT_BYTES, `${definition.name} registry metadata`),
     `${definition.name} registry metadata`,
   );
-  const versionManifest = assertRegistryIdentity(packument, definition, manifest);
+  const { state, versionManifest } = assertRegistryIdentity(packument, definition, manifest);
   const distribution = versionManifest.dist;
   if (!isRecord(distribution) || distribution.integrity !== inspection.integrity ||
       distribution.shasum !== inspection.shasum || typeof distribution.tarball !== "string") {
@@ -687,7 +721,7 @@ async function inspectRegistryState(package_, fetchImplementation) {
     throw new Error(`${definition.name} registry archive is not byte-identical to ${basename(archive)}.`);
   }
   return {
-    state: "verified",
+    state,
     record: {
       name: definition.name,
       version: BOOTSTRAP_VERSION,
@@ -708,10 +742,6 @@ function assertRegistryIdentity(packument, definition, manifest) {
       !isRecord(packument["dist-tags"]) || !isRecord(packument.versions)) {
     throw new Error(`${definition.name} registry identity is malformed.`);
   }
-  if (JSON.stringify(Object.keys(packument["dist-tags"]).sort()) !== JSON.stringify([BOOTSTRAP_TAG]) ||
-      packument["dist-tags"][BOOTSTRAP_TAG] !== BOOTSTRAP_VERSION) {
-    throw new Error(`${definition.name} must have only the exact bootstrap dist-tag and never latest.`);
-  }
   if (JSON.stringify(Object.keys(packument.versions).sort()) !== JSON.stringify([BOOTSTRAP_VERSION])) {
     throw new Error(`${definition.name} registry versions are not the one-version bootstrap closure.`);
   }
@@ -729,7 +759,19 @@ function assertRegistryIdentity(packument, definition, manifest) {
       throw new Error(`${definition.name} registry manifest contains forbidden field ${field}.`);
     }
   }
-  return versionManifest;
+  const tags = packument["dist-tags"];
+  const tagNames = Object.keys(tags).sort();
+  if (JSON.stringify(tagNames) === JSON.stringify([BOOTSTRAP_TAG]) &&
+      tags[BOOTSTRAP_TAG] === BOOTSTRAP_VERSION) {
+    return { state: "verified", versionManifest };
+  }
+  if (JSON.stringify(tagNames) === JSON.stringify([BOOTSTRAP_TAG, "latest"].sort()) &&
+      tags[BOOTSTRAP_TAG] === BOOTSTRAP_VERSION && tags.latest === BOOTSTRAP_VERSION) {
+    return { state: "recoverable-unexpected-latest", versionManifest };
+  }
+  throw new Error(
+    `${definition.name} must have only the exact bootstrap dist-tag; only an exact singleton latest alias is recoverable.`,
+  );
 }
 
 function assertRegistryTarballURL(value, packageName) {
@@ -747,13 +789,54 @@ function assertRegistryTarballURL(value, packageName) {
   return url;
 }
 
+async function recoverUnexpectedLatest(package_, options) {
+  const preflight = await inspectRegistryState(package_, options.fetchImplementation);
+  if (preflight.state === "verified") return preflight;
+  if (preflight.state !== "recoverable-unexpected-latest") {
+    throw new Error(
+      `${package_.definition.name} is not the exact singleton unexpected-latest state.`,
+    );
+  }
+  let removalError;
+  try {
+    await options.removeUnexpectedLatest(package_.definition);
+  } catch (error) {
+    removalError = error;
+  }
+  try {
+    return await waitForVerifiedRegistryState(package_, options);
+  } catch (verificationError) {
+    if (removalError !== undefined) {
+      throw new AggregateError(
+        [removalError, verificationError],
+        `${package_.definition.name} latest removal failed and the exact bootstrap-only state did not appear.`,
+        { cause: verificationError },
+      );
+    }
+    throw verificationError;
+  }
+}
+
+async function waitForCreatedRegistryState(package_, options) {
+  return waitForRegistryState(package_, options, new Set([
+    "verified",
+    "recoverable-unexpected-latest",
+  ]));
+}
+
 async function waitForVerifiedRegistryState(package_, options) {
+  return waitForRegistryState(package_, options, new Set(["verified"]));
+}
+
+async function waitForRegistryState(package_, options, acceptedStates) {
   let lastError;
   for (let attempt = 1; attempt <= REGISTRY_VERIFY_ATTEMPTS; attempt += 1) {
     try {
       const state = await inspectRegistryState(package_, options.fetchImplementation);
-      if (state.state === "verified") return state;
-      lastError = new Error(`${package_.definition.name} is not visible in the registry yet.`);
+      if (acceptedStates.has(state.state)) return state;
+      lastError = state.state === "recoverable-unexpected-latest" ?
+        new Error(`${package_.definition.name} still has the unexpected latest alias.`) :
+        new Error(`${package_.definition.name} is not visible in the registry yet.`);
     } catch (error) {
       lastError = error;
     }
