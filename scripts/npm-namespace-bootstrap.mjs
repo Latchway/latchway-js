@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import {
   copyFile,
@@ -14,6 +14,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { performance } from "node:perf_hooks";
+import { clearInterval, clearTimeout, setInterval, setTimeout } from "node:timers";
 import { setTimeout as wait } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { TextDecoder } from "node:util";
@@ -35,8 +37,10 @@ const TRACKED_BOOTSTRAP_INPUTS = Object.freeze(["LICENSE", "scripts/npm-namespac
 const MAXIMUM_ARCHIVE_BYTES = 64 * 1024;
 const MAXIMUM_COMMAND_OUTPUT_BYTES = 1024 * 1024;
 const MAXIMUM_PACKUMENT_BYTES = 512 * 1024;
-const REGISTRY_VERIFY_ATTEMPTS = 12;
-const REGISTRY_VERIFY_DELAY_MILLISECONDS = 2_000;
+export const REGISTRY_VERIFY_TIMEOUT_MILLISECONDS = 20 * 60 * 1000;
+export const NPM_PUBLISH_TIMEOUT_MILLISECONDS = 20 * 60 * 1000;
+const REGISTRY_VERIFY_DELAY_MILLISECONDS = 10_000;
+const PROGRESS_INTERVAL_MILLISECONDS = 30_000;
 const EXPECTED_ARCHIVE_ENTRIES = Object.freeze([
   "package/LICENSE",
   "package/README.md",
@@ -122,21 +126,6 @@ export function publishArguments(archive) {
     archive,
     "--access=public",
     `--tag=${BOOTSTRAP_TAG}`,
-    `--registry=${BOOTSTRAP_REGISTRY}`,
-    BOOTSTRAP_SCOPE_REGISTRY_ARGUMENT,
-    "--ignore-scripts",
-  ];
-}
-
-export function removeUnexpectedLatestArguments(packageName) {
-  if (!BOOTSTRAP_PACKAGES.some((definition) => definition.name === packageName)) {
-    throw new Error("Unexpected-latest recovery is limited to the fixed bootstrap package set.");
-  }
-  return [
-    "dist-tag",
-    "rm",
-    packageName,
-    "latest",
     `--registry=${BOOTSTRAP_REGISTRY}`,
     BOOTSTRAP_SCOPE_REGISTRY_ARGUMENT,
     "--ignore-scripts",
@@ -260,13 +249,15 @@ export async function buildBootstrapArchives(outputDirectory, npmCommand = npmEx
     }
     await rejectUnexpectedOutputFiles(safeOutput, expectedFiles);
     const inspection = {
-      schema_version: 1,
+      schema_version: 2,
       kind: "latchway_npm_namespace_bootstrap_inspection",
       version: BOOTSTRAP_VERSION,
       dist_tag: BOOTSTRAP_TAG,
       registry: BOOTSTRAP_REGISTRY,
       package_count: packages.length,
       publication_performed: false,
+      stable_release: false,
+      registry_latest_alias_policy: "allow_only_exact_singleton_bootstrap",
       source: sourceIdentity.source,
       toolchain: sourceIdentity.toolchain,
       packages,
@@ -298,20 +289,22 @@ export async function publishBootstrapArchives(
   try {
     return await reconcileBootstrapRegistry(safeOutput, {
       fetchImplementation: globalThis.fetch,
-      publish: async (_definition, archive) => {
-        runNpm(npmCommand, publishArguments(archive), safeOutput, "inherit", {
-          NPM_CONFIG_CACHE: join(temporaryRoot, "npm-cache"),
-        });
+      beforePublish: async () => {
+        const currentSourceIdentity = await verifyReviewedCheckout(reviewedCommit, npmCommand);
+        if (JSON.stringify(currentSourceIdentity) !== JSON.stringify(sourceIdentity)) {
+          throw new Error("Reviewed source or npm toolchain changed before namespace publication.");
+        }
       },
-      removeUnexpectedLatest: async (definition) => {
-        runNpm(
+      publish: async (definition, archive) => {
+        await runNpmPublish(
           npmCommand,
-          removeUnexpectedLatestArguments(definition.name),
+          publishArguments(archive),
           safeOutput,
-          "inherit",
           { NPM_CONFIG_CACHE: join(temporaryRoot, "npm-cache") },
+          { progressImplementation: (event) => reportProgress({ name: definition.name, ...event }) },
         );
       },
+      progressImplementation: reportProgress,
       sourceIdentity,
       waitImplementation: wait,
     });
@@ -323,10 +316,12 @@ export async function publishBootstrapArchives(
 export async function reconcileBootstrapRegistry(outputDirectory, options) {
   const safeOutput = assertSafeOutputDirectory(outputDirectory);
   if (typeof options?.fetchImplementation !== "function" || typeof options?.publish !== "function" ||
-      typeof options?.removeUnexpectedLatest !== "function" ||
-      typeof options?.waitImplementation !== "function") {
+      typeof options?.waitImplementation !== "function" ||
+      (options.beforePublish !== undefined && typeof options.beforePublish !== "function") ||
+      (options.nowImplementation !== undefined && typeof options.nowImplementation !== "function") ||
+      (options.progressImplementation !== undefined && typeof options.progressImplementation !== "function")) {
     throw new Error(
-      "Registry reconciliation requires explicit fetch, publish, unexpected-latest removal, and wait implementations.",
+      "Registry reconciliation requires explicit fetch, publish, and wait implementations with optional clock and progress functions.",
     );
   }
   assertSourceIdentityShape(options.sourceIdentity);
@@ -339,35 +334,34 @@ export async function reconcileBootstrapRegistry(outputDirectory, options) {
     localPackages.push({ archive, definition, inspection, manifest });
   }
 
-  const initialStates = [];
   for (const package_ of localPackages) {
-    initialStates.push(await inspectRegistryState(package_, options.fetchImplementation));
+    await inspectRegistryState(package_, options.fetchImplementation);
   }
-  for (let index = 0; index < localPackages.length; index += 1) {
-    if (initialStates[index].state === "verified") continue;
-    const package_ = localPackages[index];
-    if (initialStates[index].state === "recoverable-unexpected-latest") {
-      await recoverUnexpectedLatest(package_, options);
+  for (const package_ of localPackages) {
+    // Earlier packages may spend minutes in npm's scan queue. Recheck this
+    // package immediately before deciding whether its name is still absent.
+    const current = await inspectRegistryState(package_, options.fetchImplementation);
+    if (current.state === "verified") continue;
+    if (current.state === "pending") {
+      await waitForCreatedRegistryState(package_, options);
       continue;
     }
     let publishError;
+    await options.beforePublish?.();
+    const currentArchive = await inspectArchive(package_.archive, package_.definition, package_.manifest, license);
+    if (!currentArchive.archiveBytes.equals(package_.inspection.archiveBytes)) {
+      throw new Error(`${package_.definition.name} local archive changed before publication.`);
+    }
     try {
       await options.publish(package_.definition, package_.archive);
     } catch (error) {
       publishError = error;
     }
     try {
-      const publishedState = await waitForCreatedRegistryState(package_, options);
-      if (publishedState.state === "recoverable-unexpected-latest") {
-        await recoverUnexpectedLatest(package_, options);
-      }
+      await waitForCreatedRegistryState(package_, options);
     } catch (verificationError) {
-      if (publishError !== undefined) {
-        throw new AggregateError(
-          [publishError, verificationError],
-          `${package_.definition.name} publication failed and no exact bootstrap record appeared.`,
-          { cause: verificationError },
-        );
+      if (publishError !== undefined && verificationError.code === "LATCHWAY_BOOTSTRAP_REGISTRY_PENDING") {
+        verificationError.publication_response = "failed_or_unknown";
       }
       throw verificationError;
     }
@@ -375,19 +369,18 @@ export async function reconcileBootstrapRegistry(outputDirectory, options) {
 
   const packages = [];
   for (const package_ of localPackages) {
-    const state = await inspectRegistryState(package_, options.fetchImplementation);
-    if (state.state !== "verified") {
-      throw new Error(`${package_.definition.name} disappeared during final registry-closure verification.`);
-    }
+    const state = await waitForCreatedRegistryState(package_, options);
     packages.push(state.record);
   }
   const completed = {
-    schema_version: 1,
+    schema_version: 2,
     kind: "latchway_npm_namespace_bootstrap_completed",
     version: BOOTSTRAP_VERSION,
     dist_tag: BOOTSTRAP_TAG,
     registry: BOOTSTRAP_REGISTRY,
     package_count: packages.length,
+    stable_release: false,
+    registry_latest_alias_policy: "allow_only_exact_singleton_bootstrap",
     source: options.sourceIdentity.source,
     toolchain: options.sourceIdentity.toolchain,
     packages,
@@ -679,14 +672,14 @@ function assertBootstrapManifest(value, expected, packageName) {
   }
 }
 
-async function inspectRegistryState(package_, fetchImplementation) {
+async function inspectRegistryState(package_, fetchImplementation, visibilitySignal) {
   const { archive, definition, inspection, manifest } = package_;
   const packumentURL = new URL(encodeURIComponent(definition.name), BOOTSTRAP_REGISTRY);
   const response = await fetchImplementation(packumentURL, {
     cache: "no-store",
     headers: { accept: "application/json" },
     redirect: "error",
-    signal: AbortSignal.timeout(15_000),
+    signal: registryRequestSignal(visibilitySignal),
   });
   if (response.status === 404) return { state: "absent" };
   if (!response.ok) {
@@ -696,7 +689,7 @@ async function inspectRegistryState(package_, fetchImplementation) {
     await readBoundedResponse(response, MAXIMUM_PACKUMENT_BYTES, `${definition.name} registry metadata`),
     `${definition.name} registry metadata`,
   );
-  const { state, versionManifest } = assertRegistryIdentity(packument, definition, manifest);
+  const { observedDistTags, registryLatestAlias, versionManifest } = assertRegistryIdentity(packument, definition, manifest);
   const distribution = versionManifest.dist;
   if (!isRecord(distribution) || distribution.integrity !== inspection.integrity ||
       distribution.shasum !== inspection.shasum || typeof distribution.tarball !== "string") {
@@ -707,8 +700,9 @@ async function inspectRegistryState(package_, fetchImplementation) {
     cache: "no-store",
     headers: { accept: "application/octet-stream" },
     redirect: "error",
-    signal: AbortSignal.timeout(15_000),
+    signal: registryRequestSignal(visibilitySignal),
   });
+  if (tarballResponse.status === 404) return { state: "pending", visibility: "archive" };
   if (!tarballResponse.ok) {
     throw new Error(`${definition.name} registry archive returned HTTP ${tarballResponse.status}.`);
   }
@@ -721,11 +715,13 @@ async function inspectRegistryState(package_, fetchImplementation) {
     throw new Error(`${definition.name} registry archive is not byte-identical to ${basename(archive)}.`);
   }
   return {
-    state,
+    state: "verified",
     record: {
       name: definition.name,
       version: BOOTSTRAP_VERSION,
       dist_tag: BOOTSTRAP_TAG,
+      observed_dist_tags: observedDistTags,
+      registry_latest_alias: registryLatestAlias,
       repository: definition.repository,
       manifest,
       archive: basename(archive),
@@ -755,7 +751,7 @@ function assertRegistryIdentity(packument, definition, manifest) {
       // npm omits the package.json files allowlist from the public packument.
       // inspectRegistryState still requires the downloaded registry archive to
       // be byte-identical, so the reviewed package.json and three-file closure
-      // remain the authority before any recovery mutation.
+      // remain the authority before adopting the existing namespace.
       continue;
     }
     if (JSON.stringify(versionManifest[field]) !== JSON.stringify(expected)) {
@@ -771,14 +767,22 @@ function assertRegistryIdentity(packument, definition, manifest) {
   const tagNames = Object.keys(tags).sort();
   if (JSON.stringify(tagNames) === JSON.stringify([BOOTSTRAP_TAG]) &&
       tags[BOOTSTRAP_TAG] === BOOTSTRAP_VERSION) {
-    return { state: "verified", versionManifest };
+    return {
+      observedDistTags: { [BOOTSTRAP_TAG]: BOOTSTRAP_VERSION },
+      registryLatestAlias: false,
+      versionManifest,
+    };
   }
   if (JSON.stringify(tagNames) === JSON.stringify([BOOTSTRAP_TAG, "latest"].sort()) &&
       tags[BOOTSTRAP_TAG] === BOOTSTRAP_VERSION && tags.latest === BOOTSTRAP_VERSION) {
-    return { state: "recoverable-unexpected-latest", versionManifest };
+    return {
+      observedDistTags: { [BOOTSTRAP_TAG]: BOOTSTRAP_VERSION, latest: BOOTSTRAP_VERSION },
+      registryLatestAlias: true,
+      versionManifest,
+    };
   }
   throw new Error(
-    `${definition.name} must have only the exact bootstrap dist-tag; only an exact singleton latest alias is recoverable.`,
+    `${definition.name} must have the exact bootstrap dist-tag and at most its exact singleton latest alias.`,
   );
 }
 
@@ -797,62 +801,58 @@ function assertRegistryTarballURL(value, packageName) {
   return url;
 }
 
-async function recoverUnexpectedLatest(package_, options) {
-  const preflight = await inspectRegistryState(package_, options.fetchImplementation);
-  if (preflight.state === "verified") return preflight;
-  if (preflight.state !== "recoverable-unexpected-latest") {
-    throw new Error(
-      `${package_.definition.name} is not the exact singleton unexpected-latest state.`,
-    );
-  }
-  let removalError;
-  try {
-    await options.removeUnexpectedLatest(package_.definition);
-  } catch (error) {
-    removalError = error;
-  }
-  try {
-    return await waitForVerifiedRegistryState(package_, options);
-  } catch (verificationError) {
-    if (removalError !== undefined) {
-      throw new AggregateError(
-        [removalError, verificationError],
-        `${package_.definition.name} latest removal failed and the exact bootstrap-only state did not appear.`,
-        { cause: verificationError },
-      );
-    }
-    throw verificationError;
-  }
-}
-
 async function waitForCreatedRegistryState(package_, options) {
-  return waitForRegistryState(package_, options, new Set([
-    "verified",
-    "recoverable-unexpected-latest",
-  ]));
-}
-
-async function waitForVerifiedRegistryState(package_, options) {
-  return waitForRegistryState(package_, options, new Set(["verified"]));
-}
-
-async function waitForRegistryState(package_, options, acceptedStates) {
-  let lastError;
-  for (let attempt = 1; attempt <= REGISTRY_VERIFY_ATTEMPTS; attempt += 1) {
+  const now = options.nowImplementation ?? (() => performance.now());
+  const started = now();
+  const deadline = started + REGISTRY_VERIFY_TIMEOUT_MILLISECONDS;
+  let lastProgress = -Infinity;
+  let visibility = "metadata";
+  while (now() < deadline) {
+    const remaining = Math.max(1, Math.ceil(deadline - now()));
+    let state;
     try {
-      const state = await inspectRegistryState(package_, options.fetchImplementation);
-      if (acceptedStates.has(state.state)) return state;
-      lastError = state.state === "recoverable-unexpected-latest" ?
-        new Error(`${package_.definition.name} still has the unexpected latest alias.`) :
-        new Error(`${package_.definition.name} is not visible in the registry yet.`);
+      state = await inspectRegistryState(
+        package_, options.fetchImplementation, AbortSignal.timeout(remaining),
+      );
     } catch (error) {
-      lastError = error;
+      if (["TimeoutError", "AbortError"].includes(error?.name) && now() >= deadline) break;
+      // A malformed identity, unsafe tag, wrong archive, or other HTTP failure
+      // must fail immediately, not be retried until it happens to disappear.
+      throw error;
     }
-    if (attempt < REGISTRY_VERIFY_ATTEMPTS) {
-      await options.waitImplementation(REGISTRY_VERIFY_DELAY_MILLISECONDS);
+    if (state.state === "verified") return state;
+    visibility = state.state === "pending" ? "archive" : "metadata";
+    if (now() - lastProgress >= PROGRESS_INTERVAL_MILLISECONDS) {
+      options.progressImplementation?.({
+        name: package_.definition.name,
+        state: "waiting_for_registry_visibility",
+        visibility,
+        elapsed_milliseconds: Math.max(0, Math.floor(now() - started)),
+        timeout_milliseconds: REGISTRY_VERIFY_TIMEOUT_MILLISECONDS,
+      });
+      lastProgress = now();
     }
+    const delay = Math.min(REGISTRY_VERIFY_DELAY_MILLISECONDS, Math.max(0, deadline - now()));
+    if (delay > 0) await options.waitImplementation(delay);
   }
-  throw lastError;
+  const error = new Error(
+    `${package_.definition.name} bootstrap verification is pending: exact ${visibility} visibility ` +
+    "was not established within 20 minutes. Do not assume publication failed or republish manually; rerun the reviewed helper to reconcile.",
+  );
+  error.code = "LATCHWAY_BOOTSTRAP_REGISTRY_PENDING";
+  error.state = "pending";
+  error.package_name = package_.definition.name;
+  error.visibility = visibility;
+  throw error;
+}
+
+function registryRequestSignal(visibilitySignal) {
+  const requestSignal = AbortSignal.timeout(15_000);
+  return visibilitySignal === undefined ? requestSignal : AbortSignal.any([requestSignal, visibilitySignal]);
+}
+
+function reportProgress(event) {
+  process.stderr.write(`${JSON.stringify({ kind: "latchway_npm_namespace_bootstrap_progress", ...event })}\n`);
 }
 
 async function readBoundedResponse(response, maximumBytes, label) {
@@ -909,24 +909,77 @@ function npmExecutable() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
-function runNpm(command, arguments_, cwd, stdio, environment = {}) {
+function npmEnvironment(environment) {
   const inheritedEnvironment = { ...process.env };
-  delete inheritedEnvironment.NODE_AUTH_TOKEN;
-  delete inheritedEnvironment.NPM_TOKEN;
+  const result = {
+    ...inheritedEnvironment,
+    NPM_CONFIG_AUDIT: "false",
+    NPM_CONFIG_ACCESS: "public",
+    NPM_CONFIG_FUND: "false",
+    NPM_CONFIG_IGNORE_SCRIPTS: "true",
+    NPM_CONFIG_PROVENANCE: "false",
+    NPM_CONFIG_REGISTRY: BOOTSTRAP_REGISTRY,
+    NPM_CONFIG_TAG: BOOTSTRAP_TAG,
+    ...environment,
+  };
+  delete result.NODE_AUTH_TOKEN;
+  delete result.NPM_TOKEN;
+  return result;
+}
+
+export async function runNpmPublish(command, arguments_, cwd, environment = {}, options = {}) {
+  const timeout = options.timeoutMilliseconds ?? NPM_PUBLISH_TIMEOUT_MILLISECONDS;
+  if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > NPM_PUBLISH_TIMEOUT_MILLISECONDS ||
+      (options.progressImplementation !== undefined && typeof options.progressImplementation !== "function")) {
+    throw new Error("Bootstrap publication requires a bounded timeout and optional progress function.");
+  }
+  await new Promise((resolve_, reject) => {
+    const started = performance.now();
+    const child = spawn(command, arguments_, {
+      cwd,
+      env: npmEnvironment(environment),
+      shell: false,
+      stdio: "inherit",
+    });
+    let timedOut = false;
+    let settled = false;
+    let forceKill;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(forceKill);
+      clearInterval(progress);
+      if (error === undefined) resolve_();
+      else reject(error);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      forceKill = setTimeout(() => child.kill("SIGKILL"), 5_000);
+    }, timeout);
+    const progress = setInterval(() => {
+      options.progressImplementation?.({
+        state: "waiting_for_npm_publication",
+        elapsed_milliseconds: Math.max(0, Math.floor(performance.now() - started)),
+        timeout_milliseconds: timeout,
+      });
+    }, PROGRESS_INTERVAL_MILLISECONDS);
+    child.once("error", () => finish(new Error("npm bootstrap publication could not start or terminate safely.")));
+    child.once("close", (code) => {
+      if (!timedOut && code === 0) finish();
+      else finish(new Error(timedOut ?
+        "npm bootstrap publication timed out; registry reconciliation is required before any retry." :
+        "npm bootstrap publication exited unsuccessfully; registry reconciliation is required before any retry."));
+    });
+  });
+}
+
+function runNpm(command, arguments_, cwd, stdio, environment = {}) {
   return execFileSync(command, arguments_, {
     cwd,
     encoding: "utf8",
-    env: {
-      ...inheritedEnvironment,
-      NPM_CONFIG_AUDIT: "false",
-      NPM_CONFIG_ACCESS: "public",
-      NPM_CONFIG_FUND: "false",
-      NPM_CONFIG_IGNORE_SCRIPTS: "true",
-      NPM_CONFIG_PROVENANCE: "false",
-      NPM_CONFIG_REGISTRY: BOOTSTRAP_REGISTRY,
-      NPM_CONFIG_TAG: BOOTSTRAP_TAG,
-      ...environment,
-    },
+    env: npmEnvironment(environment),
     maxBuffer: MAXIMUM_COMMAND_OUTPUT_BYTES,
     stdio: stdio === "inherit" ? "inherit" : ["ignore", "pipe", "pipe"],
     timeout: 5 * 60 * 1000,
@@ -985,7 +1038,17 @@ function usage() {
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   main().catch((error) => {
+    if (error.code === "LATCHWAY_BOOTSTRAP_REGISTRY_PENDING") {
+      reportProgress({
+        state: "pending",
+        name: error.package_name,
+        visibility: error.visibility,
+        publication_response: error.publication_response ?? "not_proven_failed",
+        completed: false,
+        stable_release: false,
+      });
+    }
     process.stderr.write(`npm namespace bootstrap rejected: ${error.message}\n`);
-    process.exitCode = 1;
+    process.exitCode = error.code === "LATCHWAY_BOOTSTRAP_REGISTRY_PENDING" ? 2 : 1;
   });
 }

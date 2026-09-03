@@ -249,7 +249,8 @@ passes `--access=public`, `--tag=bootstrap`, `--registry` and the explicit
 registry pins prevent a hostile scoped environment or user npm configuration
 from redirecting a scoped package operation. Before any publish, it checks every
 package record. An absent name is created, while an existing name is adopted
-only if its sole version, sole `bootstrap` dist-tag, manifest, repository
+only if its sole version, required `bootstrap` dist-tag (with at most the exact
+singleton `latest` alias described below), manifest, repository
 identity, integrity, shasum, and downloaded tarball bytes exactly match the
 reviewed local archive. This makes a partial prior run resumable: only missing
 names are published, and even a lost publish response is accepted only after the
@@ -257,31 +258,65 @@ exact immutable bytes appear.
 
 npm may nevertheless materialize a `latest` alias when the very first version
 of a new package is created, even though the fixed publish command requested
-`bootstrap`. The helper recovers only the exact observed singleton case: the
+`bootstrap`. In the observed first publication, an authenticated attempt to
+remove that alias returned HTTP 400 without an explanatory response body.
+The helper therefore accepts only the exact observed singleton exception: the
 record must have exactly version `0.0.0-bootstrap.0`, exactly the `bootstrap` and
 `latest` tags both pointing to that version, and the manifest, repository,
 digests, and downloaded archive must already be byte-identical to the reviewed
-local package. It then removes only `latest` with the same fixed npmjs registry
-arguments and revalidates the public record. The removal can request another
-interactive two-factor confirmation. A foreign version, any other tag, a
-different tag target, manifest, or archive fails before the helper invokes
-either publication or tag removal.
+local package. It never adds, moves, or removes a tag. A foreign version, a
+missing `bootstrap` tag, any other tag, or a different tag target, manifest,
+digest, or archive fails closed. The exception does not prove who created the
+alias and is not evidence that an SDK or stable release is available. Until a
+real release replaces the alias, an unversioned install may resolve to this
+inert placeholder: do not recommend installing these namespaces yet.
+
+Registry checks happen again immediately before every missing-name publication,
+so a long scan of an earlier package cannot leave the next name's preflight
+stale. The helper rechecks the reviewed checkout, toolchain, and archive before
+uploading. A validation failure before upload is fatal, not an ambiguous
+publication response.
 
 npm's public packument omits the `files` allowlist even though that field is
 present inside the published `package.json`. The helper accepts only that one
 metadata omission and only for the fixed `["LICENSE", "README.md"]` bootstrap
 allowlist. It still downloads the registry archive and requires every byte to
-match the reviewed local archive before it removes any tag, so an omitted
+match the reviewed local archive before it adopts an existing package, so an omitted
 packument field cannot hide a changed package or extra file.
+
+The interactive npm subprocess runs asynchronously, reports bounded progress,
+and has a 20-minute deadline (with five seconds for termination before a forced
+stop). After a publication attempt, metadata or tarball HTTP 404 is treated as
+pending visibility, not a reason to republish. The same rule applies when an
+existing record's tarball is temporarily unavailable. Each visibility check
+waits at most 20 minutes, polling every ten seconds and reporting progress at
+most every 30 seconds. This accommodates npm's documented
+[publish-time scanning delay](https://github.blog/changelog/2026-07-28-npm-publish-time-malware-scanning-and-dual-use-metadata/),
+typically five minutes and sometimes 15 minutes or longer; it is not a service
+guarantee. Invalid metadata, mismatched bytes, and other HTTP failures fail
+immediately rather than being retried as scanning delays.
+
+If the visibility deadline expires, the helper emits an explicit `pending`
+progress event, exits with status 2, and does not create a completion receipt or
+publish following packages. Publication may already have succeeded. Rerun the
+same reviewed helper and output directory to reconcile the registry; do not
+manually republish or unpublish a namespace. The helper never records an
+uncertain outcome as successful, even when npm's subprocess exited cleanly.
 
 After the last create, the script fetches and revalidates the complete
 five-package registry closure and writes
 `.artifacts/npm-namespace-bootstrap/completed.json`. Absence of that record means
 the bootstrap is not complete. Keep `bootstrap` on `0.0.0-bootstrap.0`; do not
 add or move `latest`. `completed.json` is written only after all five records
-have been fetched again with no `latest` or other tag present. The completion
-record repeats the exact source commit, helper and license hashes, and npm
-version from the inspection. Inspect the public result independently, and keep
+have been fetched again with only the required `bootstrap` and optional exact
+singleton `latest` alias. Receipt schema 2 records each package's canonical
+`observed_dist_tags` and `registry_latest_alias` boolean, plus
+`stable_release: false` and the explicit alias policy. The inspection and
+completion record repeat the exact source commit, helper and license hashes,
+and npm version. A changed helper requires a newly reviewed clean commit and a
+new output directory; never rewrite an old inspection or attribute new tooling
+to an earlier commit. The namespace tarballs are unchanged by this metadata
+compatibility update. Inspect the public result independently, and keep
 the short-lived interactive session only through trusted-publisher setup and
 verification:
 
