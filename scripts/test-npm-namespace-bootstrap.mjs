@@ -809,8 +809,8 @@ test("documentation pins selected npm trust coordinates while release workflows 
     assert.match(documentation, new RegExp(
       `npm trust github ${name.replace("/", "\\/")} --repository ${repository.replace("/", "\\/")} ` +
       "--file single-maintainer-release\\.yml --environment single-maintainer-v1 --allow-publish --yes " +
-      '--registry="\\$npm_registry" "\\$npm_scope_registry"',
-      "u",
+      '--registry="\\$npm_registry"$',
+      "mu",
     ));
   }
   assert.match(
@@ -819,8 +819,14 @@ test("documentation pins selected npm trust coordinates while release workflows 
   );
   assert.match(
     documentation,
-    /npm trust list @latchway\/react-native[^\n]+--registry="\$npm_registry" "\$npm_scope_registry"/u,
+    /npm trust list @latchway\/react-native[^\n]+--registry="\$npm_registry"$/mu,
   );
+  const trustCommands = documentation.split("\n").filter((line) => line.startsWith("npm trust "));
+  assert.equal(trustCommands.length, 10);
+  for (const command of trustCommands) {
+    assert.match(command, /--registry="\$npm_registry"$/u);
+    assert.doesNotMatch(command, /npm_scope_registry|--@latchway:registry/u);
+  }
   assert.match(documentation, /npm 11\.15\.0 or newer/u);
   assert.match(documentation, /strict `release\.yml` cannot publish/u);
   assert.match(documentation, /npm permits only one trusted publisher per package/u);

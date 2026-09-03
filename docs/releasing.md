@@ -339,11 +339,11 @@ package trusts `Latchway/latchway-react-native-sdk`. Every publisher is limited
 to environment `single-maintainer-v1` and the publish action:
 
 ```bash
-npm trust github @latchway/client --repository Latchway/latchway-js --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
-npm trust github @latchway/openai --repository Latchway/latchway-js --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
-npm trust github @latchway/vercel-ai --repository Latchway/latchway-js --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
-npm trust github @latchway/langchain --repository Latchway/latchway-js --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
-npm trust github @latchway/react-native --repository Latchway/latchway-react-native-sdk --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry" "$npm_scope_registry"
+npm trust github @latchway/client --repository Latchway/latchway-js --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry"
+npm trust github @latchway/openai --repository Latchway/latchway-js --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry"
+npm trust github @latchway/vercel-ai --repository Latchway/latchway-js --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry"
+npm trust github @latchway/langchain --repository Latchway/latchway-js --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry"
+npm trust github @latchway/react-native --repository Latchway/latchway-react-native-sdk --file single-maintainer-release.yml --environment single-maintainer-v1 --allow-publish --yes --registry="$npm_registry"
 ```
 
 This setup requires each package record to exist and the configuring npm account
@@ -361,11 +361,11 @@ strict tuple and verify all five settings again.
 Verify every exact configuration, then end the short-lived interactive session:
 
 ```bash
-npm trust list @latchway/client --json --registry="$npm_registry" "$npm_scope_registry"
-npm trust list @latchway/openai --json --registry="$npm_registry" "$npm_scope_registry"
-npm trust list @latchway/vercel-ai --json --registry="$npm_registry" "$npm_scope_registry"
-npm trust list @latchway/langchain --json --registry="$npm_registry" "$npm_scope_registry"
-npm trust list @latchway/react-native --json --registry="$npm_registry" "$npm_scope_registry"
+npm trust list @latchway/client --json --registry="$npm_registry"
+npm trust list @latchway/openai --json --registry="$npm_registry"
+npm trust list @latchway/vercel-ai --json --registry="$npm_registry"
+npm trust list @latchway/langchain --json --registry="$npm_registry"
+npm trust list @latchway/react-native --json --registry="$npm_registry"
 npm logout --registry=https://registry.npmjs.org/
 ```
 
