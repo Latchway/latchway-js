@@ -48,7 +48,8 @@ for (const required of [
   "node scripts/verify-published.mjs",
   "single-maintainer-npm-adoption.json",
   "Upload or adopt exact bytes then publish once",
-  "(.assets | length) == 32",
+  "expected-release-assets",
+  ".immutable == true",
 ]) {
   if (!singleMaintainerSurface.includes(required)) {
     throw new Error(`single-maintainer-release.yml is missing the fail-closed control: ${required}`);
@@ -84,10 +85,12 @@ const singleSentinel = "    steps:\n"
   + "          set -Eeuo pipefail\n"
   + "          test \"$OBSERVED_POLICY_ID\" = \"$EXPECTED_POLICY_ID\"\n";
 const singleJobHeaders = [...singleMaintainerRelease.matchAll(/^ {2}([a-z0-9_-]+):$/gmu)];
+const singleReleaseJobs = new Map();
 let protectedSingleJobs = 0;
 for (const [index, header] of singleJobHeaders.entries()) {
   const end = singleJobHeaders[index + 1]?.index ?? singleMaintainerRelease.length;
   const block = singleMaintainerRelease.slice(header.index, end);
+  singleReleaseJobs.set(header[1], block);
   if (!block.includes("    environment: single-maintainer-v1\n")) continue;
   protectedSingleJobs += 1;
   if (block.indexOf(singleSentinel) !== block.indexOf("    steps:\n")) {
@@ -96,6 +99,76 @@ for (const [index, header] of singleJobHeaders.entries()) {
 }
 if (protectedSingleJobs !== 5) {
   throw new Error("Exactly five single-maintainer jobs must use the protected environment sentinel.");
+}
+const singleAdministrationJob = singleReleaseJobs.get("immutable-release-settings");
+const singleTagJob = singleReleaseJobs.get("tag");
+const singleFinalReleaseJob = singleReleaseJobs.get("github-release");
+if (singleAdministrationJob === undefined || singleTagJob === undefined
+  || singleFinalReleaseJob === undefined) {
+  throw new Error("The selected profile must isolate administration, tag, and final release jobs.");
+}
+const singleAdministrationSentinel = "    steps:\n"
+  + "      - name: Verify the exact single-maintainer administration policy\n"
+  + "        shell: bash\n"
+  + "        env:\n"
+  + "          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_PROFILE_POLICY_ID }}\n"
+  + "        run: |\n"
+  + "          set -Eeuo pipefail\n"
+  + "          test \"$OBSERVED_POLICY_ID\" = \"latchway-release-profile-v1:latchway-js:single_maintainer_v1:administration\"\n";
+if (!singleAdministrationJob.includes("    needs: [intent, verify]\n")
+  || !singleAdministrationJob.includes("    environment: single-maintainer-v1-administration\n")
+  || !singleAdministrationJob.includes("    permissions: {}\n")
+  || singleAdministrationJob.indexOf(singleAdministrationSentinel)
+    !== singleAdministrationJob.indexOf("    steps:\n")
+  || !singleAdministrationJob.includes("${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}")
+  || !singleAdministrationJob.includes('"repos/$GITHUB_REPOSITORY/immutable-releases"')
+  || !singleAdministrationJob.includes('(keys | sort) == ["enabled","enforced_by_owner"]')
+  || !singleAdministrationJob.includes('.enabled == true and (.enforced_by_owner | type) == "boolean"')) {
+  throw new Error("The selected profile administration gate is not exact or fail-closed.");
+}
+for (const forbidden of ["actions/checkout", "id-token: write", "attestations: write", "${{ github.token }}"]) {
+  if (singleAdministrationJob.includes(forbidden)) {
+    throw new Error(`The selected profile administration job must not contain ${forbidden}.`);
+  }
+}
+if (!singleTagJob.includes("    needs: [intent, verify, immutable-release-settings]\n")) {
+  throw new Error("The selected profile must pass immutable-release administration before tag mutation.");
+}
+if ((singleMaintainerRelease.match(/\$\{\{ secrets\.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN \}\}/gu) ?? []).length !== 1) {
+  throw new Error("Only the isolated selected-profile administration job may receive its narrow token.");
+}
+const normalizedSingleMaintainerRelease = singleMaintainerRelease.replace(/\\\n[ \t]*/gu, " ");
+const singleGhReleaseCommands = normalizedSingleMaintainerRelease.match(/^[ \t]*gh release [^\n]+$/gmu) ?? [];
+if (singleGhReleaseCommands.length === 0
+  || singleGhReleaseCommands.some((command) => !command.includes('--repo "$GITHUB_REPOSITORY"'))) {
+  throw new Error("Every selected-profile gh release command must name its repository explicitly.");
+}
+for (const marker of [
+  "expected-release-assets",
+  'find "$root" -mindepth 3 -print -quit',
+  "pre-publish-release.etag",
+  "If-None-Match:",
+  "'^HTTP/[0-9.]+ 304( |$)'",
+  '.draft == false and .prerelease == false and .immutable == true',
+  'gh release verify-asset "$RELEASE_TAG" "$asset"',
+  'gh release verify "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --format json',
+  "initial-tag-ref.json",
+  "post-publish-tag-ref.json",
+  'elif .draft == false and .immutable == true then "immutable"',
+  "(( major > 2 || (major == 2 && minor >= 97) ))",
+]) {
+  if (!singleFinalReleaseJob.includes(marker)) {
+    throw new Error(`The selected profile final release is missing ${marker}.`);
+  }
+}
+const singleEtagCheck = singleFinalReleaseJob.indexOf("If-None-Match:");
+const singlePublication = singleFinalReleaseJob.indexOf("gh api --method PATCH", singleEtagCheck);
+const singleImmutableCheck = singleFinalReleaseJob.indexOf(".immutable == true", singlePublication);
+if (singleEtagCheck < 0 || singlePublication <= singleEtagCheck
+  || singleImmutableCheck <= singlePublication
+  || singleFinalReleaseJob.includes("gh release delete")
+  || singleMaintainerRelease.includes("--method DELETE")) {
+  throw new Error("The selected profile must conditionally publish once and verify the immutable result.");
 }
 for (const required of [
   "repository_dispatch:",

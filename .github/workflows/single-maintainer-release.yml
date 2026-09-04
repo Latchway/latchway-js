@@ -358,9 +358,46 @@ jobs:
           compression-level: 0
           retention-days: 90
 
+  immutable-release-settings:
+    name: Verify immutable-release settings before tag mutation
+    needs: [intent, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: single-maintainer-v1-administration
+    permissions: {}
+    steps:
+      - name: Verify the exact single-maintainer administration policy
+        shell: bash
+        env:
+          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_PROFILE_POLICY_ID }}
+        run: |
+          set -Eeuo pipefail
+          test "$OBSERVED_POLICY_ID" = "latchway-release-profile-v1:latchway-js:single_maintainer_v1:administration"
+      - name: Preflight immutable-release settings without a checkout
+        shell: bash
+        env:
+          LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN: ${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          version=$(gh --version | sed -nE '1s/^gh version ([0-9]+)\.([0-9]+)\.([0-9]+).*$/\1 \2 \3/p')
+          read -r major minor patch <<< "$version"
+          [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ ]]
+          (( major > 2 || (major == 2 && minor >= 97) ))
+          test -n "$LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN"
+          GH_TOKEN="$LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN" gh api \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/immutable-releases" \
+            > "$RUNNER_TEMP/immutable-releases.json"
+          jq --exit-status '
+            type == "object" and
+            (keys | sort) == ["enabled","enforced_by_owner"] and
+            .enabled == true and (.enforced_by_owner | type) == "boolean"
+          ' "$RUNNER_TEMP/immutable-releases.json" >/dev/null
+
   tag:
     name: Create or adopt only transaction-owned annotated tag
-    needs: [intent, verify]
+    needs: [intent, verify, immutable-release-settings]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: single-maintainer-v1
@@ -505,7 +542,8 @@ jobs:
               "$RUNNER_TEMP/release.json")
             if [[ "$observed" == digest-unavailable ]]; then
               download=$(mktemp -d "$RUNNER_TEMP/staged-asset.XXXXXX")
-              gh release download "$RELEASE_TAG" --pattern "$name" --dir "$download"
+              gh release download "$RELEASE_TAG" --pattern "$name" --dir "$download" \
+                --repo "$GITHUB_REPOSITORY"
               cmp --silent "$root/$name" "$download/$name"
             else
               test "$observed" = "$expected"
@@ -515,7 +553,7 @@ jobs:
             count=$(jq --arg name "$name" '[.assets[] | select(.name == $name)] | length' "$RUNNER_TEMP/release.json")
             if [[ "$count" = 0 ]]; then
               test "$(jq --raw-output .draft "$RUNNER_TEMP/release.json")" = true
-              gh release upload "$RELEASE_TAG" "$root/$name"
+              gh release upload "$RELEASE_TAG" "$root/$name" --repo "$GITHUB_REPOSITORY"
             else
               test "$count" = 1
               verify_asset "$name"
@@ -783,8 +821,31 @@ jobs:
         run: |
           set -Eeuo pipefail
           root="$RUNNER_TEMP/release"
-          test "$(find "$root/base" -maxdepth 1 -type f | wc -l | tr -d ' ')" = 13
-          test "$(find "$root/registry" -maxdepth 1 -type f | wc -l | tr -d ' ')" = 19
+          printf '%s\n' \
+            SHA256SUMS build-reproducibility.json contract-evidence.json core-release-gate.json \
+            dependency-vulnerability-scan.json docs-bundle-1.0.0.tar.gz \
+            latchway-client-1.0.0.tgz latchway-langchain-1.0.0.tgz \
+            latchway-openai-1.0.0.tgz latchway-single-maintainer-v1-intent.json \
+            latchway-vercel-ai-1.0.0.tgz package-evidence.json release-candidate-evidence.json \
+            | LC_ALL=C sort > "$RUNNER_TEMP/expected-base-assets"
+          printf '%s\n' \
+            npm-client-attestations.json npm-client-audit-signatures.json npm-client-registry-version.json npm-client-registry-view.json \
+            npm-langchain-attestations.json npm-langchain-audit-signatures.json npm-langchain-registry-version.json npm-langchain-registry-view.json \
+            npm-openai-attestations.json npm-openai-audit-signatures.json npm-openai-registry-version.json npm-openai-registry-view.json \
+            npm-vercel-ai-attestations.json npm-vercel-ai-audit-signatures.json npm-vercel-ai-registry-version.json npm-vercel-ai-registry-view.json \
+            npm-registry-evidence-manifest.json post-publish-evidence.json single-maintainer-npm-adoption.json \
+            | LC_ALL=C sort > "$RUNNER_TEMP/expected-registry-assets"
+          find "$root/base" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort > "$RUNNER_TEMP/observed-base-assets"
+          find "$root/registry" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort > "$RUNNER_TEMP/observed-registry-assets"
+          diff --unified=0 "$RUNNER_TEMP/expected-base-assets" "$RUNNER_TEMP/observed-base-assets"
+          diff --unified=0 "$RUNNER_TEMP/expected-registry-assets" "$RUNNER_TEMP/observed-registry-assets"
+          test -z "$(find "$root/base" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
+          test -z "$(find "$root/registry" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
+          test -z "$(find "$root" -mindepth 3 -print -quit)"
+          cat "$RUNNER_TEMP/expected-base-assets" "$RUNNER_TEMP/expected-registry-assets" \
+            | LC_ALL=C sort > "$RUNNER_TEMP/expected-release-assets"
+          test "$(wc -l < "$RUNNER_TEMP/expected-release-assets" | tr -d ' ')" = 32
+          test -z "$(uniq -d "$RUNNER_TEMP/expected-release-assets")"
           test -z "$(find "$root" -type l -print -quit)"
           test "$(find "$root" -mindepth 2 -maxdepth 2 -type f | wc -l | tr -d ' ')" = 32
       - name: Attest every exact base and registry evidence asset
@@ -801,7 +862,26 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          version=$(gh --version | sed -nE '1s/^gh version ([0-9]+)\.([0-9]+)\.([0-9]+).*$/\1 \2 \3/p')
+          read -r major minor patch <<< "$version"
+          [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ ]]
+          (( major > 2 || (major == 2 && minor >= 97) ))
           root="$RUNNER_TEMP/release"
+          test -f "$RUNNER_TEMP/expected-release-assets"
+          test ! -L "$RUNNER_TEMP/expected-release-assets"
+          test "$(wc -l < "$RUNNER_TEMP/expected-release-assets" | tr -d ' ')" = 32
+          asset_path() {
+            local name="$1"
+            if [[ -f "$root/base/$name" && ! -e "$root/registry/$name" ]]; then
+              printf '%s\n' "$root/base/$name"
+            elif [[ -f "$root/registry/$name" && ! -e "$root/base/$name" ]]; then
+              printf '%s\n' "$root/registry/$name"
+            else
+              echo "release asset path is missing or ambiguous: $name" >&2
+              return 1
+            fi
+          }
+          while IFS= read -r name; do asset_path "$name" >/dev/null; done < "$RUNNER_TEMP/expected-release-assets"
           intent="$root/base/latchway-single-maintainer-v1-intent.json"
           title=$(jq --exit-status --raw-output .github_release.title "$intent")
           body=$(jq --exit-status --raw-output .github_release.body "$intent")
@@ -809,65 +889,175 @@ jobs:
           jq --exit-status --arg transaction "$TRANSACTION_ID" --argjson owner "$GITHUB_RUN_ID" --arg commit "$RELEASE_COMMIT" '
             .transaction.id == $transaction and .transaction.owner_run_id == $owner and .source.commit == $commit
           ' "$intent" >/dev/null
-          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > "$RUNNER_TEMP/final-tag-ref.json"
-          test "$(jq --raw-output .object.type "$RUNNER_TEMP/final-tag-ref.json")" = tag
-          tag_object=$(jq --exit-status --raw-output '.object.sha | select(test("^[0-9a-f]{40}$"))' "$RUNNER_TEMP/final-tag-ref.json")
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > "$RUNNER_TEMP/initial-tag-ref.json"
+          jq --exit-status --arg ref "refs/tags/$RELEASE_TAG" '
+            .ref == $ref and .object.type == "tag" and
+            (.object.sha | type == "string" and test("^[0-9a-f]{40}$"))
+          ' "$RUNNER_TEMP/initial-tag-ref.json" >/dev/null
+          tag_object=$(jq --raw-output .object.sha "$RUNNER_TEMP/initial-tag-ref.json")
           gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" > "$RUNNER_TEMP/final-tag-object.json"
-          jq --exit-status --arg commit "$RELEASE_COMMIT" --arg message "$message" '
-            .tag == "v1.0.0" and .object.type == "commit" and .object.sha == $commit and .message == $message
+          jq --exit-status --arg tag "$RELEASE_TAG" --arg commit "$RELEASE_COMMIT" --arg message "$message" '
+            .tag == $tag and .object.type == "commit" and .object.sha == $commit and .message == $message
           ' "$RUNNER_TEMP/final-tag-object.json" >/dev/null
           gh api -H "X-GitHub-Api-Version: 2026-03-10" \
             "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
-          jq --exit-status --arg tag "$RELEASE_TAG" --arg title "$title" --arg body "$body" '
-            .tag_name == $tag and .name == $title and .body == $body and
-            .prerelease == false and (.draft == true or .draft == false)
+          release_id=$(jq --exit-status --raw-output '.id | select(type == "number" and . > 0 and floor == .)' "$RUNNER_TEMP/release.json")
+          test -n "$release_id"
+          jq --exit-status --argjson id "$release_id" --arg tag "$RELEASE_TAG" --arg title "$title" --arg body "$body" '
+            .id == $id and .tag_name == $tag and .name == $title and .body == $body and
+            .prerelease == false and
+            ((.draft == true and .immutable == false) or
+             (.draft == false and .immutable == true))
           ' "$RUNNER_TEMP/release.json" >/dev/null
-          find "$root" -mindepth 2 -maxdepth 2 -type f -printf '%f\n' | LC_ALL=C sort > "$RUNNER_TEMP/final-assets"
-          test "$(uniq -d "$RUNNER_TEMP/final-assets" | wc -l | tr -d ' ')" = 0
-          verify_asset() {
-            local asset="$1" name expected observed download
-            name=${asset##*/}
+          jq --raw-output '.assets[].name' "$RUNNER_TEMP/release.json" | while IFS= read -r name; do
+            grep --fixed-strings --line-regexp --quiet "$name" "$RUNNER_TEMP/expected-release-assets"
+          done
+          verify_asset_bytes() {
+            local name="$1" asset expected observed download
+            asset=$(asset_path "$name")
             expected="sha256:$(sha256sum "$asset" | cut -d ' ' -f 1)"
             observed=$(jq --exit-status --raw-output --arg name "$name" \
               '[.assets[] | select(.name == $name)] | if length == 1 then (.[0].digest // "digest-unavailable") else error("asset closure") end' \
               "$RUNNER_TEMP/release.json")
             if [[ "$observed" == digest-unavailable ]]; then
               download=$(mktemp -d "$RUNNER_TEMP/final-asset.XXXXXX")
-              gh release download "$RELEASE_TAG" --pattern "$name" --dir "$download"
+              gh release download "$RELEASE_TAG" --pattern "$name" --dir "$download" \
+                --repo "$GITHUB_REPOSITORY"
               cmp --silent "$asset" "$download/$name"
             else
               test "$observed" = "$expected"
             fi
           }
-          while IFS= read -r asset; do
-            name=${asset##*/}
+          while IFS= read -r name; do
             count=$(jq --arg name "$name" '[.assets[] | select(.name == $name)] | length' "$RUNNER_TEMP/release.json")
             if [[ "$count" = 0 ]]; then
               test "$(jq --raw-output .draft "$RUNNER_TEMP/release.json")" = true
-              gh release upload "$RELEASE_TAG" "$asset"
+              test "$(jq --raw-output .immutable "$RUNNER_TEMP/release.json")" = false
+              asset=$(asset_path "$name")
+              gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY"
             else
               test "$count" = 1
-              verify_asset "$asset"
+              verify_asset_bytes "$name"
             fi
             gh api -H "X-GitHub-Api-Version: 2026-03-10" \
               "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
-            verify_asset "$asset"
-          done < <(find "$root" -mindepth 2 -maxdepth 2 -type f | LC_ALL=C sort)
-          test "$(jq '.assets | length' "$RUNNER_TEMP/release.json")" = 32
-          jq --raw-output '.assets[].name' "$RUNNER_TEMP/release.json" | LC_ALL=C sort > "$RUNNER_TEMP/remote-assets"
-          diff --unified=0 "$RUNNER_TEMP/final-assets" "$RUNNER_TEMP/remote-assets"
-          while IFS= read -r asset; do verify_asset "$asset"; done < <(find "$root" -mindepth 2 -maxdepth 2 -type f | LC_ALL=C sort)
-          release_id=$(jq --exit-status --raw-output '.id | select(type == "number" and . > 0)' "$RUNNER_TEMP/release.json")
-          if [[ "$(jq --raw-output .draft "$RUNNER_TEMP/release.json")" == true ]]; then
-            printf '{"draft":false}\n' > "$RUNNER_TEMP/publish.json"
+            jq --exit-status --argjson id "$release_id" --arg tag "$RELEASE_TAG" --arg title "$title" --arg body "$body" '
+              .id == $id and .tag_name == $tag and .name == $title and .body == $body and
+              .prerelease == false and
+              ((.draft == true and .immutable == false) or
+               (.draft == false and .immutable == true))
+            ' "$RUNNER_TEMP/release.json" >/dev/null
+            verify_asset_bytes "$name"
+          done < "$RUNNER_TEMP/expected-release-assets"
+
+          # Reclose both the annotated tag and the complete release under one
+          # ETag immediately before the only publication mutation.
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > "$RUNNER_TEMP/pre-publish-tag-ref.json"
+          cmp --silent \
+            <(jq --sort-keys . "$RUNNER_TEMP/initial-tag-ref.json") \
+            <(jq --sort-keys . "$RUNNER_TEMP/pre-publish-tag-ref.json")
+          gh api --include -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            > "$RUNNER_TEMP/pre-publish-release.http"
+          head -n 1 "$RUNNER_TEMP/pre-publish-release.http" \
+            | tr -d '\r' | grep --extended-regexp --quiet '^HTTP/[0-9.]+ 200( |$)'
+          awk '
+            {
+              line=$0
+              sub(/\r$/, "", line)
+              if (body) print $0
+              else if (line == "") body=1
+            }
+          ' "$RUNNER_TEMP/pre-publish-release.http" > "$RUNNER_TEMP/pre-publish-release.json"
+          awk '
+            {
+              line=$0
+              sub(/\r$/, "", line)
+              if (tolower(line) ~ /^etag:[[:space:]]*/) {
+                sub(/^[^:]+:[[:space:]]*/, "", line)
+                print line
+              }
+            }
+          ' "$RUNNER_TEMP/pre-publish-release.http" > "$RUNNER_TEMP/pre-publish-release.etag"
+          test "$(wc -l < "$RUNNER_TEMP/pre-publish-release.etag" | tr -d ' ')" = 1
+          grep --extended-regexp --quiet '^(W/)?"[^"]+"$' "$RUNNER_TEMP/pre-publish-release.etag"
+          release_mode=$(jq --raw-output '
+            if .draft == true and .immutable == false then "draft"
+            elif .draft == false and .immutable == true then "immutable"
+            else "invalid" end
+          ' "$RUNNER_TEMP/pre-publish-release.json")
+          case "$release_mode" in
+            draft|immutable) ;;
+            *) echo "invalid immutable-release preflight mode" >&2; exit 1 ;;
+          esac
+          jq --exit-status --argjson id "$release_id" --arg tag "$RELEASE_TAG" --arg title "$title" --arg body "$body" '
+            .id == $id and .tag_name == $tag and .name == $title and .body == $body and
+            .prerelease == false and
+            ((.draft == true and .immutable == false) or
+             (.draft == false and .immutable == true))
+          ' "$RUNNER_TEMP/pre-publish-release.json" >/dev/null
+          jq --raw-output '.assets[].name' "$RUNNER_TEMP/pre-publish-release.json" \
+            | LC_ALL=C sort > "$RUNNER_TEMP/pre-publish-assets"
+          diff --unified=0 "$RUNNER_TEMP/expected-release-assets" "$RUNNER_TEMP/pre-publish-assets"
+          while IFS= read -r name; do
+            asset=$(asset_path "$name")
+            expected="sha256:$(sha256sum "$asset" | cut -d ' ' -f 1)"
+            observed=$(jq --exit-status --raw-output --arg name "$name" '
+              [.assets[] | select(.name == $name)] |
+              if length == 1 then (.[0].digest // "digest-unavailable")
+              else error("pre-publication JavaScript asset missing or duplicated") end
+            ' "$RUNNER_TEMP/pre-publish-release.json")
+            test "$observed" = "$expected"
+          done < "$RUNNER_TEMP/expected-release-assets"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > "$RUNNER_TEMP/pre-patch-tag-ref.json"
+          cmp --silent \
+            <(jq --sort-keys . "$RUNNER_TEMP/initial-tag-ref.json") \
+            <(jq --sort-keys . "$RUNNER_TEMP/pre-patch-tag-ref.json")
+
+          if [[ "$release_mode" == draft ]]; then
+            jq --null-input '{draft:false}' > "$RUNNER_TEMP/publish.json"
+            gh api --include -H "X-GitHub-Api-Version: 2026-03-10" \
+              -H "If-None-Match: $(cat "$RUNNER_TEMP/pre-publish-release.etag")" \
+              "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+              > "$RUNNER_TEMP/pre-publish-release-unchanged.http"
+            head -n 1 "$RUNNER_TEMP/pre-publish-release-unchanged.http" \
+              | tr -d '\r' | grep --extended-regexp --quiet '^HTTP/[0-9.]+ 304( |$)'
             gh api --method PATCH -H "X-GitHub-Api-Version: 2026-03-10" \
-              "repos/$GITHUB_REPOSITORY/releases/$release_id" --input "$RUNNER_TEMP/publish.json" >/dev/null
+              "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+              --input "$RUNNER_TEMP/publish.json" > "$RUNNER_TEMP/published-response.json"
           fi
           gh api -H "X-GitHub-Api-Version: 2026-03-10" \
             "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/published.json"
           jq --exit-status --argjson id "$release_id" --arg tag "$RELEASE_TAG" --arg title "$title" --arg body "$body" '
             .id == $id and .tag_name == $tag and .name == $title and .body == $body and
-            .draft == false and .prerelease == false and (.assets | length) == 32
+            .draft == false and .prerelease == false and .immutable == true
           ' "$RUNNER_TEMP/published.json" >/dev/null
-          cp "$RUNNER_TEMP/published.json" "$RUNNER_TEMP/release.json"
-          while IFS= read -r asset; do verify_asset "$asset"; done < <(find "$root" -mindepth 2 -maxdepth 2 -type f | LC_ALL=C sort)
+          gh api -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id" > "$RUNNER_TEMP/published-by-id.json"
+          cmp --silent \
+            <(jq --sort-keys . "$RUNNER_TEMP/published.json") \
+            <(jq --sort-keys . "$RUNNER_TEMP/published-by-id.json")
+          jq --raw-output '.assets[].name' "$RUNNER_TEMP/published.json" \
+            | LC_ALL=C sort > "$RUNNER_TEMP/published-assets"
+          diff --unified=0 "$RUNNER_TEMP/expected-release-assets" "$RUNNER_TEMP/published-assets"
+          while IFS= read -r name; do
+            asset=$(asset_path "$name")
+            expected="sha256:$(sha256sum "$asset" | cut -d ' ' -f 1)"
+            observed=$(jq --exit-status --raw-output --arg name "$name" '
+              [.assets[] | select(.name == $name)] |
+              if length == 1 then (.[0].digest // "digest-unavailable")
+              else error("immutable JavaScript asset missing or duplicated") end
+            ' "$RUNNER_TEMP/published.json")
+            test "$observed" = "$expected"
+            gh release verify-asset "$RELEASE_TAG" "$asset" \
+              --repo "$GITHUB_REPOSITORY" --format json \
+              > "$RUNNER_TEMP/release-asset-$name.verification.json"
+            test -s "$RUNNER_TEMP/release-asset-$name.verification.json"
+          done < "$RUNNER_TEMP/expected-release-assets"
+          gh release verify "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --format json \
+            > "$RUNNER_TEMP/release-attestation.json"
+          test -s "$RUNNER_TEMP/release-attestation.json"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > "$RUNNER_TEMP/post-publish-tag-ref.json"
+          cmp --silent \
+            <(jq --sort-keys . "$RUNNER_TEMP/initial-tag-ref.json") \
+            <(jq --sort-keys . "$RUNNER_TEMP/post-publish-tag-ref.json")

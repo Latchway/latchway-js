@@ -190,6 +190,12 @@ class MaintainerReleaseTests(unittest.TestCase):
         self.assertIn("workflow file\n`single-maintainer-release.yml`", documentation)
         self.assertIn("strict `release.yml` cannot publish", documentation)
         self.assertIn("npm permits only one trusted publisher per package", documentation)
+        self.assertIn("reviewer-free `single-maintainer-v1-administration` environment", documentation)
+        self.assertIn(
+            "`latchway-release-profile-v1:latchway-js:single_maintainer_v1:administration`",
+            documentation,
+        )
+        self.assertIn("validated release ETag is unchanged with a conditional `304` response", documentation)
         self.assertEqual(
             documentation.count(
                 "--file single-maintainer-release.yml --environment single-maintainer-v1"
@@ -220,7 +226,34 @@ class MaintainerReleaseTests(unittest.TestCase):
             workflow.count("latchway-release-controls-v1:latchway-js:single-maintainer-v1"),
             5,
         )
-        self.assertIn("Every environment-bearing job checks\nthat sentinel as its first step", documentation)
+        administration_start = workflow.index("\n  immutable-release-settings:\n")
+        tag_start = workflow.index("\n  tag:\n")
+        administration = workflow[administration_start:tag_start]
+        self.assertLess(administration_start, tag_start)
+        self.assertIn("needs: [intent, verify, immutable-release-settings]", workflow)
+        self.assertIn("environment: single-maintainer-v1-administration", administration)
+        self.assertIn("permissions: {}", administration)
+        self.assertIn(
+            "latchway-release-profile-v1:latchway-js:single_maintainer_v1:administration",
+            administration,
+        )
+        self.assertIn("${{ vars.LATCHWAY_RELEASE_PROFILE_POLICY_ID }}", administration)
+        self.assertIn("${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}", administration)
+        self.assertIn('"repos/$GITHUB_REPOSITORY/immutable-releases"', administration)
+        self.assertIn('(keys | sort) == ["enabled","enforced_by_owner"]', administration)
+        self.assertIn('.enabled == true and (.enforced_by_owner | type) == "boolean"', administration)
+        self.assertNotIn("actions/checkout", administration)
+        self.assertNotIn("id-token: write", administration)
+        self.assertNotIn("${{ github.token }}", administration)
+        self.assertEqual(
+            workflow.count("${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}"),
+            1,
+        )
+        self.assertGreaterEqual(
+            workflow.count("(( major > 2 || (major == 2 && minor >= 97) ))"),
+            2,
+        )
+        self.assertIn("Every job bearing this environment\nchecks that sentinel as its first step", documentation)
         self.assertIn("Re-run failed jobs", documentation)
         self.assertIn("never use **Re-run all jobs**", documentation)
         draft = workflow.index("Stage or adopt exact recoverable transaction draft")
@@ -230,6 +263,36 @@ class MaintainerReleaseTests(unittest.TestCase):
         self.assertLess(draft, registry_mutation)
         self.assertLess(registry_mutation, registry_verification)
         self.assertLess(registry_verification, finalization)
+
+        normalized = re.sub(r"\\\n[ \t]*", " ", workflow)
+        release_commands = re.findall(r"(?m)^[ \t]*gh release [^\n]+$", normalized)
+        self.assertTrue(release_commands)
+        for command in release_commands:
+            with self.subTest(command=command.strip()):
+                self.assertIn('--repo "$GITHUB_REPOSITORY"', command)
+
+        final_release = workflow[workflow.index("\n  github-release:\n") :]
+        self.assertIn('test "$(wc -l < "$RUNNER_TEMP/expected-release-assets" | tr -d \' \')" = 32', final_release)
+        self.assertIn('find "$root" -mindepth 3 -print -quit', final_release)
+        self.assertIn("pre-publish-release.etag", final_release)
+        self.assertIn("If-None-Match:", final_release)
+        self.assertIn("'^HTTP/[0-9.]+ 304( |$)'", final_release)
+        self.assertIn(".draft == false and .prerelease == false and .immutable == true", final_release)
+        self.assertIn('gh release verify-asset "$RELEASE_TAG" "$asset"', final_release)
+        self.assertIn(
+            'gh release verify "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --format json',
+            final_release,
+        )
+        self.assertIn("initial-tag-ref.json", final_release)
+        self.assertIn("post-publish-tag-ref.json", final_release)
+        self.assertIn('elif .draft == false and .immutable == true then "immutable"', final_release)
+        etag_check = final_release.index("If-None-Match:")
+        publication = final_release.index("gh api --method PATCH", etag_check)
+        immutable_check = final_release.index(".immutable == true", publication)
+        self.assertLess(etag_check, publication)
+        self.assertLess(publication, immutable_check)
+        self.assertNotIn("gh release delete", workflow)
+        self.assertNotIn("--method DELETE", workflow)
 
     def test_workflow_never_interpolates_dispatch_input_inside_shell(self) -> None:
         workflow = (SCRIPT.parents[1] / ".github/workflows/single-maintainer-release.yml").read_text(encoding="utf-8")

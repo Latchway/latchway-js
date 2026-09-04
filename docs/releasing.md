@@ -55,10 +55,15 @@ signatures, the Sigstore publish attestation, and SLSA provenance bound to
 `workflow_dispatch`, and `.github/workflows/single-maintainer-release.yml`.
 Only after that gate does the workflow add the registry evidence to the draft,
 re-download or digest-check the complete 32-asset closure, attest it, and
-finalize the release. Existing `1.0.0` versions are therefore not considered
-adopted merely because their tarball bytes match. This path does not claim
-independent review, owner-enforced immutable releases, full evidence gating, or
-release-qualified status.
+finalize the release. Immediately before the only publication PATCH, it closes
+the annotated tag and the exact 32-asset names and SHA-256 digests, proves the
+validated release ETag is unchanged with a conditional `304` response, then
+requires GitHub to report the final release as immutable. A failed verification
+after that transition resumes by adopting and re-verifying the same immutable
+release; it never replaces an asset or republishes it. Existing `1.0.0` versions
+are therefore not considered adopted merely because their tarball bytes match.
+This path does not claim independent review, owner-enforced immutable releases,
+full evidence gating, or release-qualified status.
 
 The four transaction artifacts (intent, core gate, deterministic release
 inputs, and registry evidence) are retained for 90 days. Reruns never use
@@ -68,11 +73,11 @@ Create a `single-maintainer-v1` GitHub environment restricted to `main`. Define
 the environment-scoped variable `LATCHWAY_RELEASE_CONTROL_POLICY_ID` there with
 the exact value
 `latchway-release-controls-v1:latchway-js:single-maintainer-v1`; do not define
-it at repository or organization scope. Every environment-bearing job checks
-that sentinel as its first step, before an action, credential, OIDC request, or
-mutation. The environment contains no npm token and does not require an
-independent reviewer. For this launch profile, configure each JavaScript
-package's one npm trusted publisher as organization `Latchway`, repository
+it at repository or organization scope. Every job bearing this environment
+checks that sentinel as its first step, before an action, credential, OIDC
+request, or mutation. The environment contains no npm token and does not
+require an independent reviewer. For this launch profile, configure each
+JavaScript package's one npm trusted publisher as organization `Latchway`, repository
 `latchway-js`, workflow file
 `single-maintainer-release.yml`, environment `single-maintainer-v1`, and the
 publish action. npm permits only one trusted publisher per package: while this
@@ -80,6 +85,17 @@ tuple is active, strict `release.yml` cannot publish. Moving to `strict_full`
 later requires deliberate reconfiguration of all four packages back to
 workflow file `release.yml` and environment `npm`; never assume both publishers
 are active.
+
+Also create a reviewer-free `single-maintainer-v1-administration` environment
+restricted to `main`. Define only the environment-scoped variable
+`LATCHWAY_RELEASE_PROFILE_POLICY_ID` with value
+`latchway-release-profile-v1:latchway-js:single_maintainer_v1:administration`
+and the environment secret `LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN`. That token is
+used only by a no-checkout, no-OIDC job to read the repository's immutable
+release setting before tag creation. The job requires the closed response
+`enabled: true` plus a boolean `enforced_by_owner`; the launch profile does not
+turn the latter observation into a stronger owner-enforcement claim. Do not
+define this secret or profile sentinel at repository or organization scope.
 
 ```bash
 gh workflow run single-maintainer-release.yml --ref main \
