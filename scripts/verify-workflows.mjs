@@ -37,10 +37,13 @@ for (const required of [
   "bash scripts/verify-public-core-release.sh",
   "compare/$locked_core_commit...$core_commit",
   ".merge_base_commit.sha == $locked",
+  ".immutable == true",
   "Refuse a new dispatch or rerun-all after any v1 mutation",
   "--signer-workflow \"$core_repository/.github/workflows/single-maintainer-release.yml\"",
   "$core_repository/.github/workflows/release.yml",
-  "$core_repository/.github/workflows/deployment-evidence.yml",
+  "registry-only; cloud deployment evidence is explicitly deferred",
+  ".deployment_evidence == {}",
+  '"cloud_deployments"',
   "core-release-gate.json",
   "Stage or adopt exact recoverable transaction draft",
   "EXPECTED_PROVENANCE_EVENT: workflow_dispatch",
@@ -100,42 +103,26 @@ for (const [index, header] of singleJobHeaders.entries()) {
 if (protectedSingleJobs !== 5) {
   throw new Error("Exactly five single-maintainer jobs must use the protected environment sentinel.");
 }
-const singleAdministrationJob = singleReleaseJobs.get("immutable-release-settings");
 const singleTagJob = singleReleaseJobs.get("tag");
 const singleFinalReleaseJob = singleReleaseJobs.get("github-release");
-if (singleAdministrationJob === undefined || singleTagJob === undefined
-  || singleFinalReleaseJob === undefined) {
-  throw new Error("The selected profile must isolate administration, tag, and final release jobs.");
+if (singleTagJob === undefined || singleFinalReleaseJob === undefined) {
+  throw new Error("The selected profile must isolate tag and final release jobs.");
 }
-const singleAdministrationSentinel = "    steps:\n"
-  + "      - name: Verify the exact single-maintainer administration policy\n"
-  + "        shell: bash\n"
-  + "        env:\n"
-  + "          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_PROFILE_POLICY_ID }}\n"
-  + "        run: |\n"
-  + "          set -Eeuo pipefail\n"
-  + "          test \"$OBSERVED_POLICY_ID\" = \"latchway-release-profile-v1:latchway-js:single_maintainer_v1:administration\"\n";
-if (!singleAdministrationJob.includes("    needs: [intent, verify]\n")
-  || !singleAdministrationJob.includes("    environment: single-maintainer-v1-administration\n")
-  || !singleAdministrationJob.includes("    permissions: {}\n")
-  || singleAdministrationJob.indexOf(singleAdministrationSentinel)
-    !== singleAdministrationJob.indexOf("    steps:\n")
-  || !singleAdministrationJob.includes("${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}")
-  || !singleAdministrationJob.includes('"repos/$GITHUB_REPOSITORY/immutable-releases"')
-  || !singleAdministrationJob.includes('(keys | sort) == ["enabled","enforced_by_owner"]')
-  || !singleAdministrationJob.includes('.enabled == true and (.enforced_by_owner | type) == "boolean"')) {
-  throw new Error("The selected profile administration gate is not exact or fail-closed.");
+if (singleReleaseJobs.has("immutable-release-settings")) {
+  throw new Error("The selected profile must not depend on a prepublication administration job.");
 }
-for (const forbidden of ["actions/checkout", "id-token: write", "attestations: write", "${{ github.token }}"]) {
-  if (singleAdministrationJob.includes(forbidden)) {
-    throw new Error(`The selected profile administration job must not contain ${forbidden}.`);
+if (!singleTagJob.includes("    needs: [intent, verify]\n")) {
+  throw new Error("The selected profile tag must depend directly on its verified inputs.");
+}
+for (const forbidden of [
+  "single-maintainer-v1-administration",
+  "LATCHWAY_RELEASE_PROFILE_POLICY_ID",
+  "LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN",
+  '"repos/$GITHUB_REPOSITORY/immutable-releases"',
+]) {
+  if (singleMaintainerRelease.includes(forbidden)) {
+    throw new Error(`The selected profile must not depend on ${forbidden}.`);
   }
-}
-if (!singleTagJob.includes("    needs: [intent, verify, immutable-release-settings]\n")) {
-  throw new Error("The selected profile must pass immutable-release administration before tag mutation.");
-}
-if ((singleMaintainerRelease.match(/\$\{\{ secrets\.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN \}\}/gu) ?? []).length !== 1) {
-  throw new Error("Only the isolated selected-profile administration job may receive its narrow token.");
 }
 const normalizedSingleMaintainerRelease = singleMaintainerRelease.replace(/\\\n[ \t]*/gu, " ");
 const singleGhReleaseCommands = normalizedSingleMaintainerRelease.match(/^[ \t]*gh release [^\n]+$/gmu) ?? [];

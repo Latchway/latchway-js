@@ -144,7 +144,7 @@ jobs:
           retention-days: 90
 
   core-evidence:
-    name: Verify exact public core release Compose and Cloud Run evidence
+    name: Verify exact registry-only public core release with cloud deployments deferred
     needs: intent
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -171,8 +171,10 @@ jobs:
           set -Eeuo pipefail
           root="$RUNNER_TEMP/core-release"
           bash scripts/verify-public-core-release.sh "$CORE_CHECKPOINT_COMMIT" "$root"
-          jq --exit-status --arg checkpoint "$CORE_CHECKPOINT_COMMIT" \
-            '.locked_commit == $checkpoint' "$RUNNER_TEMP/verified-core-release.json" >/dev/null
+          jq --exit-status --arg checkpoint "$CORE_CHECKPOINT_COMMIT" '
+            .locked_commit == $checkpoint and
+            .publication_scope == "registry_only" and .cloud_deployments == "deferred"
+          ' "$RUNNER_TEMP/verified-core-release.json" >/dev/null
           test "$(sha256sum "$root/latchway-contract.tar.gz" | cut -d ' ' -f 1)" = "$CORE_BUNDLE_SHA256"
           candidate_commit=$(jq --exit-status --raw-output \
             '.candidate_commit | select(test("^[0-9a-f]{40}$"))' "$RUNNER_TEMP/verified-core-release.json")
@@ -202,7 +204,7 @@ jobs:
             assets=$(jq --compact-output --null-input --argjson current "$assets" --arg name "$name" --arg digest "$digest" \
               '$current + {($name): $digest}')
           done < <(find "$root" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
-          test "$(jq 'length' <<< "$assets")" = 15
+          test "$(jq 'length' <<< "$assets")" = 11
           jq --null-input --arg candidate "$CORE_CANDIDATE_COMMIT" \
             --arg checkpoint "$CORE_CHECKPOINT_COMMIT" --arg ancestry "$CORE_ANCESTRY_STATUS" \
             --arg merge_base "$CORE_MERGE_BASE_COMMIT" --arg bundle "$CORE_BUNDLE_SHA256" \
@@ -221,20 +223,22 @@ jobs:
                 contract_bundle_sha256:$bundle,
                 profile:$record[0].profile,
                 profile_status:$record[0].profile_status,
+                publication_scope:"registry_only",
                 core_publication_gate:$record[0].core_publication_gate,
                 image:$record[0].image,
                 deployment_evidence:$record[0].deployment_evidence,
+                deferred_evidence:$record[0].deferred_evidence,
                 supply_chain:$record[0].supply_chain,
                 claims:$record[0].claims,
-                public_release:{draft:false,prerelease:false,asset_count:15},
+                public_release:{draft:false,prerelease:false,asset_count:11},
                 verification:{
                   semantic_candidate_commit:$candidate,
                   sdk_semantic_verifier_commit:$sdk_commit,
                   core_public_record_attestation:true,
                   sha256sums_attestation:true,
                   candidate_attestation:true,
-                  compose_attestation:true,
-                  cloud_run_attestation:true,
+                  deployment_evidence_absent:true,
+                  cloud_deployments_deferred:true,
                   core_record_sha256:$record_sha256,
                   release_asset_sha256:$assets
                 }
@@ -323,13 +327,29 @@ jobs:
             (.ancestry.status == "ahead" or .ancestry.status == "identical") and
             .ancestry.merge_base_commit == $checkpoint and .contract_bundle_sha256 == $bundle and
             .profile == "single_maintainer_v1" and .profile_status == "incomplete" and
+            .publication_scope == "registry_only" and
             .core_publication_gate == "passed" and
-            (.deployment_evidence | keys | sort) == ["cloud_run","compose"] and
+            .deployment_evidence == {} and
+            .deferred_evidence == [
+              "independent_human_review",
+              "live_sdk_conformance",
+              "physical_devices",
+              "apple_distribution_and_extensions",
+              "play_integrity_and_android_device",
+              "firebase_app_check",
+              "turnstile",
+              "live_provider",
+              "cloud_deployments",
+              "operational_resilience",
+              "public_registries.documentation_production_verified",
+              "mintlify_production"
+            ] and
             .verification.semantic_candidate_commit == $candidate and
             .verification.core_public_record_attestation == true and
             .verification.sha256sums_attestation == true and
-            .verification.candidate_attestation == true and .verification.compose_attestation == true and
-            .verification.cloud_run_attestation == true and
+            .verification.candidate_attestation == true and
+            .verification.deployment_evidence_absent == true and
+            .verification.cloud_deployments_deferred == true and
             .claims == {fully_evidence_gated:false,independently_reviewed:false,release_qualified:false}
           ' "$gate" >/dev/null
           install -m 600 "$intent" .artifacts/
@@ -358,46 +378,9 @@ jobs:
           compression-level: 0
           retention-days: 90
 
-  immutable-release-settings:
-    name: Verify immutable-release settings before tag mutation
-    needs: [intent, verify]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    environment: single-maintainer-v1-administration
-    permissions: {}
-    steps:
-      - name: Verify the exact single-maintainer administration policy
-        shell: bash
-        env:
-          OBSERVED_POLICY_ID: ${{ vars.LATCHWAY_RELEASE_PROFILE_POLICY_ID }}
-        run: |
-          set -Eeuo pipefail
-          test "$OBSERVED_POLICY_ID" = "latchway-release-profile-v1:latchway-js:single_maintainer_v1:administration"
-      - name: Preflight immutable-release settings without a checkout
-        shell: bash
-        env:
-          LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN: ${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}
-        run: |
-          set -Eeuo pipefail
-          version=$(gh --version | sed -nE '1s/^gh version ([0-9]+)\.([0-9]+)\.([0-9]+).*$/\1 \2 \3/p')
-          read -r major minor patch <<< "$version"
-          [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ ]]
-          (( major > 2 || (major == 2 && minor >= 97) ))
-          test -n "$LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN"
-          GH_TOKEN="$LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN" gh api \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/immutable-releases" \
-            > "$RUNNER_TEMP/immutable-releases.json"
-          jq --exit-status '
-            type == "object" and
-            (keys | sort) == ["enabled","enforced_by_owner"] and
-            .enabled == true and (.enforced_by_owner | type) == "boolean"
-          ' "$RUNNER_TEMP/immutable-releases.json" >/dev/null
-
   tag:
     name: Create or adopt only transaction-owned annotated tag
-    needs: [intent, verify, immutable-release-settings]
+    needs: [intent, verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: single-maintainer-v1

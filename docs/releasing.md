@@ -21,17 +21,20 @@ the forbidden stronger claims before doing any work.
 
 Before creating any JavaScript tag, the workflow downloads the exact public
 `Latchway/latchway` `v1.0.0` release and requires the
-`single_maintainer_v1` core record. It checks the release's closed 15-asset
+`single_maintainer_v1` core record. It checks the release's closed 11-asset
 set and checksums with the verifier stored at the selected JavaScript commit.
 The released candidate may be newer than the `contract.lock` core checkpoint,
 but GitHub's comparison must report it as `ahead` or `identical` with that
 checkpoint as the merge base. The workflow verifies the annotated core tag and
 public release metadata, authenticates the public core record and `SHA256SUMS`
-to core's `single-maintainer-release.yml`, and authenticates the candidate,
-Docker Compose, and Google Cloud Run evidence to their exact core workflows,
-`main` ref, and released candidate commit. The resulting
-`core-release-gate.json` records both revisions and is retained with the
-JavaScript release inputs.
+to core's `single-maintainer-release.yml`, and authenticates the candidate to
+core's exact candidate workflow, `main` ref, and released candidate commit.
+The signed record must contain an exact empty `deployment_evidence` object and
+the exact `cloud_deployments` deferred-evidence entry; deployment archives or
+claims that Compose, Cloud Run, or another target passed are rejected. The
+resulting `core-release-gate.json` records both revisions, its registry-only
+scope, and the explicit cloud deferral, and is retained with the JavaScript
+release inputs.
 
 The complete dependency scan, test, browser, build, reproducibility, archive
 allowlist, consumer, and documentation gates then pass before the workflow
@@ -86,16 +89,13 @@ later requires deliberate reconfiguration of all four packages back to
 workflow file `release.yml` and environment `npm`; never assume both publishers
 are active.
 
-Also create a reviewer-free `single-maintainer-v1-administration` environment
-restricted to `main`. Define only the environment-scoped variable
-`LATCHWAY_RELEASE_PROFILE_POLICY_ID` with value
-`latchway-release-profile-v1:latchway-js:single_maintainer_v1:administration`
-and the environment secret `LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN`. That token is
-used only by a no-checkout, no-OIDC job to read the repository's immutable
-release setting before tag creation. The job requires the closed response
-`enabled: true` plus a boolean `enforced_by_owner`; the launch profile does not
-turn the latter observation into a stronger owner-enforcement claim. Do not
-define this secret or profile sentinel at repository or organization scope.
+This selected profile has no prepublication Administration-token job or
+`single-maintainer-v1-administration` environment. The tag may therefore be
+created before GitHub proves the repository's immutable-release setting; that
+is an explicit assurance reduction, not evidence that the setting passed. The
+final publisher still requires an unchanged release ETag, exact asset and tag
+closure, `immutable: true`, and successful release and per-asset attestation
+verification before it reports success.
 
 ```bash
 gh workflow run single-maintainer-release.yml --ref main \
@@ -105,10 +105,12 @@ gh workflow run single-maintainer-release.yml --ref main \
   -f confirmation=publish-v1.0.0-with-deferred-assurance
 ```
 
-Dispatch only after the public core `v1.0.0` single-maintainer release exists
-with its exact Docker Compose and Cloud Run evidence. If a dispatch reaches
-any mutation and later fails, use **Re-run failed jobs** on that owner run; do
-not use rerun-all and do not start a new dispatch for recovery.
+Dispatch only after the public core `v1.0.0` registry-only single-maintainer
+release exists with its exact 11-asset closure. Cloud deployment verification
+is explicitly deferred by this profile; do not attach or substitute fabricated
+deployment evidence. If a dispatch reaches any mutation and later fails, use
+**Re-run failed jobs** on that owner run; do not use rerun-all and do not start
+a new dispatch for recovery.
 
 ## Strict full registry and repository setup
 

@@ -127,6 +127,8 @@ class MaintainerReleaseTests(unittest.TestCase):
             ".github/workflows/single-maintainer-release.yml",
         )
         self.assertIn("independent_human_review", intent["deferred_evidence"])
+        self.assertIn("cloud_deployments", intent["deferred_evidence"])
+        self.assertFalse(any(item.startswith("cloud_deployments.") for item in intent["deferred_evidence"]))
         self.assertIn("fully_evidence_gated", intent["forbidden_claims"])
         self.assertEqual(intent["workflow"]["owner_run_id"], 123)
         self.assertEqual(intent["transaction"]["id"], result["transaction_id"])
@@ -190,11 +192,8 @@ class MaintainerReleaseTests(unittest.TestCase):
         self.assertIn("workflow file\n`single-maintainer-release.yml`", documentation)
         self.assertIn("strict `release.yml` cannot publish", documentation)
         self.assertIn("npm permits only one trusted publisher per package", documentation)
-        self.assertIn("reviewer-free `single-maintainer-v1-administration` environment", documentation)
-        self.assertIn(
-            "`latchway-release-profile-v1:latchway-js:single_maintainer_v1:administration`",
-            documentation,
-        )
+        self.assertIn("no prepublication Administration-token job", documentation)
+        self.assertIn("explicit assurance reduction", documentation)
         self.assertIn("validated release ETag is unchanged with a conditional `304` response", documentation)
         self.assertEqual(
             documentation.count(
@@ -207,10 +206,17 @@ class MaintainerReleaseTests(unittest.TestCase):
         self.assertIn("bash scripts/verify-public-core-release.sh", workflow)
         self.assertIn("compare/$locked_core_commit...$core_commit", core_verifier)
         self.assertIn(".merge_base_commit.sha == $locked", core_verifier)
+        self.assertIn(".immutable == true", core_verifier)
+        self.assertIn("(.assets | length) == 11", core_verifier)
         self.assertIn("Refuse a new dispatch or rerun-all after any v1 mutation", workflow)
         self.assertIn("--signer-workflow \"$core_repository/.github/workflows/single-maintainer-release.yml\"", core_verifier)
         self.assertIn("$core_repository/.github/workflows/release.yml", release_surface)
-        self.assertIn("$core_repository/.github/workflows/deployment-evidence.yml", release_surface)
+        self.assertNotIn("$core_repository/.github/workflows/deployment-evidence.yml", release_surface)
+        self.assertIn("registry-only; cloud deployment evidence is explicitly deferred", core_verifier)
+        self.assertIn('.deployment_evidence == {}', workflow)
+        self.assertIn('"cloud_deployments"', workflow)
+        self.assertNotIn("compose_attestation:true", workflow)
+        self.assertNotIn("cloud_run_attestation:true", workflow)
         self.assertIn("core-release-gate.json", workflow)
         self.assertIn("EXPECTED_PROVENANCE_WORKFLOW_PATH: .github/workflows/single-maintainer-release.yml", workflow)
         self.assertIn("EXPECTED_PROVENANCE_EVENT: workflow_dispatch", workflow)
@@ -226,32 +232,15 @@ class MaintainerReleaseTests(unittest.TestCase):
             workflow.count("latchway-release-controls-v1:latchway-js:single-maintainer-v1"),
             5,
         )
-        administration_start = workflow.index("\n  immutable-release-settings:\n")
-        tag_start = workflow.index("\n  tag:\n")
-        administration = workflow[administration_start:tag_start]
-        self.assertLess(administration_start, tag_start)
-        self.assertIn("needs: [intent, verify, immutable-release-settings]", workflow)
-        self.assertIn("environment: single-maintainer-v1-administration", administration)
-        self.assertIn("permissions: {}", administration)
-        self.assertIn(
-            "latchway-release-profile-v1:latchway-js:single_maintainer_v1:administration",
-            administration,
-        )
-        self.assertIn("${{ vars.LATCHWAY_RELEASE_PROFILE_POLICY_ID }}", administration)
-        self.assertIn("${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}", administration)
-        self.assertIn('"repos/$GITHUB_REPOSITORY/immutable-releases"', administration)
-        self.assertIn('(keys | sort) == ["enabled","enforced_by_owner"]', administration)
-        self.assertIn('.enabled == true and (.enforced_by_owner | type) == "boolean"', administration)
-        self.assertNotIn("actions/checkout", administration)
-        self.assertNotIn("id-token: write", administration)
-        self.assertNotIn("${{ github.token }}", administration)
-        self.assertEqual(
-            workflow.count("${{ secrets.LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN }}"),
-            1,
-        )
+        self.assertNotIn("\n  immutable-release-settings:\n", workflow)
+        self.assertIn("needs: [intent, verify]", workflow)
+        self.assertNotIn("single-maintainer-v1-administration", workflow)
+        self.assertNotIn("LATCHWAY_RELEASE_PROFILE_POLICY_ID", workflow)
+        self.assertNotIn("LATCHWAY_GITHUB_RELEASE_ADMIN_TOKEN", workflow)
+        self.assertNotIn('"repos/$GITHUB_REPOSITORY/immutable-releases"', workflow)
         self.assertGreaterEqual(
             workflow.count("(( major > 2 || (major == 2 && minor >= 97) ))"),
-            2,
+            1,
         )
         self.assertIn("Every job bearing this environment\nchecks that sentinel as its first step", documentation)
         self.assertIn("Re-run failed jobs", documentation)
