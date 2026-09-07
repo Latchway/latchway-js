@@ -91,6 +91,7 @@
   "devDependencies": {
     "@ai-sdk/openai": "4.0.52",
     "@eslint/js": "10.0.1",
+    "@langchain/core": "1.2.9",
     "@langchain/openai": "1.5.10",
     "@playwright/test": "1.56.0",
     "@types/node": "24.13.3",

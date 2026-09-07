@@ -393,5 +393,7 @@ function decodeHeader(proof: string): { jwk: P256PublicJWK } {
 }
 
 function hasStructuredOutput(body: Readonly<Record<string, unknown>>): boolean {
-  return Object.hasOwn(body, "response_format") || Object.hasOwn(body, "text");
+  const text = body.text;
+  return Object.hasOwn(body, "response_format") ||
+    (typeof text === "object" && text !== null && "format" in text);
 }

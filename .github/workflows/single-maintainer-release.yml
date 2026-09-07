@@ -1,4 +1,4 @@
-name: Publish JavaScript SDK v1.0.0
+name: Publish LangChain adapter v1.1.0
 
 on:
   workflow_dispatch:
@@ -8,19 +8,19 @@ permissions:
   id-token: write
 
 concurrency:
-  group: latchway-js-v1.0.0-publication
+  group: latchway-langchain-v1.1.0-publication
   cancel-in-progress: false
 
 env:
   NODE_VERSION: 24.19.0
   NPM_VERSION: 11.6.2
   PNPM_VERSION: 10.15.0
-  RELEASE_TAG: v1.0.0
-  RELEASE_VERSION: 1.0.0
+  RELEASE_TAG: langchain-v1.1.0
+  RELEASE_VERSION: 1.1.0
 
 jobs:
   publish:
-    name: Pack, publish, and release v1.0.0
+    name: Pack, publish, and release LangChain v1.1.0
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -41,30 +41,21 @@ jobs:
         run: |
           npm install --global "npm@$NPM_VERSION"
           pnpm install --frozen-lockfile
-      - name: Build and pack the v1.0.0 package set
+      - name: Build and pack only the LangChain adapter
         run: |
           pnpm build
           mkdir -p "$RUNNER_TEMP/release"
-          pnpm pack --pack-destination "$RUNNER_TEMP/release"
-          pnpm --dir packages/openai pack --pack-destination "$RUNNER_TEMP/release"
-          pnpm --dir packages/vercel-ai pack --pack-destination "$RUNNER_TEMP/release"
           pnpm --dir packages/langchain pack --pack-destination "$RUNNER_TEMP/release"
-      - name: Publish the v1.0.0 package set with trusted npm publishing
+      - name: Publish LangChain v1.1.0 with trusted npm publishing
         run: |
-          npm publish "$RUNNER_TEMP/release/latchway-client-$RELEASE_VERSION.tgz" --access public --provenance --tag latest
-          npm publish "$RUNNER_TEMP/release/latchway-openai-$RELEASE_VERSION.tgz" --access public --provenance --tag latest
-          npm publish "$RUNNER_TEMP/release/latchway-vercel-ai-$RELEASE_VERSION.tgz" --access public --provenance --tag latest
           npm publish "$RUNNER_TEMP/release/latchway-langchain-$RELEASE_VERSION.tgz" --access public --provenance --tag latest
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$RELEASE_TAG" \
-            "$RUNNER_TEMP/release/latchway-client-$RELEASE_VERSION.tgz" \
-            "$RUNNER_TEMP/release/latchway-openai-$RELEASE_VERSION.tgz" \
-            "$RUNNER_TEMP/release/latchway-vercel-ai-$RELEASE_VERSION.tgz" \
             "$RUNNER_TEMP/release/latchway-langchain-$RELEASE_VERSION.tgz" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "Latchway JavaScript SDK $RELEASE_VERSION" \
-            --notes "Latchway JavaScript SDK $RELEASE_VERSION."
+            --title "Latchway LangChain adapter $RELEASE_VERSION" \
+            --notes "Stateless Responses, strict tool binding, completed-message replay, no-retry defaults and React Native 1.1.0 integration. Only @latchway/langchain is published; other JavaScript packages remain 1.0.0. See packages/langchain/README.md and CHANGELOG.md."

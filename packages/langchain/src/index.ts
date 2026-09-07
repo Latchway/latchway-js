@@ -5,6 +5,7 @@ import {
   type OpenAIEmbeddingsParams,
 } from "@langchain/openai";
 import langchainOpenAIPackage from "@langchain/openai/package.json" with { type: "json" };
+import { AIMessage, type AIMessageChunk } from "@langchain/core/messages";
 
 const frameworkVersion = langchainOpenAIPackage.version;
 const placeholder = "latchway-managed-not-a-provider-secret";
@@ -46,6 +47,7 @@ export function createLatchwayChatOpenAI(options: CreateLatchwayChatOpenAIOption
   });
   return new ChatOpenAI({
     ...options.chatOptions,
+    maxRetries: options.chatOptions?.maxRetries ?? 0,
     apiKey: placeholder,
     model: "latchway",
     configuration: {
@@ -62,6 +64,7 @@ export function createLatchwayEmbeddings(options: CreateLatchwayEmbeddingsOption
   });
   return new OpenAIEmbeddings({
     ...options.embeddingsOptions,
+    maxRetries: options.embeddingsOptions?.maxRetries ?? 0,
     apiKey: placeholder,
     encodingFormat: "float",
     model: "latchway",
@@ -73,6 +76,96 @@ export function createLatchwayEmbeddings(options: CreateLatchwayEmbeddingsOption
 }
 
 export const LANGCHAIN_OPENAI_VERSION = frameworkVersion;
+
+export interface CreateLatchwayResponsesModelOptions extends Omit<CreateLatchwayChatOpenAIOptions, "chatOptions"> {
+  /** Explicit route/model capability: the non-authoritative model alias cannot infer it. */
+  reasoning?: ChatOpenAIFields["reasoning"];
+  chatOptions?: Omit<LatchwayChatOpenAIOptions, "useResponsesApi" | "zdrEnabled" | "reasoning" | "reasoningEffort">;
+}
+
+/**
+ * Opt-in stateless text/function-tool Responses profile (gateway 1.0.2+).
+ * Own history locally; provider storage/references and opaque reasoning are not
+ * enabled. No reasoning setting is guessed from the server-owned model alias.
+ */
+export function createLatchwayResponsesModel(options: CreateLatchwayResponsesModelOptions): ChatOpenAI {
+  const chatOptions = options.chatOptions ?? {};
+  const kwargs = chatOptions.modelKwargs ?? {};
+  for (const key of ["include", "previous_response_id", "conversation", "reasoning", "reasoning_effort"]) {
+    if (kwargs[key] !== undefined) {
+      throw new Error(`The stateless Latchway Responses profile does not accept modelKwargs.${key}. Use explicit reasoning options and local message history.`);
+    }
+  }
+  if (kwargs.store !== undefined && kwargs.store !== false) {
+    throw new Error("The stateless Latchway Responses profile requires store:false.");
+  }
+  return createLatchwayChatOpenAI({
+    latchway: options.latchway,
+    feature: options.feature,
+    chatOptions: {
+      ...chatOptions,
+      useResponsesApi: true,
+      zdrEnabled: true,
+      modelKwargs: {
+        ...kwargs,
+        store: false,
+        ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+      },
+    },
+  });
+}
+
+/** Bind ordinary LangChain tools with explicit boolean strict and serial defaults. */
+export function bindLatchwayTools(
+  model: ChatOpenAI,
+  tools: Parameters<ChatOpenAI["bindTools"]>[0],
+  options: NonNullable<Parameters<ChatOpenAI["bindTools"]>[1]> = {},
+): ReturnType<ChatOpenAI["bindTools"]> {
+  if (options.strict !== undefined && typeof options.strict !== "boolean") {
+    throw new Error("Latchway tool strict must be a boolean.");
+  }
+  if (options.parallel_tool_calls !== undefined && typeof options.parallel_tool_calls !== "boolean") {
+    throw new Error("Latchway parallel_tool_calls must be a boolean.");
+  }
+  return model.bindTools(tools, { ...options,
+    parallel_tool_calls: options.parallel_tool_calls ?? false, strict: options.strict ?? true,
+  });
+}
+
+/**
+ * Make an explicit text/function-call replay message after a complete response.
+ * Removes provider item IDs and observational metadata, preserves tool-call IDs,
+ * and refuses opaque/unsupported content instead of silently dropping it.
+ * Do not call on partial/failed streams; retain the original for usage metadata.
+ */
+export function toLatchwayReplayMessage(message: AIMessage | AIMessageChunk): AIMessage {
+  if (message.invalid_tool_calls?.length) throw new Error("Cannot replay invalid tool calls.");
+  for (const key of ["reasoning", "refusal", "audio", "function_call"]) {
+    if (message.additional_kwargs[key] != null) {
+      throw new Error(`Cannot replay unsupported ${key} content on the stateless text/tool profile.`);
+    }
+  }
+  let content: string;
+  if (typeof message.content === "string") {
+    content = message.content;
+  } else {
+    content = message.content.map((part) => {
+      if (part.type !== "text" || typeof part.text !== "string") {
+        throw new Error("Only text and function-tool calls can be replayed on this profile.");
+      }
+      return part.text;
+    }).join("");
+  }
+  const ids = new Set<string>();
+  const toolCalls = (message.tool_calls ?? []).map((call) => {
+    if (!call.id || !call.name || ids.has(call.id)) {
+      throw new Error("Replay requires unique, non-empty tool-call IDs and names.");
+    }
+    ids.add(call.id);
+    return { ...call, args: { ...call.args } };
+  });
+  return new AIMessage({ content, tool_calls: toolCalls });
+}
 
 function withProviderRequestID(
   fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,

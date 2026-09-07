@@ -7,6 +7,20 @@ Versioning once package publication begins.
 
 ## [Unreleased]
 
+## [@latchway/langchain 1.1.0] - 2026-09-07
+
+- Added `createLatchwayResponsesModel` for opt-in stateless text/function-tool
+  Responses, with explicit route-appropriate reasoning and no stored references.
+- Added `bindLatchwayTools` with boolean strict and serial-tool defaults, and
+  `toLatchwayReplayMessage` for completed local text/tool history. Unsupported
+  opaque content and invalid/duplicate call IDs fail explicitly.
+- Chat and embeddings adapters now default to zero framework retries. Callers
+  may opt into retries explicitly after considering ambiguous dispatch/billing.
+- Added streaming, cancellation, schema, replay and serialization regressions,
+  plus an npm-only React Native quickstart. LangChain remains optional.
+- Only the LangChain adapter changes version. Client/OpenAI/Vercel AI packages,
+  the native authentication boundary and contract lock remain unchanged.
+
 ## [1.0.0] - 2026-09-01
 
 ### Changed
