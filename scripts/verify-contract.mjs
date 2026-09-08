@@ -2,13 +2,13 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const expected = {
-  contract: "1.0.0",
-  release: "v1.0.0",
-  commit: "d260e3d7485e9e1487b5e03922b79c7089d94ce2",
-  bundle: "4866aec1ff70e78d70f07847448161c2b59970fe102d95393b051444536d29a4",
-  protocol: 2,
-  minimumServer: "1.0.0",
-  maximumTestedServer: "1.0.x",
+  contract: "1.1.0",
+  release: "v1.1.0",
+  commit: "0a60cbef57d904664430e235e1e165fea14f610b",
+  bundle: "deb25aaae5160a7342bfae0efa4a9ce0403d8c40ed8da74eb2c99be4d4ede293",
+  protocol: 3,
+  minimumServer: "1.1.0",
+  maximumTestedServer: "1.1.0",
 };
 const expectedLock = `contract_version: ${expected.contract}
 wire_protocol: ${expected.protocol}
@@ -23,7 +23,7 @@ const fixtureHashes = new Map([
   ["component-attestation-binding-v2.json", "8411308998cdffccf286892b94a6c759cbcf63b92e4727144d3a755dcd7c13d4"],
   ["dpop-v1.json", "b639e22dcd1c1a18e1292a044d96ec043c3be1e0271aacd6904bca39253bc5d4"],
   ["installation-family-v2.json", "7ea657c5ca1de6d0ab1507b6187a1a6920fcf7486a6c6da178727df0efc5257d"],
-  ["protocol-version.json", "4a6cf9f271bc9e83648eacf05f250f8fab24fc215d292a5a721148578f7372b1"],
+  ["protocol-version.json", "c8f32d02af792dcec2e92ea1dc5816b85ccf8214f31c9c334cfafc38aa078932"],
 ]);
 
 const lock = await readFile(new URL("../contract.lock", import.meta.url), "utf8");
@@ -41,6 +41,16 @@ for (const [name, expectedHash] of fixtureHashes) {
 const protocol = JSON.parse(await readFile(new URL("../test/fixtures/contract/protocol-version.json", import.meta.url), "utf8"));
 if (protocol.contract_version !== expected.contract || protocol.wire_protocol.current !== expected.protocol) {
   throw new Error("The vendored protocol manifest is incompatible with contract.lock.");
+}
+const shared = JSON.parse(await readFile(new URL("../contract.shared-native.lock.json", import.meta.url), "utf8"));
+if (shared.status !== "released" || shared.core_commit !== expected.commit || shared.core_release !== expected.release ||
+    shared.bundle_sha256 !== expected.bundle || shared.contract_version !== expected.contract || shared.wire_protocol !== expected.protocol) {
+  throw new Error("The shared-native contract pin differs from the released core contract.");
+}
+for (const [path, expectedHash] of Object.entries(shared.files)) {
+  if (!path.startsWith("test/fixtures/contract/shared-native/") || path.includes("..")) throw new Error("Unsafe shared contract fixture path.");
+  const bytes = await readFile(new URL(`../${path}`, import.meta.url));
+  if (createHash("sha256").update(bytes).digest("hex") !== expectedHash) throw new Error(`Shared contract fixture drift: ${path}`);
 }
 if (protocol.component_attestation_binding?.version !== 2 ||
     protocol.component_attestation_binding?.purpose !== "component_attestation_step_up") {

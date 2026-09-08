@@ -15,7 +15,7 @@ import type {
   QuotaSnapshot,
   ServerDiagnostics,
 } from "../types.js";
-import { CONTRACT_VERSION, PROTOCOL_VERSION, SDK_KIND, SDK_VERSION } from "../version.js";
+import { CONTRACT_VERSION, PROTOCOL_VERSION, SDK_KIND, SDK_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from "../version.js";
 import type { RuntimeConfiguration } from "./config.js";
 
 const forbiddenCredentialHeaders = new Set([
@@ -521,7 +521,8 @@ function parseQuota(value: unknown): QuotaSnapshot {
 
 function parseDiagnostics(value: unknown): ServerDiagnostics {
   if (!isRecord(value) || typeof value.request_id !== "string" || typeof value.server_version !== "string" ||
-      value.contract_version !== CONTRACT_VERSION || value.protocol_version !== PROTOCOL_VERSION ||
+      (value.contract_version !== CONTRACT_VERSION && value.contract_version !== "1.0.0") ||
+      !SUPPORTED_PROTOCOL_VERSIONS.some((version) => value.protocol_version === version) ||
       !isRecord(value.installation) || !isRecord(value.session) || !isRecord(value.trust) ||
       typeof value.installation.id !== "string" || typeof value.installation.platform !== "string" ||
       typeof value.installation.dpop_jkt !== "string" ||

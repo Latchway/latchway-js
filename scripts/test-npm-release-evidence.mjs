@@ -40,13 +40,13 @@ test("release package inventory is fixed and workspace peers become registry-saf
     "@latchway/langchain",
   ]);
   assert.deepEqual(packages.map(({ archiveName }) => archiveName), [
-    "latchway-client-1.0.0.tgz",
+    "latchway-client-1.1.0.tgz",
     "latchway-openai-1.0.0.tgz",
     "latchway-vercel-ai-1.0.0.tgz",
-    "latchway-langchain-1.0.0.tgz",
+    "latchway-langchain-1.1.0.tgz",
   ]);
   for (const package_ of packages.slice(1)) {
-    assert.equal(expectedPublishedManifest(package_).peerDependencies["@latchway/client"], "^1.0.0");
+    assert.equal(expectedPublishedManifest(package_).peerDependencies["@latchway/client"], "^1.1.0");
   }
   assert.equal(artifactNameForPackage("vercel-ai", "audit-signatures"),
     "npm-vercel-ai-audit-signatures.json");

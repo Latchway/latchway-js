@@ -5,7 +5,20 @@ All notable changes to this project will be documented in this file.
 The format follows Keep a Changelog, and releases will follow Semantic
 Versioning once package publication begins.
 
-## [Unreleased]
+## [@latchway/client 1.1.0] - 2026-09-08
+
+- Add the portable typed native lifecycle error vocabulary and consume the exact
+  core-owned shared-native 1.1.0 contract alongside frozen legacy fixtures.
+  Web/Node clients retain their separate identity model; an HTTP error cannot
+  impersonate native-local logout or lifecycle authority.
+- Add `identity_refresh_required` for temporary supplied-token suspension in the
+  native/RN bridge vocabulary. The application supplies fresh identity and logout
+  notifications; this package adds no Firebase dependency or native auth owner.
+- Advertise contract 1.1.0 with supported wire versions 1, 2 and 3. Browser/Node
+  continue emitting wire 2 and accept diagnostics from compatible 1.0.0 and
+  1.1.0 servers. Native shared-app operations remain in the native/RN SDKs.
+- Only `@latchway/client` changes version in this release; existing OpenAI,
+  Vercel AI and LangChain adapter peer ranges accept client 1.1.0.
 
 ## [@latchway/langchain 1.1.0] - 2026-09-07
 

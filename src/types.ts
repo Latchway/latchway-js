@@ -205,8 +205,8 @@ export interface TrustSummary {
 export interface ServerDiagnostics {
   request_id: string;
   server_version: string;
-  contract_version: "1.0.0";
-  protocol_version: 2;
+  contract_version: "1.0.0" | "1.1.0";
+  protocol_version: 1 | 2 | 3;
   installation: InstallationSummary;
   session: {
     expires_at: string;

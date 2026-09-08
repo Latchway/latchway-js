@@ -16,18 +16,23 @@ The adapters are thin transport integrations. They preserve the framework's
 native messages, tools, structured output, streaming, and cancellation APIs;
 Latchway does not introduce a second AI framework.
 
-Version `1.0.0` is the intended stable source candidate and has not yet been
-published to npm. Released contract 1.0.0, current wire protocol 2, and the exact
-reviewed core bundle are pinned in `contract.lock`. Wire-1-shaped session
+Client version `1.1.0` adds the shared-native lifecycle error vocabulary and
+contract 1.1.0 compatibility. The exact new core source and bundle are pinned in
+`contract.lock` and its shared-native companion. Historical cryptographic vectors
+are retained unchanged in that release. Browser/Node requests still emit wire protocol 2. Wire-1-shaped session
 grants without Installation Family metadata remain parseable for legacy
 server compatibility; new family/component operations require wire 2.
-`pnpm pack:check` produces a locally installable prerelease archive without
+`pnpm pack:check` produces a locally installable archive without
 publishing it.
 
-The promotion-dispatched release workflow remains fail-closed until promotion
-evidence authorizes the exact commit. See [`docs/releasing.md`](docs/releasing.md) for
-the external npm trusted-publisher setup, stable-version procedure, and
-artifact/provenance checks. No repository command publishes implicitly.
+Publication uses the explicitly dispatched single-maintainer workflow and npm
+trusted publishing. Source tests and artifact checks are separate from registry
+publication and physical-device evidence. No build command publishes implicitly.
+
+For native-shared account configuration, supplied ID tokens and logout, use
+`@latchway/react-native`. The browser/Node client does not own the native registry
+or claim hardware-backed attestation. Neither the base client nor the new
+native/RN identity helpers require Firebase; authentication remains app-owned.
 
 ## Browser client
 

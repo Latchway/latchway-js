@@ -13,7 +13,8 @@ const PROTOCOL_MANIFEST = JSON.parse(readFileSync(
 ));
 const CONTRACT_VERSION = PROTOCOL_MANIFEST.contract_version;
 const PROTOCOL_VERSION = PROTOCOL_MANIFEST.wire_protocol?.current;
-if (CONTRACT_VERSION !== "1.0.0" || PROTOCOL_VERSION !== 2) {
+const CLIENT_PROTOCOL_VERSION = 2;
+if (CONTRACT_VERSION !== "1.1.0" || PROTOCOL_VERSION !== 3 || !PROTOCOL_MANIFEST.wire_protocol.supported.includes(CLIENT_PROTOCOL_VERSION)) {
   throw new Error("javascript_contract_runtime_identity_invalid");
 }
 const COMMIT = /^[0-9a-f]{40}$/u;
@@ -256,7 +257,7 @@ export async function runLive({ candidate, gateway, config, fetchImplementation 
     if (diagnostics.client.sdkVersion !== candidate.repositories.javascript.version ||
         diagnostics.client.contractVersion !== candidate.contract_version ||
         diagnostics.client.contractVersion !== CONTRACT_VERSION ||
-        diagnostics.client.protocolVersion !== PROTOCOL_VERSION || diagnostics.client.platform !== "node" ||
+        diagnostics.client.protocolVersion !== CLIENT_PROTOCOL_VERSION || diagnostics.client.platform !== "node" ||
         diagnostics.server.contract_version !== candidate.contract_version ||
         diagnostics.server.protocol_version !== PROTOCOL_VERSION) {
       throw new Error("live_javascript_runtime_identity_invalid");

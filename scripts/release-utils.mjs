@@ -35,7 +35,7 @@ export const RELEASE_PACKAGE_DEFINITIONS = Object.freeze([
     name: "@latchway/client",
     directory: ".",
     topLevelFiles: Object.freeze([
-      "CHANGELOG.md", "LICENSE", "NOTICE", "README.md", "SECURITY.md", "contract.lock", "package.json",
+      "CHANGELOG.md", "LICENSE", "NOTICE", "README.md", "SECURITY.md", "contract.lock", "contract.shared-native.lock.json", "package.json",
     ]),
     contentDirectories: Object.freeze({ dist: "dist", docs: "docs" }),
     runtimeExports: Object.freeze([
@@ -108,7 +108,6 @@ export async function readRootManifest() {
 
 export async function readReleasePackages() {
   const packages = [];
-  let releaseVersion;
   for (const definition of RELEASE_PACKAGE_DEFINITIONS) {
     const directory = resolve(ROOT_PATH, definition.directory);
     if (relative(ROOT_PATH, directory).startsWith(`..${sep}`)) {
@@ -119,9 +118,8 @@ export async function readReleasePackages() {
       throw new Error(`Release package ${definition.id} has an invalid name or version.`);
     }
     assertNoUnsafeLifecycleScripts(manifest, definition.name);
-    releaseVersion ??= manifest.version;
-    if (manifest.version !== releaseVersion) {
-      throw new Error("Every JavaScript release package must use one exact version.");
+    if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(manifest.version)) {
+      throw new Error("Every JavaScript package must use an exact semantic version.");
     }
     packages.push(Object.freeze({
       ...definition,
@@ -225,10 +223,17 @@ export function expectedPublishedManifest(package_) {
       if (!RELEASE_PACKAGE_NAMES.has(name)) {
         throw new Error(`${package_.name} has an unsupported workspace dependency on ${name}.`);
       }
+      const dependency = RELEASE_PACKAGE_DEFINITIONS.find((item) => item.name === name);
+      const dependencyManifest = readBoundedStrictJSONFileSync(join(ROOT_PATH, dependency.directory, "package.json"),
+        `${name} workspace manifest`, MAXIMUM_PACKAGE_MANIFEST_BYTES);
+      const dependencyVersion = dependencyManifest.version;
+      if (typeof dependencyVersion !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(dependencyVersion)) {
+        throw new Error(`${name} has an invalid workspace version.`);
+      }
       const selector = range.slice("workspace:".length);
-      if (selector === "^") dependencies[name] = `^${package_.manifest.version}`;
-      else if (selector === "~") dependencies[name] = `~${package_.manifest.version}`;
-      else if (selector === "*") dependencies[name] = package_.manifest.version;
+      if (selector === "^") dependencies[name] = `^${dependencyVersion}`;
+      else if (selector === "~") dependencies[name] = `~${dependencyVersion}`;
+      else if (selector === "*") dependencies[name] = dependencyVersion;
       else throw new Error(`${package_.name} has an unsupported workspace selector for ${name}.`);
     }
   }
@@ -539,7 +544,7 @@ async function assertExtractedTreeIsRegular(directory) {
 }
 
 async function linkReviewedPeerDependencies(consumer) {
-  for (const name of ["openai", "ai", "@ai-sdk/openai", "@langchain/openai"]) {
+  for (const name of ["openai", "ai", "@ai-sdk/openai", "@langchain/openai", "@langchain/core"]) {
     const source = await realpath(join(ROOT_PATH, "node_modules", ...name.split("/")));
     const destination = join(consumer, "node_modules", ...name.split("/"));
     await mkdir(dirname(destination), { recursive: true });

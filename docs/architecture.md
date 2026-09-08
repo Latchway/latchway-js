@@ -2,7 +2,7 @@
 
 ## Contract boundary
 
-The SDK consumes released Latchway contract 1.0.0 and emits current wire protocol
+The SDK consumes released Latchway contract 1.1.0 and emits browser/Node wire protocol
 2. The core commit and contract-bundle SHA-256 are immutable inputs in
 `contract.lock`; vendored test vectors are hash-checked in CI. Legacy
 wire-1-shaped installation grants without family/component summaries remain

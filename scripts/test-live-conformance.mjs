@@ -11,12 +11,12 @@ import {
 function candidate() {
   const repositories = {};
   for (const [index, name] of ["core", "javascript", "ios", "android", "react_native"].entries()) {
-    repositories[name] = { commit: String(index + 1).repeat(40), tag: "v1.0.0", version: "1.0.0" };
+    repositories[name] = { commit: String(index + 1).repeat(40), tag: "v1.1.0", version: "1.1.0" };
   }
   return {
     core_commit: "1".repeat(40),
-    core_release: "v1.0.0",
-    contract_version: "1.0.0",
+    core_release: "v1.1.0",
+    contract_version: "1.1.0",
     bundle_sha256: "a".repeat(64),
     oci_image_digest: `ghcr.io/latchway/latchway@sha256:${"b".repeat(64)}`,
     repositories,
@@ -35,11 +35,11 @@ function report() {
       origin: "https://gateway.example.com",
       status: "ok",
       build: {
-        version: "1.0.0",
+        version: "1.1.0",
         commit: "1".repeat(40),
         build_date: "2026-08-29T10:00:00Z",
-        contract_version: "1.0.0",
-        protocol_version: "2",
+        contract_version: "1.1.0",
+        protocol_version: "3",
       },
     },
     tests: [

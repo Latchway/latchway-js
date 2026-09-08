@@ -29,7 +29,7 @@ class DocumentationBundleTests(unittest.TestCase):
                     sys.executable, str(ROOT / "scripts/build_docs_bundle.py"),
                     "--output-dir", output, "--source-date-epoch", "0",
                 ], cwd=ROOT, check=True, stdout=subprocess.PIPE, text=True)
-                archives.append(Path(output, "docs-bundle-1.0.0.tar.gz"))
+                archives.append(Path(output, "docs-bundle-1.1.0.tar.gz"))
             self.assertEqual(archives[0].read_bytes(), archives[1].read_bytes())
             with tarfile.open(archives[0], "r:gz") as archive:
                 members = archive.getmembers()
@@ -41,7 +41,7 @@ class DocumentationBundleTests(unittest.TestCase):
                 }
             manifest = json.loads(payloads["bundle-manifest.json"])
             self.assertEqual(manifest["schema_version"], MODULE.SCHEMA)
-            self.assertEqual(manifest["release"]["version"], "1.0.0")
+            self.assertEqual(manifest["release"]["version"], "1.1.0")
             self.assertEqual({item["kind"] for item in manifest["files"]} >= {
                 "quickstart", "framework", "release_notes", "supported_versions",
                 "public_symbols", "errors", "examples",

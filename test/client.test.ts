@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createLatchwayClient, createCustomAttestationProvider, LatchwayError } from "../src/index.js";
 import { createNodeLatchwayClient } from "../src/node.js";
-import type { LatchwayClient, LatchwayFetchInit, LatchwayOptions, Platform } from "../src/types.js";
+import type { FetchImplementation, LatchwayClient, LatchwayFetchInit, LatchwayOptions, Platform } from "../src/types.js";
 import { base64urlDecode, decodeUTF8 } from "../src/encoding.js";
 import { jwkThumbprint, type P256PublicJWK } from "../src/dpop/key.js";
 import { IndexedDBStateStore } from "../src/storage/indexeddb.js";
@@ -331,7 +331,7 @@ describe("Latchway fetch client", () => {
       component_definition_id: "summary_worker",
       public_jwk: { kty: "EC", crv: "P-256", x: "x".repeat(43), y: "y".repeat(43) },
       requested_features: ["weekly_summary"],
-      client_metadata: { app_version: "2.0.0", sdk_version: "1.0.0" },
+      client_metadata: { app_version: "2.0.0", sdk_version: "1.1.0" },
     }]);
 
     await client.revokeComponent(provisioned.componentID);
@@ -612,6 +612,26 @@ describe("Latchway fetch client", () => {
     });
     await node.fetch("/v1/responses", { method: "POST", body: "{}", latchwayFeature: "assistant" });
     expect(nodeGateway.platform).toBe("node");
+  });
+
+  it("reads server 1.1.0 diagnostics while retaining browser wire-2 requests", async () => {
+    const gateway = new MockGateway();
+    const original = gateway.fetch;
+    const fetch: FetchImplementation = async (input, init) => {
+      const response = await original(input, init);
+      const request = new Request(input, init);
+      if (new URL(request.url).pathname !== "/client/v1/diagnostics") return response;
+      expect(request.headers.get("X-Latchway-Protocol-Version")).toBe("2");
+      const body = await response.json() as Record<string, unknown>;
+      return new Response(JSON.stringify({...body, server_version: "1.1.0", contract_version: "1.1.0", protocol_version: 3}), {
+        status: response.status, headers: response.headers,
+      });
+    };
+    const client = createLatchwayClient({...baseOptions(gateway), fetch, persistence: {mode: "memory"}, attestationProviders: [debugProvider()]});
+    await expect(client.diagnostics()).resolves.toMatchObject({
+      server: {contract_version: "1.1.0", protocol_version: 3},
+      client: {sdkVersion: "1.1.0"},
+    });
   });
 
   it("revokes local installation state only after server confirmation", async () => {

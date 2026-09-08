@@ -61,7 +61,24 @@ export type LatchwayServerErrorCode =
   | "operation_indeterminate"
   | "internal_error";
 
+/** Native shared-app lifecycle errors consumed by portable framework adapters.
+ * Browser/Node clients remain independent web/Node identities; this type does
+ * not grant them access to a native registry or hardware-backed credentials.
+ */
+export type LatchwayNativeLifecycleErrorCode =
+  | "app_not_configured"
+  | "configuration_conflict"
+  | "identity_authority_required"
+  | "identity_unavailable"
+  | "identity_refresh_required"
+  | "account_changed"
+  | "client_logged_out"
+  | "cleanup_required"
+  | "client_disposed"
+  | "native_version_incompatible";
+
 export type LatchwayClientErrorCode =
+  | LatchwayNativeLifecycleErrorCode
   | "client_configuration_invalid"
   | "storage_unavailable"
   | "crypto_unavailable"

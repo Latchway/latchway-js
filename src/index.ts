@@ -44,4 +44,5 @@ export type {
   LatchwayErrorCode,
   LatchwayErrorDocumentationURL,
   LatchwayServerErrorCode,
+  LatchwayNativeLifecycleErrorCode,
 } from "./errors.js";
