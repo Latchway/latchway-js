@@ -5,14 +5,16 @@
   "version": "1.1.0",
   "package": "@latchway/client",
   "documents": [
-    {"path": "quickstart/firebase-app-check.ts", "kind": "quickstart", "source": {"file": "examples/firebase/client.ts", "start_line": 1, "end_line": 23}},
-    {"path": "quickstart/vanilla-development-helper.ts", "kind": "quickstart", "source": {"file": "examples/vanilla/development-helper.ts", "start_line": 1, "end_line": 142}},
-    {"path": "quickstart/vanilla-development-client.ts", "kind": "quickstart", "source": {"file": "examples/vanilla/development-client.ts", "start_line": 1, "end_line": 82}},
-    {"path": "quickstart/vanilla-streaming-fetch.ts", "kind": "quickstart", "source": {"file": "examples/vanilla/streaming-fetch.ts", "start_line": 1, "end_line": 93}},
-    {"path": "frameworks/openai.ts", "kind": "framework", "source": {"file": "packages/openai/src/index.ts", "start_line": 1, "end_line": 71}},
-    {"path": "frameworks/vercel-ai.ts", "kind": "framework", "source": {"file": "packages/vercel-ai/src/index.ts", "start_line": 1, "end_line": 78}},
-    {"path": "frameworks/langchain.ts", "kind": "framework", "source": {"file": "packages/langchain/src/index.ts", "start_line": 1, "end_line": 103}},
-    {"path": "release-notes.md", "kind": "release_notes", "source": {"file": "CHANGELOG.md", "start_line": 1, "end_line": 74}}
+    {"path": "quickstart/firebase-app-check.ts", "kind": "quickstart", "source": {"file": "examples/firebase/client.ts", "start_line": 1}},
+    {"path": "quickstart/vanilla-development-helper.ts", "kind": "quickstart", "source": {"file": "examples/vanilla/development-helper.ts", "start_line": 1}},
+    {"path": "quickstart/vanilla-development-client.ts", "kind": "quickstart", "source": {"file": "examples/vanilla/development-client.ts", "start_line": 1}},
+    {"path": "quickstart/vanilla-streaming-fetch.ts", "kind": "quickstart", "source": {"file": "examples/vanilla/streaming-fetch.ts", "start_line": 1}},
+    {"path": "frameworks/openai.ts", "kind": "framework", "source": {"file": "packages/openai/src/index.ts", "start_line": 1}},
+    {"path": "frameworks/vercel-ai.ts", "kind": "framework", "source": {"file": "packages/vercel-ai/src/index.ts", "start_line": 1}},
+    {"path": "frameworks/langchain.ts", "kind": "framework", "source": {"file": "packages/langchain/src/index.ts", "start_line": 1}},
+    {"path": "release-notes.md", "kind": "release_notes", "source": {"file": "CHANGELOG.md", "start_line": 1}},
+    {"path": "frameworks/native-lifecycle.md", "kind": "framework", "source": {"file": "docs/release/v1.1.0.md", "start_line": 1}},
+    {"path": "frameworks/usage.md", "kind": "framework", "source": {"file": "docs/framework-integrations.md", "start_line": 1}}
   ],
   "supported_versions": [
     {"name": "@latchway/client", "version": "1.1.0", "source": {"file": "package.json", "start_line": 1, "end_line": 13}},
@@ -44,13 +46,13 @@
     {"file": "src/errors.ts", "start_line": 3, "end_line": 92, "pattern": "(?m)^\\s*\\| \\\"(?P<name>[a-z][a-z0-9_]*)\\\""}
   ],
   "examples": [
-    {"name": "Firebase App Check quickstart", "kind": "quickstart", "source": {"file": "examples/firebase/client.ts", "start_line": 1, "end_line": 23}},
-    {"name": "Turnstile browser quickstart", "kind": "quickstart", "source": {"file": "examples/vanilla/client.ts", "start_line": 1, "end_line": 23}},
-    {"name": "Loopback development browser helpers", "kind": "quickstart", "source": {"file": "examples/vanilla/development-helper.ts", "start_line": 1, "end_line": 142}},
-    {"name": "Loopback development browser client", "kind": "quickstart", "source": {"file": "examples/vanilla/development-client.ts", "start_line": 1, "end_line": 82}},
-    {"name": "Vanilla feature-bound streaming fetch", "kind": "quickstart", "source": {"file": "examples/vanilla/streaming-fetch.ts", "start_line": 1, "end_line": 93}},
-    {"name": "OpenAI framework adapter", "kind": "framework", "source": {"file": "packages/openai/src/index.ts", "start_line": 1, "end_line": 71}},
-    {"name": "Vercel AI framework adapter", "kind": "framework", "source": {"file": "packages/vercel-ai/src/index.ts", "start_line": 1, "end_line": 78}},
-    {"name": "LangChain framework adapter", "kind": "framework", "source": {"file": "packages/langchain/src/index.ts", "start_line": 1, "end_line": 103}}
+    {"name": "Firebase App Check quickstart", "kind": "quickstart", "source": {"file": "examples/firebase/client.ts", "start_line": 1}},
+    {"name": "Turnstile browser quickstart", "kind": "quickstart", "source": {"file": "examples/vanilla/client.ts", "start_line": 1}},
+    {"name": "Loopback development browser helpers", "kind": "quickstart", "source": {"file": "examples/vanilla/development-helper.ts", "start_line": 1}},
+    {"name": "Loopback development browser client", "kind": "quickstart", "source": {"file": "examples/vanilla/development-client.ts", "start_line": 1}},
+    {"name": "Vanilla feature-bound streaming fetch", "kind": "quickstart", "source": {"file": "examples/vanilla/streaming-fetch.ts", "start_line": 1}},
+    {"name": "OpenAI framework adapter", "kind": "framework", "source": {"file": "packages/openai/src/index.ts", "start_line": 1}},
+    {"name": "Vercel AI framework adapter", "kind": "framework", "source": {"file": "packages/vercel-ai/src/index.ts", "start_line": 1}},
+    {"name": "LangChain framework adapter", "kind": "framework", "source": {"file": "packages/langchain/src/index.ts", "start_line": 1}}
   ]
 }

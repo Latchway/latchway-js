@@ -21,6 +21,14 @@ SPEC.loader.exec_module(MODULE)
 
 
 class DocumentationBundleTests(unittest.TestCase):
+    def test_complete_changelog_and_framework_sources_are_not_truncated(self) -> None:
+        config = json.loads((ROOT / "docs-bundle.config.json").read_text(encoding="utf-8"))
+        for item in [*config["documents"], *config["examples"]]:
+            source = item["source"]
+            line_count = len((ROOT / source["file"]).read_text(encoding="utf-8").splitlines())
+            self.assertEqual(source["start_line"], 1)
+            self.assertEqual(source.get("end_line", line_count), line_count)
+
     def test_bundle_is_reproducible_self_describing_and_checksum_bound(self) -> None:
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
             archives = []
@@ -82,6 +90,18 @@ class DocumentationBundleTests(unittest.TestCase):
             self.assertEqual(supported["Node.js"]["version"], "24.19.0")
             self.assertEqual(supported["Web browser matrix"]["version"], "1.56.0")
             self.assertEqual(supported["Web browser matrix"]["source"]["file"], "package.json")
+            symbols = {item["name"] for item in json.loads(payloads["public-symbols.json"])["symbols"]}
+            self.assertTrue({"LatchwayNativeLifecycleErrorCode", "createLatchwayResponsesModel",
+                             "bindLatchwayTools", "toLatchwayReplayMessage"} <= symbols)
+            errors = {item["name"] for item in json.loads(payloads["errors.json"])["errors"]}
+            self.assertTrue({"identity_refresh_required", "account_changed", "client_logged_out"} <= errors)
+            langchain = payloads["frameworks/langchain.ts"].decode("utf-8")
+            for name in ("createLatchwayChatOpenAI", "createLatchwayEmbeddings", "createLatchwayResponsesModel",
+                         "bindLatchwayTools", "toLatchwayReplayMessage"):
+                self.assertIn(name, langchain)
+            lifecycle = payloads["frameworks/native-lifecycle.md"].decode("utf-8")
+            self.assertIn("identity_refresh_required", lifecycle)
+            self.assertIn("not the browser/Node transport", lifecycle)
 
     def test_path_validation_and_archive_verifier_reject_traversal(self) -> None:
         for value in ("/absolute", "../escape", "a/../escape", "a\\b"):
@@ -97,7 +117,7 @@ class DocumentationBundleTests(unittest.TestCase):
                         info.size = len(payload)
                         archive.addfile(info, io.BytesIO(payload))
             with self.assertRaises(MODULE.BundleError):
-                MODULE.verify_archive(malicious, "docs-bundle-1.0.0")
+                MODULE.verify_archive(malicious, "docs-bundle-1.1.0")
 
     def test_provenance_commit_must_equal_the_checked_out_source(self) -> None:
         with tempfile.TemporaryDirectory() as output:
