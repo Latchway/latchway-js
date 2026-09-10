@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format follows Keep a Changelog, and releases will follow Semantic
 Versioning once package publication begins.
 
+## [@latchway/client 1.1.1] - 2026-09-10
+
+- Preserve Problem titles, instance references, supported protocol versions,
+  retry timing, feature and field errors on `LatchwayError`.
+- Ignore unknown optional Problem extensions without exposing them; continue
+  validating bounded JSON, known codes, canonical status/title/retryability,
+  documentation URLs, known optional fields and request-ID correlation.
+- Framework adapters remain unchanged and accept this patch through their
+  existing client peer ranges. No automatic retries or authentication changes.
+
 ## [@latchway/client 1.1.0] - 2026-09-08
 
 - Add the portable typed native lifecycle error vocabulary and consume the exact

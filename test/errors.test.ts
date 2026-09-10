@@ -19,6 +19,10 @@ describe("stable error mapping", () => {
       retryable: true,
       retry_after: "2026-08-28T00:00:00Z",
       feature: "assistant",
+      instance: "/requests/req_12345678",
+      supported_protocol_versions: [1, 2, 3],
+      errors: [{ path: "quota.total_tokens", message: "The weekly allowance is exhausted." }],
+      future_extension: { untrusted: "discard this value" },
     }), {
       status: 429,
       headers: {
@@ -35,7 +39,13 @@ describe("stable error mapping", () => {
       requestID: "req_12345678",
       retryable: true,
       feature: "assistant",
+      retryAfter: "2026-08-28T00:00:00Z",
+      title: "Quota exceeded",
+      instance: "/requests/req_12345678",
+      supportedProtocolVersions: [1, 2, 3],
+      validationErrors: [{ path: "quota.total_tokens", message: "The weekly allowance is exhausted." }],
     });
+    expect(error).not.toHaveProperty("future_extension");
   });
 
   it("provides a stable documentation URL for server and client error codes", async () => {
@@ -106,7 +116,11 @@ describe("stable error mapping", () => {
       { body: { ...valid, title: "Almost right" } },
       { body: { ...valid, status: 503 } },
       { body: { ...valid, retryable: true } },
-      { body: { ...valid, unexpected: "field" } },
+      { body: { ...valid, retry_after: "tomorrow" } },
+      { body: { ...valid, supported_protocol_versions: [3, 3] } },
+      { body: { ...valid, feature: "../not-a-feature" } },
+      { body: { ...valid, errors: [{ path: 1, message: "Invalid." }] } },
+      { body: { ...valid, instance: "contains a space" } },
       { body: withoutDetail },
       { body: { ...valid, detail: "" } },
       { body: { ...valid, request_id: "req_different" } },

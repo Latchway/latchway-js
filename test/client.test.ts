@@ -331,7 +331,7 @@ describe("Latchway fetch client", () => {
       component_definition_id: "summary_worker",
       public_jwk: { kty: "EC", crv: "P-256", x: "x".repeat(43), y: "y".repeat(43) },
       requested_features: ["weekly_summary"],
-      client_metadata: { app_version: "2.0.0", sdk_version: "1.1.0" },
+      client_metadata: { app_version: "2.0.0", sdk_version: "1.1.1" },
     }]);
 
     await client.revokeComponent(provisioned.componentID);
@@ -630,7 +630,7 @@ describe("Latchway fetch client", () => {
     const client = createLatchwayClient({...baseOptions(gateway), fetch, persistence: {mode: "memory"}, attestationProviders: [debugProvider()]});
     await expect(client.diagnostics()).resolves.toMatchObject({
       server: {contract_version: "1.1.0", protocol_version: 3},
-      client: {sdkVersion: "1.1.0"},
+      client: {sdkVersion: "1.1.1"},
     });
   });
 

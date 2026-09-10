@@ -1,4 +1,4 @@
-name: Publish JavaScript client v1.1.0
+name: Publish JavaScript client v1.1.1
 
 on:
   workflow_dispatch:
@@ -8,19 +8,19 @@ permissions:
   id-token: write
 
 concurrency:
-  group: latchway-client-v1.1.0-publication
+  group: latchway-client-v1.1.1-publication
   cancel-in-progress: false
 
 env:
   NODE_VERSION: 24.19.0
   NPM_VERSION: 11.6.2
   PNPM_VERSION: 10.15.0
-  RELEASE_TAG: v1.1.0
-  RELEASE_VERSION: 1.1.0
+  RELEASE_TAG: v1.1.1
+  RELEASE_VERSION: 1.1.1
 
 jobs:
   publish:
-    name: Pack, publish, and release client v1.1.0
+    name: Pack, publish, and release client v1.1.1
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -46,7 +46,7 @@ jobs:
           pnpm build
           mkdir -p "$RUNNER_TEMP/release"
           pnpm pack --pack-destination "$RUNNER_TEMP/release"
-      - name: Publish client v1.1.0 with trusted npm publishing
+      - name: Publish client v1.1.1 with trusted npm publishing
         run: |
           npm publish "$RUNNER_TEMP/release/latchway-client-$RELEASE_VERSION.tgz" --access public --provenance --tag latest
       - name: Publish the GitHub release

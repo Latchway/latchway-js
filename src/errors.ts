@@ -112,6 +112,9 @@ export interface LatchwayErrorOptions {
   operationID?: string | undefined;
   feature?: string | undefined;
   validationErrors?: readonly Readonly<{ path: string; message: string }>[] | undefined;
+  supportedProtocolVersions?: readonly number[] | undefined;
+  instance?: string | undefined;
+  title?: string | undefined;
   cause?: unknown;
 }
 
@@ -125,6 +128,9 @@ export class LatchwayError extends Error {
   readonly operationID: string | undefined;
   readonly feature: string | undefined;
   readonly validationErrors: readonly Readonly<{ path: string; message: string }>[] | undefined;
+  readonly supportedProtocolVersions: readonly number[] | undefined;
+  readonly instance: string | undefined;
+  readonly title: string | undefined;
 
   constructor(code: LatchwayErrorCode, message: string, options: LatchwayErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
@@ -144,6 +150,9 @@ export class LatchwayError extends Error {
     this.operationID = options.operationID;
     this.feature = options.feature;
     this.validationErrors = options.validationErrors;
+    this.supportedProtocolVersions = options.supportedProtocolVersions;
+    this.instance = options.instance;
+    this.title = options.title;
   }
 }
 
@@ -215,11 +224,6 @@ const serverCodePolicies: Readonly<Record<LatchwayServerErrorCode, ServerCodePol
   internal_error: { status: 500, title: "Internal server error", retryable: false },
 };
 
-const problemKeys = new Set([
-  "type", "documentation_url", "title", "status", "detail", "code", "request_id", "retryable", "instance",
-  "retry_after", "operation_id", "feature", "supported_protocol_versions", "errors",
-]);
-
 interface ProblemDocument extends Record<string, unknown> {
   type: string;
   documentation_url: string;
@@ -233,6 +237,8 @@ interface ProblemDocument extends Record<string, unknown> {
   operation_id?: string;
   feature?: string;
   errors?: readonly { path: string; message: string }[];
+  supported_protocol_versions?: readonly number[];
+  instance?: string;
 }
 
 export async function errorFromResponse(response: Response): Promise<LatchwayError> {
@@ -256,6 +262,9 @@ export async function errorFromResponse(response: Response): Promise<LatchwayErr
     operationID: problem.operation_id,
     feature: problem.feature,
     validationErrors: problem.errors,
+    supportedProtocolVersions: problem.supported_protocol_versions,
+    instance: problem.instance,
+    title: problem.title,
   });
 }
 
@@ -273,7 +282,9 @@ function isProblemDocument(
   responseStatus: number,
   responseRequestID: string,
 ): value is ProblemDocument {
-  if (Object.keys(value).some((key) => !problemKeys.has(key)) || !isServerCode(value.code)) return false;
+  // Ignore unrecognized extensions without exposing them. Known fields, bounded
+  // JSON and canonical correlation remain validated before surfacing any detail.
+  if (!isServerCode(value.code)) return false;
   const policy = serverCodePolicies[value.code];
   const documentationURL = latchwayErrorDocumentationURL(value.code);
   if (value.type !== documentationURL || value.documentation_url !== documentationURL || value.title !== policy.title ||

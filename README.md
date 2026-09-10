@@ -260,6 +260,14 @@ Ordinary `fetch` semantics are retained: final non-2xx protected responses are
 returned untouched for OpenAI-compatible libraries. Call
 `errorFromResponse(response.clone())` to map one explicitly.
 
+The typed error preserves the gateway's safe `message`, `code`, `status`,
+`requestID`, `retryable`, `retryAfter`, `operationID`, `feature`, `validationErrors`,
+`supportedProtocolVersions`, `title`, and `instance` when present. Show the message
+and request ID for troubleshooting; field errors explain invalid tool parameters,
+attestation configuration, or quota details without logging the request body.
+Unknown optional Problem extensions are ignored, while known fields and request-ID
+correlation remain validated. Do not automatically replay interrupted streams.
+
 Control and Problem JSON is limited to 64 KiB, decoded as fatal UTF-8, bounded
 to 64 nesting levels, and rejected when any object contains duplicate member
 names, including Unicode-escaped aliases. Problem metadata must exactly match
